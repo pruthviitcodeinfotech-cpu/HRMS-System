@@ -1,0 +1,62 @@
+[project]
+name = "hrms-backend"
+version = "0.1.0"
+description = "Enterprise HRMS backend (FastAPI, PostgreSQL, modular monolith)"
+requires-python = ">=3.11"
+readme = "README.md"
+
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "sqlalchemy[asyncio]",
+    "alembic",
+    "asyncpg",
+    "psycopg2-binary",
+    "pydantic",
+    "pydantic-settings",
+    "python-jose[cryptography]",
+    "passlib[bcrypt]",
+    "redis",
+    "python-multipart",
+    "jinja2",
+    "httpx",
+    "structlog",
+    "websockets",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "pytest-cov",
+    "httpx",
+    "faker",
+    "ruff",
+    "black",
+    "mypy",
+    "pre-commit",
+]
+
+# NOTE: background-job library (e.g. arq or celery) is intentionally left as a
+# decision point — see docs/architecture.md. The jobs/ package is queue-agnostic.
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "C4"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_unused_ignores = true
+disallow_untyped_defs = true
+plugins = ["pydantic.mypy"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
