@@ -25,6 +25,7 @@ import app.modules.employee.models  # noqa: F401,E402
 import app.modules.leave.models  # noqa: F401,E402
 import app.modules.payroll.models  # noqa: F401,E402
 import app.modules.rbac.models  # noqa: F401,E402
+import app.modules.settings.models  # noqa: F401,E402
 import app.modules.settlements.models  # noqa: F401,E402
 import app.modules.shift.models  # noqa: F401,E402
 
