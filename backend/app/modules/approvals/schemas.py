@@ -144,3 +144,27 @@ class BulkActionItemResultSchema(BaseSchema):
     id: int = Field(..., description="ID of approval request.")
     success: bool = Field(..., description="True if action succeeded, False otherwise.")
     error: BulkActionItemError | None = Field(default=None, description="Error detail if failed.")
+
+
+class BulkActionResponseSchema(BaseSchema):
+    """Overall outcome of a bulk approval/rejection request."""
+
+    results: list[BulkActionItemResultSchema] = Field(..., description="Outcomes of each requested action.")
+
+
+__all__ = [
+    "ApprovalRequestSchema",
+    "ApprovalListResponse",
+    "LoginResetRequestSchema",
+    "ApprovalDetailsSchema",
+    "ApprovalStatusSchema",
+    "ApprovalTimelineEventSchema",
+    "ApprovalPendingCountSchema",
+    "ApproveRequestInput",
+    "RejectRequestInput",
+    "BulkApproveRequestInput",
+    "BulkRejectRequestInput",
+    "BulkActionItemError",
+    "BulkActionItemResultSchema",
+    "BulkActionResponseSchema",
+]

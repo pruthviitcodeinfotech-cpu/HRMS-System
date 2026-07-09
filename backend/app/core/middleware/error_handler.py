@@ -12,12 +12,13 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
+import structlog
+
 from app.core.exceptions.base import AppException
-from app.core.logging.config import get_logger
 from app.core.middleware.request_context import get_request_id
 from app.shared.schemas.response import error_response
 
-_logger = get_logger("error_boundary")
+_logger = structlog.get_logger("error_boundary")
 
 
 class ExceptionHandlingMiddleware(BaseHTTPMiddleware):

@@ -15,6 +15,7 @@ from app.modules.employee.router import router as employee_router
 from app.modules.rbac.router import router as rbac_router
 from app.modules.shift.router import router as shift_router
 from app.modules.approvals.router import router as approvals_router
+from app.modules.hardware.router import router as hardware_router
 
 api_router = APIRouter()
 api_router.include_router(auth_router)
@@ -22,6 +23,8 @@ api_router.include_router(rbac_router)
 api_router.include_router(employee_router)
 api_router.include_router(shift_router)
 api_router.include_router(approvals_router)
+api_router.include_router(hardware_router)
 
 __all__ = ["api_router"]
+
 

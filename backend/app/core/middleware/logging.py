@@ -15,9 +15,9 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.requests import Request
 from starlette.responses import Response
 
-from app.core.logging.config import get_logger
+import structlog
 
-_logger = get_logger("http")
+_logger = structlog.get_logger("http")
 
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
