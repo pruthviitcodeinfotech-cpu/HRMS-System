@@ -1,1 +1,5 @@
-"""payroll: API routes (thin controllers). Foundation phase — no endpoints yet."""
+"""Payroll Management API router stub for test imports."""
+
+from fastapi import APIRouter
+
+router = APIRouter()

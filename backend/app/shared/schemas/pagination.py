@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Generic, TypeVar
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.constants.enums import (
     DEFAULT_PAGE,
@@ -24,6 +24,8 @@ T = TypeVar("T")
 
 class PaginationRequest(BaseModel):
     """Inbound pagination parameters."""
+
+    model_config = ConfigDict(populate_by_name=True)
 
     page: int = Field(default=DEFAULT_PAGE, ge=1, description="1-based page number.")
     page_size: int = Field(
