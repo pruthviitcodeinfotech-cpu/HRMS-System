@@ -20,10 +20,12 @@ from app.core.database.base import Base
 # --- Register model metadata -------------------------------------------------
 # Import model packages so their tables attach to Base.metadata.
 import app.modules.approvals.models  # noqa: F401,E402
+import app.modules.attendance.models  # noqa: F401,E402
 import app.modules.audit.models  # noqa: F401,E402
 import app.modules.employee.models  # noqa: F401,E402
 import app.modules.hardware.models  # noqa: F401,E402
 import app.modules.leave.models  # noqa: F401,E402
+import app.modules.notifications.models  # noqa: F401,E402
 import app.modules.payroll.models  # noqa: F401,E402
 import app.modules.rbac.models  # noqa: F401,E402
 import app.modules.settings.models  # noqa: F401,E402
