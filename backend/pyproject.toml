@@ -15,7 +15,12 @@ dependencies = [
     "pydantic",
     "pydantic-settings",
     "python-jose[cryptography]",
-    "passlib[bcrypt]",
+    # passlib 1.7.4 probes the bcrypt backend with a 73-byte password. bcrypt >= 5
+    # raises ValueError instead of truncating, which makes every hash_password()
+    # call fail; bcrypt >= 4.1 removed __about__, which passlib logs as a trapped
+    # error on import. Pin to the last release that is clean on both counts.
+    "passlib[bcrypt]==1.7.4",
+    "bcrypt>=4.0,<4.1",
     "redis",
     "python-multipart",
     "jinja2",
@@ -39,6 +44,16 @@ dev = [
 
 # NOTE: background-job library (e.g. arq or celery) is intentionally left as a
 # decision point — see docs/architecture.md. The jobs/ package is queue-agnostic.
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+# The repo root holds several top-level directories (app, tests, alembic, scripts,
+# docs, var). Setuptools' flat-layout auto-discovery refuses to guess between them
+# and aborts, so name the distributed package explicitly.
+[tool.setuptools.packages.find]
+include = ["app*"]
 
 [tool.black]
 line-length = 100

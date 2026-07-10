@@ -141,7 +141,7 @@ class PayrollService(BaseService):
                     "working_hour_type": WorkingHourType.FIXED.value,
                     "full_day_working_hours": time(9, 0),
                     "half_day_working_hours": time(4, 30),
-                    "attendance_mode": AttendanceMode.BIOMETRIC.value,
+                    "attendance_mode": AttendanceMode.CONSIDER_ALL_PUNCH.value,
                     "off_day_compensation": "paid",
                     "off_day_wage_multiplier": Decimal("1.0"),
                     "daily_wage_formula": "calendar_days",
@@ -404,7 +404,7 @@ class PayrollService(BaseService):
 
     async def create_cycle(
         self, org_id: int, payload: PayrollCycleCreateSchema, user_id: int
-    ) -> PayrollCycle:
+    ) -> PayrollSalaryCycle:
         """Create a new payroll period cycle."""
         await self._validate_payroll_group(org_id, payload.payroll_group_id)
 
@@ -436,7 +436,7 @@ class PayrollService(BaseService):
 
     async def list_cycles(
         self, org_id: int, group_id: int | None, is_finalized: bool | None, page: int, page_size: int
-    ) -> PaginatedResponse[PayrollCycle]:
+    ) -> PaginatedResponse[PayrollSalaryCycle]:
         """List paginated cycles."""
         cycles = await self.cycles.search(org_id, group_id=group_id, is_finalized=is_finalized, page=page, page_size=page_size)
         total = await self.cycles.search_count(org_id, group_id=group_id, is_finalized=is_finalized)
@@ -444,7 +444,7 @@ class PayrollService(BaseService):
 
     async def update_cycle(
         self, org_id: int, cycle_id: int, payload: PayrollCycleUpdateSchema, user_id: int
-    ) -> PayrollCycle:
+    ) -> PayrollSalaryCycle:
         """Update cycle date only if cycle is not finalized."""
         cycle = await self.cycles.get_by_id(cycle_id)
         if not cycle:
@@ -943,7 +943,7 @@ class PayrollService(BaseService):
                         EmployeeLoanAdvance.org_id == org_id,
                         EmployeeLoanAdvance.employee_id == row.employee_id,
                         EmployeeLoanAdvance.status == "active",
-                    ).order_on(EmployeeLoanAdvance.id)
+                    ).order_by(EmployeeLoanAdvance.id)
                     loans = (await self.session.execute(stmt_loans)).scalars().all()
                     for loan in loans:
                         if deducted_left <= 0:

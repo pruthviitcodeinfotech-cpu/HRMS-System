@@ -260,6 +260,72 @@ async def get_approval_history(
 
 
 @router.get(
+    "/approvals/my-pending",
+    response_model=SuccessResponse[ApprovalListResponse],
+    summary="My Pending Approvals",
+    dependencies=[Depends(require_permission(_APPROVAL, A.READ))],
+)
+async def get_my_pending_approvals(
+    service: ServiceDep,
+    org_id: OrgIdDep,
+    current_user: CurrentUserDep,
+    branch_id: Annotated[int | None, Query(description="Filter by branch.")] = None,
+    dept_id: Annotated[int | None, Query(description="Filter by department.")] = None,
+    pagination: Annotated[PaginationParams, Depends(pagination_params)] = None,
+) -> dict[str, Any]:
+    """Convenience list of pending approvals scoped by reviewer permission context."""
+    p_branch, p_dept = resolve_read_data_scope(current_user, branch_id, dept_id)
+    page = pagination.page if pagination else 1
+    page_size = pagination.page_size if pagination else 25
+
+    res = await service.get_my_pending_approvals(
+        org_id,
+        branch_id=p_branch,
+        dept_id=p_dept,
+        page=page,
+        page_size=page_size,
+    )
+    return _ok(res)
+
+
+@router.get(
+    "/approvals/recent",
+    response_model=SuccessResponse[list[ApprovalRequestSchema]],
+    summary="Recent Decisions",
+    dependencies=[Depends(require_permission(_APPROVAL, A.READ))],
+)
+async def get_recent_decisions(
+    service: ServiceDep,
+    org_id: OrgIdDep,
+    current_user: CurrentUserDep,
+    decision: Annotated[ApprovalStatus, Query(description="Target decision filter: approved or rejected.")],
+    request_type: Annotated[RequestType | None, Query(description="Filter by request type.")] = None,
+    branch_id: Annotated[int | None, Query(description="Filter by branch.")] = None,
+    dept_id: Annotated[int | None, Query(description="Filter by department.")] = None,
+    limit: Annotated[int, Query(ge=1, le=100, description="Number of records to return.")] = 10,
+) -> dict[str, Any]:
+    """Retrieve recently decided approval requests ordered descending by review timestamp."""
+    p_branch, p_dept = resolve_read_data_scope(current_user, branch_id, dept_id)
+    
+    # Enforce only completed decisions (approved/rejected) are queryable here
+    if decision not in (ApprovalStatus.APPROVED, ApprovalStatus.REJECTED):
+        raise AppException(
+            "Recent decisions view is only available for 'approved' or 'rejected' statuses.",
+            code="VALIDATION_ERROR",
+        )
+
+    res = await service.get_recent_decisions(
+        org_id,
+        decision=decision,
+        request_type=request_type,
+        branch_id=p_branch,
+        dept_id=p_dept,
+        limit=limit,
+    )
+    return _ok(res)
+
+
+@router.get(
     "/approvals/{approval_id}",
     response_model=SuccessResponse[ApprovalDetailsSchema],
     summary="Get Approval Details",
@@ -513,71 +579,5 @@ async def get_pending_approval_count(
         org_id,
         branch_id=p_branch,
         dept_id=p_dept,
-    )
-    return _ok(res)
-
-
-@router.get(
-    "/approvals/my-pending",
-    response_model=SuccessResponse[ApprovalListResponse],
-    summary="My Pending Approvals",
-    dependencies=[Depends(require_permission(_APPROVAL, A.READ))],
-)
-async def get_my_pending_approvals(
-    service: ServiceDep,
-    org_id: OrgIdDep,
-    current_user: CurrentUserDep,
-    branch_id: Annotated[int | None, Query(description="Filter by branch.")] = None,
-    dept_id: Annotated[int | None, Query(description="Filter by department.")] = None,
-    pagination: Annotated[PaginationParams, Depends(pagination_params)] = None,
-) -> dict[str, Any]:
-    """Convenience list of pending approvals scoped by reviewer permission context."""
-    p_branch, p_dept = resolve_read_data_scope(current_user, branch_id, dept_id)
-    page = pagination.page if pagination else 1
-    page_size = pagination.page_size if pagination else 25
-
-    res = await service.get_my_pending_approvals(
-        org_id,
-        branch_id=p_branch,
-        dept_id=p_dept,
-        page=page,
-        page_size=page_size,
-    )
-    return _ok(res)
-
-
-@router.get(
-    "/approvals/recent",
-    response_model=SuccessResponse[list[ApprovalRequestSchema]],
-    summary="Recent Decisions",
-    dependencies=[Depends(require_permission(_APPROVAL, A.READ))],
-)
-async def get_recent_decisions(
-    service: ServiceDep,
-    org_id: OrgIdDep,
-    current_user: CurrentUserDep,
-    decision: Annotated[ApprovalStatus, Query(description="Target decision filter: approved or rejected.")],
-    request_type: Annotated[RequestType | None, Query(description="Filter by request type.")] = None,
-    branch_id: Annotated[int | None, Query(description="Filter by branch.")] = None,
-    dept_id: Annotated[int | None, Query(description="Filter by department.")] = None,
-    limit: Annotated[int, Query(ge=1, le=100, description="Number of records to return.")] = 10,
-) -> dict[str, Any]:
-    """Retrieve recently decided approval requests ordered descending by review timestamp."""
-    p_branch, p_dept = resolve_read_data_scope(current_user, branch_id, dept_id)
-    
-    # Enforce only completed decisions (approved/rejected) are queryable here
-    if decision not in (ApprovalStatus.APPROVED, ApprovalStatus.REJECTED):
-        raise AppException(
-            "Recent decisions view is only available for 'approved' or 'rejected' statuses.",
-            code="VALIDATION_ERROR",
-        )
-
-    res = await service.get_recent_decisions(
-        org_id,
-        decision=decision,
-        request_type=request_type,
-        branch_id=p_branch,
-        dept_id=p_dept,
-        limit=limit,
     )
     return _ok(res)

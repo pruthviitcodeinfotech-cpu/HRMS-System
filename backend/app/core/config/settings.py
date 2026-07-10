@@ -11,10 +11,14 @@ Configuration groups (each area is a labelled section below):
 
 from functools import lru_cache
 
-from pydantic import Field, computed_field, field_validator
+from pydantic import Field, computed_field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.core.constants.enums import Environment, LogFormat, StorageBackend
+
+#: Placeholder value the secret fields ship with. Safe for local development,
+#: never acceptable in production — see :meth:`Settings._enforce_production_safety`.
+INSECURE_SECRET_PLACEHOLDER = "change-me"
 
 
 class Settings(BaseSettings):
@@ -89,6 +93,39 @@ class Settings(BaseSettings):
         if level not in allowed:
             raise ValueError(f"LOG_LEVEL must be one of {sorted(allowed)}")
         return level
+
+    @model_validator(mode="after")
+    def _enforce_production_safety(self) -> "Settings":
+        """Reject insecure defaults when ``ENVIRONMENT=production``.
+
+        These fields all have development-friendly defaults so the app runs out of
+        the box. In production those same defaults are exploitable — a placeholder
+        ``JWT_SECRET`` makes every access token forgeable, and a wildcard host or
+        origin list defeats the CORS and Host checks. Fail at import rather than
+        serve traffic with them.
+        """
+        if self.environment is not Environment.PRODUCTION:
+            return self
+
+        problems: list[str] = []
+        if self.secret_key == INSECURE_SECRET_PLACEHOLDER:
+            problems.append("SECRET_KEY is still the placeholder value")
+        if self.jwt_secret == INSECURE_SECRET_PLACEHOLDER:
+            problems.append("JWT_SECRET is still the placeholder value")
+        if not self.cors_origins:
+            problems.append("ALLOWED_ORIGINS is empty (would fall back to '*')")
+        if "*" in self.trusted_hosts:
+            problems.append("ALLOWED_HOSTS is '*'")
+        if self.debug:
+            problems.append("DEBUG is enabled")
+
+        if problems:
+            raise ValueError(
+                "Insecure configuration for ENVIRONMENT=production: "
+                + "; ".join(problems)
+                + ". Set these environment variables before starting the application."
+            )
+        return self
 
     # --- Derived / computed --------------------------------------------------
     @computed_field  # type: ignore[prop-decorator]

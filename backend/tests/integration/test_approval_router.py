@@ -9,7 +9,8 @@ scoping guards, and validation failures.
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
-from unittest.mock import AsyncMock
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import pytest_asyncio
@@ -40,7 +41,11 @@ _NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
 @pytest.fixture
 def mock_approval_service() -> AsyncMock:
     """An ``AsyncMock`` standing in for :class:`ApprovalService`."""
-    return AsyncMock()
+    service = AsyncMock()
+    # ``BaseService.paginate`` is synchronous; an AsyncMock child would return a
+    # coroutine and the router would serialise that instead of the page.
+    service.paginate = MagicMock()
+    return service
 
 
 @pytest.fixture
@@ -79,6 +84,7 @@ def _approval_req() -> ApprovalRequestSchema:
         reviewed_at=None,
         reviewed_by=None,
         reject_remarks=None,
+        created_at=_NOW,
     )
 
 

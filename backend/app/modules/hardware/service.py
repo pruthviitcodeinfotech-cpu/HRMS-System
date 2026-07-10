@@ -29,6 +29,7 @@ from app.modules.hardware.schemas import (
     BiometricDeviceSchema,
     BiometricDeviceSearchQuery,
     BiometricDeviceStatusSchema,
+    BiometricDeviceUpdateRequest,
 )
 from app.modules.rbac.repository import UserRepository
 from app.shared.base.service import BaseService

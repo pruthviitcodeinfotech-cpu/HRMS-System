@@ -7,7 +7,7 @@ All database access is performed strictly via repositories.
 
 from __future__ import annotations
 
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -32,15 +32,13 @@ from app.modules.attendance.exceptions import (
     EmployeeNotFoundException,
     PenaltyAlreadyWaivedException,
     PenaltyNotFoundException,
-    PunchNotFoundException,
     ShiftNotFoundException,
 )
-from app.modules.attendance.models import AttendanceDay, AttendancePenalty, AttendancePunch
+from app.modules.attendance.models import AttendanceDay, AttendancePenalty
 from app.modules.attendance.repository import (
     AttendanceDayRepository,
     AttendancePenaltyRepository,
     AttendancePunchRepository,
-    DeviceLookupRepository,
     EmployeeLookupRepository,
     ShiftLookupRepository,
 )
@@ -87,7 +85,6 @@ class AttendanceService(BaseService):
         # Cross-module lookup readers
         self.employees = EmployeeLookupRepository(session)
         self.shifts = ShiftLookupRepository(session)
-        self.devices = DeviceLookupRepository(session)
 
         # Audit logger
         self.audit = AuditService(session)
@@ -300,7 +297,7 @@ class AttendanceService(BaseService):
         updates: dict[str, Any],
     ) -> AttendanceDayDetailSchema:
         """Override an attendance day's fields manually (Endpoint 2: Override Attendance)."""
-        day = await self.days.get_by_id(day_id, org_id)
+        day = await self.days.get_by_id_in_org(day_id, org_id)
         if not day:
             raise AttendanceDayNotFoundException()
 
@@ -574,7 +571,7 @@ class AttendanceService(BaseService):
         day_id: int,
     ) -> list[AttendancePunchSchema]:
         """Fetch all chronological punches associated with a day (Endpoint 9)."""
-        day = await self.days.get_by_id(day_id, org_id)
+        day = await self.days.get_by_id_in_org(day_id, org_id)
         if not day:
             raise AttendanceDayNotFoundException()
         punches = await self.punches.get_for_day(org_id, day_id)
@@ -613,7 +610,7 @@ class AttendanceService(BaseService):
             raise ValidationException("Penalty value cannot be negative.")
 
         employee = await self._validate_employee(org_id, employee_id)
-        day = await self.days.get_by_id(attendance_day_id, org_id)
+        day = await self.days.get_by_id_in_org(attendance_day_id, org_id)
         if not day or day.employee_id != employee_id:
             raise NotFoundException("Attendance day matching employee context not found.")
 
@@ -680,7 +677,7 @@ class AttendanceService(BaseService):
         penalty_id: int,
     ) -> AttendancePenaltySchema:
         """Retrieve fine details of a specific penalty (Endpoint 13)."""
-        penalty = await self.penalties.get_by_id(penalty_id, org_id)
+        penalty = await self.penalties.get_by_id_in_org(penalty_id, org_id)
         if not penalty or penalty.is_deleted:
             raise PenaltyNotFoundException()
         return AttendancePenaltySchema.model_validate(penalty)
@@ -693,7 +690,7 @@ class AttendanceService(BaseService):
         remarks: str | None = None,
     ) -> AttendancePenaltySchema:
         """Waive (soft-delete / close) a penalty with reason audit (Endpoint 14)."""
-        penalty = await self.penalties.get_by_id(penalty_id, org_id)
+        penalty = await self.penalties.get_by_id_in_org(penalty_id, org_id)
         if not penalty or penalty.is_deleted:
             raise PenaltyNotFoundException()
         if penalty.status == PenaltyStatus.WAIVED.value:

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, Query, Request, Response, status
 
 from app.core.dependencies.pagination import PaginationParams, pagination_params
 from app.core.middleware.request_context import get_request_id
@@ -90,13 +90,14 @@ async def logout(
     current_user: CurrentUserDep,
     session_id: CurrentSessionIdDep,
     payload: LogoutRequest | None = None,
-) -> None:
+) -> Response:
     """Revoke a session. Returns ``204 No Content``."""
     await service.logout(
         user_id=current_user.user_id,
         session_id=session_id,
         refresh_token=payload.refresh_token if payload else None,
     )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get(
@@ -147,9 +148,10 @@ async def revoke_session(
     session_id: int,
     service: AuthServiceDep,
     current_user: CurrentUserDep,
-) -> None:
+) -> Response:
     """Revoke a single owned session. Returns ``204 No Content``."""
     await service.revoke_session(user_id=current_user.user_id, session_id=session_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post(

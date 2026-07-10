@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -113,6 +113,10 @@ def approval_service():
     from app.modules.approvals.service import ApprovalService
 
     svc = ApprovalService(AsyncMock())
+    # ``AsyncSession.begin_nested()`` returns an async context manager, not a
+    # coroutine. Bulk operations wrap each item in one as a savepoint, so the mock
+    # has to behave the same way or every item is recorded as a failure.
+    svc.session.begin_nested = MagicMock(return_value=AsyncMock())
     for attr in (
         "approvals",
         "attendance_regularizations",

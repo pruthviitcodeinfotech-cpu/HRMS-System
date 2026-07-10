@@ -37,6 +37,12 @@ from app.modules.attendance.constants import (
 from app.shared.base.schema import BaseSchema
 from app.shared.schemas.pagination import PaginatedResponse, PaginationRequest
 
+# Several schemas below expose a field literally named ``date``. Under
+# ``from __future__ import annotations`` the class attribute shadows the imported
+# ``date`` type when Pydantic resolves the annotation, so those fields reference
+# this alias instead.
+DateType = date
+
 
 # ===========================================================================
 # Validation helpers
@@ -64,7 +70,7 @@ class AttendanceLiveQuery(BaseSchema):
 class AttendanceDailyQuery(PaginationRequest):
     """Query parameters for ``GET /attendance/daily`` (daily grid)."""
 
-    date: date = Field(..., description="Target calendar date.")
+    date: DateType = Field(..., description="Target calendar date.")
     branch_id: int | None = Field(default=None, description="Filter employees by branch.")
     department_id: int | None = Field(default=None, description="Filter employees by department.")
 
@@ -99,7 +105,7 @@ class AttendanceManualCreateRequest(BaseSchema):
     """Body for ``POST /attendance/manual`` (onboard a manual entry)."""
 
     employee_id: int = Field(..., description="ID of the employee.")
-    date: date = Field(..., description="Date of the attendance.")
+    date: DateType = Field(..., description="Date of the attendance.")
     in_time: datetime = Field(..., description="Punch-in timestamp (ISO format).")
     out_time: datetime = Field(..., description="Punch-out timestamp (ISO format).")
     reason: str = Field(..., min_length=3, max_length=500, description="Reason for manual entry.")
@@ -116,7 +122,7 @@ class AttendanceCorrectionCreateRequest(BaseSchema):
     """Body for ``POST /attendance/corrections`` (request regularization)."""
 
     employee_id: int = Field(..., description="ID of the employee.")
-    date: date = Field(..., description="Date of the attendance day to correct.")
+    date: DateType = Field(..., description="Date of the attendance day to correct.")
     requested_in: datetime = Field(..., description="Requested punch-in timestamp.")
     requested_out: datetime = Field(..., description="Requested punch-out timestamp.")
     reason: str = Field(..., min_length=3, max_length=500, description="Reason for correction.")
@@ -178,7 +184,7 @@ class AttendanceLockRequest(BaseSchema):
 class AttendanceRecomputeRequest(BaseSchema):
     """Body for ``POST /attendance/{employee_id}/recompute``."""
 
-    date: date = Field(..., description="Target date for recalculation.")
+    date: DateType = Field(..., description="Target date for recalculation.")
 
 
 # ===========================================================================

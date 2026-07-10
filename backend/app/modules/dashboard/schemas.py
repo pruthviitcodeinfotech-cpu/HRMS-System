@@ -12,6 +12,7 @@ from decimal import Decimal
 from pydantic import Field
 
 from app.shared.base.schema import BaseSchema
+from app.shared.utils.datetime import utcnow
 
 # ===========================================================================
 # 1. Base / Common Dashboard DTOs
@@ -35,7 +36,7 @@ class ChartResponseSchema(BaseSchema):
         ..., description="Series data containing points for plotting."
     )
     generated_at: datetime.datetime = Field(
-        default_factory=datetime.datetime.utcnow,
+        default_factory=utcnow,
         description="Timestamp indicating when the chart data was computed.",
     )
 
@@ -154,7 +155,7 @@ class DashboardSummaryResponse(BaseSchema):
         default=None, description="Notifications summary metrics if authorized."
     )
     generated_at: datetime.datetime = Field(
-        default_factory=datetime.datetime.utcnow,
+        default_factory=utcnow,
         description="Timestamp indicating when the summary was aggregated.",
     )
 
@@ -186,7 +187,7 @@ class DashboardKPIsResponse(BaseSchema):
     offline_devices: int = Field(..., description="Offline biometric devices count.")
     unread_notifications: int = Field(..., description="Unread notifications count.")
     generated_at: datetime.datetime = Field(
-        default_factory=datetime.datetime.utcnow,
+        default_factory=utcnow,
         description="Timestamp indicating when the KPIs were computed.",
     )
 
@@ -207,7 +208,7 @@ class DashboardStatisticsResponse(BaseSchema):
         None, description="Percentage of biometric devices that are online."
     )
     generated_at: datetime.datetime = Field(
-        default_factory=datetime.datetime.utcnow,
+        default_factory=utcnow,
         description="Timestamp indicating when stats were computed.",
     )
 
@@ -236,7 +237,7 @@ class EmployeeDashboardResponse(BaseSchema):
         description="Headcount breakdowns grouped by dept, branch, designation, and status.",
     )
     generated_at: datetime.datetime = Field(
-        default_factory=datetime.datetime.utcnow,
+        default_factory=utcnow,
         description="Timestamp indicating when the dashboard was generated.",
     )
 
@@ -264,7 +265,7 @@ class AttendanceDashboardResponse(BaseSchema):
         ..., description="Chronological sequence of daily attendance counts."
     )
     generated_at: datetime.datetime = Field(
-        default_factory=datetime.datetime.utcnow,
+        default_factory=utcnow,
         description="Timestamp indicating when the metrics were computed.",
     )
 
@@ -287,7 +288,7 @@ class LeaveDashboardResponse(BaseSchema):
         ..., description="Requests breakdown by leave types."
     )
     generated_at: datetime.datetime = Field(
-        default_factory=datetime.datetime.utcnow,
+        default_factory=utcnow,
         description="Timestamp indicating when metrics were aggregated.",
     )
 
@@ -317,7 +318,7 @@ class ApprovalDashboardResponse(BaseSchema):
         ..., description="List of most recent approval requests."
     )
     generated_at: datetime.datetime = Field(
-        default_factory=datetime.datetime.utcnow,
+        default_factory=utcnow,
         description="Timestamp indicating when the dashboard was generated.",
     )
 
@@ -345,7 +346,7 @@ class PayrollDashboardResponse(BaseSchema):
         ..., description="Total count of employees processed in the payroll cycle."
     )
     generated_at: datetime.datetime = Field(
-        default_factory=datetime.datetime.utcnow,
+        default_factory=utcnow,
         description="Timestamp indicating when payroll stats were computed.",
     )
 
@@ -362,7 +363,7 @@ class SettlementDashboardResponse(BaseSchema):
         ..., description="Monetary sum of outstanding arrears balances."
     )
     generated_at: datetime.datetime = Field(
-        default_factory=datetime.datetime.utcnow,
+        default_factory=utcnow,
         description="Timestamp indicating when the statistics were generated.",
     )
 
@@ -378,7 +379,7 @@ class HardwareDashboardResponse(BaseSchema):
         None, description="Timestamp of the most recent device synchronization."
     )
     generated_at: datetime.datetime = Field(
-        default_factory=datetime.datetime.utcnow,
+        default_factory=utcnow,
         description="Timestamp indicating when device state was aggregated.",
     )
 
@@ -401,6 +402,6 @@ class NotificationDashboardResponse(BaseSchema):
         ..., description="Most recent notifications matching the caller."
     )
     generated_at: datetime.datetime = Field(
-        default_factory=datetime.datetime.utcnow,
+        default_factory=utcnow,
         description="Timestamp indicating when the dashboard was generated.",
     )

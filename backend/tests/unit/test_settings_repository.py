@@ -23,6 +23,17 @@ def _mock_scalar(value) -> MagicMock:
     return result
 
 
+def _mock_session() -> AsyncMock:
+    """An ``AsyncSession`` double whose synchronous methods stay synchronous.
+
+    ``AsyncSession.add`` is not a coroutine; leaving it as an ``AsyncMock`` child makes
+    the repository schedule a coroutine it never awaits.
+    """
+    session = AsyncMock()
+    session.add = MagicMock()
+    return session
+
+
 # ===========================================================================
 # 1. OrgSettingsRepository
 # ===========================================================================
@@ -30,7 +41,7 @@ def _mock_scalar(value) -> MagicMock:
 
 @pytest.mark.asyncio
 async def test_org_settings_get_by_org_id_found() -> None:
-    session = AsyncMock()
+    session = _mock_session()
     from app.modules.settings.models import OrgSettings
 
     row = OrgSettings(id=1, org_id=_ORG_ID)
@@ -45,7 +56,7 @@ async def test_org_settings_get_by_org_id_found() -> None:
 
 @pytest.mark.asyncio
 async def test_org_settings_get_by_org_id_not_found() -> None:
-    session = AsyncMock()
+    session = _mock_session()
     session.execute.return_value = _mock_scalar(None)
 
     repo = OrgSettingsRepository(session)
@@ -56,7 +67,7 @@ async def test_org_settings_get_by_org_id_not_found() -> None:
 
 @pytest.mark.asyncio
 async def test_org_settings_exists_in_org_true() -> None:
-    session = AsyncMock()
+    session = _mock_session()
     mock_result = MagicMock()
     mock_result.first.return_value = (1,)
     session.execute.return_value = mock_result
@@ -69,7 +80,7 @@ async def test_org_settings_exists_in_org_true() -> None:
 
 @pytest.mark.asyncio
 async def test_org_settings_exists_in_org_false() -> None:
-    session = AsyncMock()
+    session = _mock_session()
     mock_result = MagicMock()
     mock_result.first.return_value = None
     session.execute.return_value = mock_result
@@ -82,7 +93,7 @@ async def test_org_settings_exists_in_org_false() -> None:
 
 @pytest.mark.asyncio
 async def test_org_settings_search_applies_filters() -> None:
-    session = AsyncMock()
+    session = _mock_session()
     from app.modules.settings.models import OrgSettings
 
     row = OrgSettings(id=1, org_id=_ORG_ID, advance_shift_enabled=True)
@@ -99,7 +110,7 @@ async def test_org_settings_search_applies_filters() -> None:
 
 @pytest.mark.asyncio
 async def test_org_settings_reset_to_defaults_row_exists() -> None:
-    session = AsyncMock()
+    session = _mock_session()
     from app.modules.settings.models import OrgSettings
 
     row = OrgSettings(
@@ -133,7 +144,7 @@ async def test_org_settings_reset_to_defaults_row_exists() -> None:
 
 @pytest.mark.asyncio
 async def test_org_settings_reset_to_defaults_row_missing() -> None:
-    session = AsyncMock()
+    session = _mock_session()
     session.execute.return_value = _mock_scalar(None)
 
     repo = OrgSettingsRepository(session)
@@ -149,7 +160,7 @@ async def test_org_settings_reset_to_defaults_row_missing() -> None:
 
 @pytest.mark.asyncio
 async def test_salary_slip_get_by_org_id_found() -> None:
-    session = AsyncMock()
+    session = _mock_session()
     from app.modules.settings.models import OrgSalarySlipSettings
 
     row = OrgSalarySlipSettings(id=2, org_id=_ORG_ID, company_name="ACME")
@@ -163,7 +174,7 @@ async def test_salary_slip_get_by_org_id_found() -> None:
 
 @pytest.mark.asyncio
 async def test_salary_slip_get_by_org_id_not_found() -> None:
-    session = AsyncMock()
+    session = _mock_session()
     session.execute.return_value = _mock_scalar(None)
 
     repo = OrgSalarySlipSettingsRepository(session)
@@ -174,7 +185,7 @@ async def test_salary_slip_get_by_org_id_not_found() -> None:
 
 @pytest.mark.asyncio
 async def test_salary_slip_exists_in_org_true() -> None:
-    session = AsyncMock()
+    session = _mock_session()
     mock_result = MagicMock()
     mock_result.first.return_value = (1,)
     session.execute.return_value = mock_result
@@ -187,7 +198,7 @@ async def test_salary_slip_exists_in_org_true() -> None:
 
 @pytest.mark.asyncio
 async def test_salary_slip_exists_in_org_false() -> None:
-    session = AsyncMock()
+    session = _mock_session()
     mock_result = MagicMock()
     mock_result.first.return_value = None
     session.execute.return_value = mock_result
@@ -205,7 +216,7 @@ async def test_salary_slip_exists_in_org_false() -> None:
 
 @pytest.mark.asyncio
 async def test_cross_module_exists_true() -> None:
-    session = AsyncMock()
+    session = _mock_session()
     mock_result = MagicMock()
     mock_result.first.return_value = (1,)
     session.execute.return_value = mock_result
@@ -218,7 +229,7 @@ async def test_cross_module_exists_true() -> None:
 
 @pytest.mark.asyncio
 async def test_cross_module_exists_false() -> None:
-    session = AsyncMock()
+    session = _mock_session()
     mock_result = MagicMock()
     mock_result.first.return_value = None
     session.execute.return_value = mock_result
@@ -231,7 +242,7 @@ async def test_cross_module_exists_false() -> None:
 
 @pytest.mark.asyncio
 async def test_attendance_settings_exists_delegates() -> None:
-    session = AsyncMock()
+    session = _mock_session()
     mock_result = MagicMock()
     mock_result.first.return_value = (1,)
     session.execute.return_value = mock_result
@@ -247,7 +258,7 @@ async def test_attendance_settings_exists_delegates() -> None:
 
 @pytest.mark.asyncio
 async def test_payroll_settings_exists_delegates() -> None:
-    session = AsyncMock()
+    session = _mock_session()
     mock_result = MagicMock()
     mock_result.first.return_value = None
     session.execute.return_value = mock_result
@@ -262,7 +273,7 @@ async def test_payroll_settings_exists_delegates() -> None:
 
 @pytest.mark.asyncio
 async def test_leave_settings_exists_delegates() -> None:
-    session = AsyncMock()
+    session = _mock_session()
     mock_result = MagicMock()
     mock_result.first.return_value = (1,)
     session.execute.return_value = mock_result
@@ -277,7 +288,7 @@ async def test_leave_settings_exists_delegates() -> None:
 
 @pytest.mark.asyncio
 async def test_get_settings_history_paginated() -> None:
-    session = AsyncMock()
+    session = _mock_session()
     from app.modules.audit.models import ActivityLog
 
     log = ActivityLog(
@@ -303,7 +314,7 @@ async def test_get_settings_history_paginated() -> None:
 
 @pytest.mark.asyncio
 async def test_get_settings_history_count() -> None:
-    session = AsyncMock()
+    session = _mock_session()
     mock_result = MagicMock()
     mock_result.scalar_one.return_value = 5
     session.execute.return_value = mock_result

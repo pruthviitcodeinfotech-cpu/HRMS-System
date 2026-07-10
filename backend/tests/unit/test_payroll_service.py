@@ -5,12 +5,20 @@ from __future__ import annotations
 from datetime import date, datetime, time, timezone
 from decimal import Decimal
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from app.core.exceptions.base import ConflictException, NotFoundException, ValidationException
-from app.modules.payroll.constants import PaymentStatus, WorkingHourType, AttendanceMode, PayrollType, PayrollSalaryType, AdjustedStatus, AdjustmentSource
+from app.modules.payroll.constants import (
+    PaymentStatus,
+    WorkingHourType,
+    AttendanceMode,
+    PayrollType,
+    PayrollSalaryType,
+    AdjustedStatus,
+    AdjustmentSource,
+)
 from app.modules.payroll.exceptions import (
     PayrollGroupNotFoundException,
     PayrollGroupNameExistsException,
@@ -50,6 +58,7 @@ _NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
 # Builders
 # ---------------------------------------------------------------------------
 
+
 def _setting(**overrides: object) -> SimpleNamespace:
     base: dict[str, object] = {
         "id": 1,
@@ -57,7 +66,7 @@ def _setting(**overrides: object) -> SimpleNamespace:
         "working_hour_type": WorkingHourType.FIXED.value,
         "full_day_working_hours": time(9, 0),
         "half_day_working_hours": time(4, 30),
-        "attendance_mode": AttendanceMode.BIOMETRIC.value,
+        "attendance_mode": AttendanceMode.CONSIDER_ALL_PUNCH.value,
         "off_day_compensation": "paid",
         "off_day_wage_multiplier": Decimal("1.0"),
         "daily_wage_formula": "calendar_days",
@@ -181,8 +190,8 @@ def _adjustment(**overrides: object) -> SimpleNamespace:
         "org_id": 1,
         "employee_id": 5,
         "attendance_date": date(2026, 1, 15),
-        "original_status": AdjustedStatus.A.value,
-        "adjusted_status": AdjustedStatus.FD.value,
+        "original_status": AdjustedStatus.ABSENT.value,
+        "adjusted_status": AdjustedStatus.FULL_DAY.value,
         "is_forced_overwrite": False,
         "has_punch_error": False,
         "adjustment_source": AdjustmentSource.SPREADSHEET.value,
@@ -193,9 +202,63 @@ def _adjustment(**overrides: object) -> SimpleNamespace:
     return SimpleNamespace(**base)
 
 
+def _attendance_day(day: int, status: str = "present", **overrides: object) -> SimpleNamespace:
+    base: dict[str, object] = {
+        "attendance_date": date(2026, 1, day),
+        "status": status,
+        "total_working_minutes": 480,
+        "overtime_minutes": 0,
+        "late_minutes": 0,
+    }
+    base.update(overrides)
+    return SimpleNamespace(**base)
+
+
+def _loan(**overrides: object) -> SimpleNamespace:
+    base: dict[str, object] = {
+        "id": 1,
+        "employee_id": 5,
+        "monthly_installment": Decimal("100.00"),
+        "outstanding_amount": Decimal("500.00"),
+        "status": "active",
+        "type": "loan",
+    }
+    base.update(overrides)
+    return SimpleNamespace(**base)
+
+
+def _result(scalars_all: list | None = None, scalar_one: object = None) -> MagicMock:
+    """A stand-in for the SQLAlchemy ``Result`` that ``await session.execute()`` returns.
+
+    ``Result`` is synchronous — ``.scalars().all()`` and ``.scalar_one_or_none()`` return
+    values directly. Modelling it with an ``AsyncMock`` hands back coroutines, which the
+    service then treats as truthy data.
+    """
+    result = MagicMock()
+    result.scalars.return_value.all.return_value = scalars_all if scalars_all is not None else []
+    result.scalar_one_or_none.return_value = scalar_one
+    return result
+
+
+# ``_calculate_employee_payroll`` issues exactly four queries per employee, in this order.
+def _per_employee_results(
+    att_days: list | None = None,
+    leaves: list | None = None,
+    loans: list | None = None,
+    arrears: object = None,
+) -> list[MagicMock]:
+    return [
+        _result(att_days),  # attendance days
+        _result(leaves),  # approved leave requests
+        _result(loans),  # active loans / advances
+        _result(scalar_one=arrears),  # arrears record
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Fixture
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def payroll_service():
@@ -203,6 +266,8 @@ def payroll_service():
     from app.modules.payroll.service import PayrollService
 
     svc = PayrollService(AsyncMock())
+    # `await session.execute(...)` yields a synchronous Result (.scalars()/.first()).
+    svc.session.execute = AsyncMock(return_value=MagicMock())
     for attr in (
         "settings",
         "groups",
@@ -233,12 +298,18 @@ def payroll_service():
     svc.adjustments.get_by_id.return_value = _adjustment()
     svc.adjustments.get_adjustment.return_value = None
 
+    # Collections read by ``_calculate_employee_payroll``; default to "nothing recorded".
+    svc.adjustments.search.return_value = []
+    svc.penalties.get_penalties.return_value = []
+    svc.extra_hours.get_extra_hours_range.return_value = []
+
     return svc
 
 
 # ===========================================================================
 # 1. Configuration tests
 # ===========================================================================
+
 
 async def test_get_settings_existing(payroll_service) -> None:
     res = await payroll_service.get_settings(org_id=1)
@@ -265,8 +336,11 @@ async def test_update_settings(payroll_service) -> None:
 # 2. Groups & Column settings tests
 # ===========================================================================
 
+
 async def test_create_group_success(payroll_service) -> None:
-    payload = PayrollGroupCreateSchema(name="New Group", payroll_type=PayrollType.MONTHLY_WITHOUT_COMPLIANCE)
+    payload = PayrollGroupCreateSchema(
+        name="New Group", payroll_type=PayrollType.MONTHLY_WITHOUT_COMPLIANCE
+    )
     payroll_service.groups.create.return_value = _group(name="New Group")
     res = await payroll_service.create_group(org_id=1, payload=payload, user_id=9)
     assert res.name == "New Group"
@@ -275,14 +349,16 @@ async def test_create_group_success(payroll_service) -> None:
 
 async def test_create_group_name_exists(payroll_service) -> None:
     payroll_service.groups.name_exists.return_value = True
-    payload = PayrollGroupCreateSchema(name="Existing Group", payroll_type=PayrollType.MONTHLY_WITHOUT_COMPLIANCE)
+    payload = PayrollGroupCreateSchema(
+        name="Existing Group", payroll_type=PayrollType.MONTHLY_WITHOUT_COMPLIANCE
+    )
     with pytest.raises(PayrollGroupNameExistsException):
         await payroll_service.create_group(org_id=1, payload=payload, user_id=9)
 
 
 async def test_delete_group_success(payroll_service) -> None:
     # Set queries to mock group not in use
-    payroll_service.session.execute = AsyncMock()
+    payroll_service.session.execute = AsyncMock(return_value=MagicMock())
     payroll_service.session.execute.return_value.first.return_value = None
 
     await payroll_service.delete_group(org_id=1, group_id=2, user_id=9)
@@ -291,7 +367,7 @@ async def test_delete_group_success(payroll_service) -> None:
 
 async def test_delete_group_in_use(payroll_service) -> None:
     # Mock group in use by employee
-    payroll_service.session.execute = AsyncMock()
+    payroll_service.session.execute = AsyncMock(return_value=MagicMock())
     payroll_service.session.execute.return_value.first.return_value = (5,)
 
     with pytest.raises(PayrollGroupInUseException):
@@ -299,7 +375,9 @@ async def test_delete_group_in_use(payroll_service) -> None:
 
 
 async def test_assign_group(payroll_service) -> None:
-    payload = EmployeeGroupAssignRequestSchema(payroll_group_id=2, salary_type=PayrollSalaryType.MONTHLY)
+    payload = EmployeeGroupAssignRequestSchema(
+        payroll_group_id=2, salary_type=PayrollSalaryType.MONTHLY
+    )
     payroll_service.assignments.create.return_value = _assignment()
     await payroll_service.assign_group(org_id=1, employee_id=5, payload=payload, user_id=9)
     payroll_service.assignments.get_by_employee.assert_awaited_once_with(5)
@@ -309,7 +387,9 @@ async def test_assign_group(payroll_service) -> None:
 async def test_replace_columns(payroll_service) -> None:
     payload = PayrollColumnSettingsReplaceSchema(
         columns=[
-            PayrollColumnSettingInputSchema(column_key="basic", column_label="Basic Pay", is_visible=True, display_order=1)
+            PayrollColumnSettingInputSchema(
+                column_key="basic", column_label="Basic Pay", is_visible=True, display_order=1
+            )
         ]
     )
     await payroll_service.replace_columns(org_id=1, group_id=2, payload=payload, user_id=9)
@@ -319,6 +399,7 @@ async def test_replace_columns(payroll_service) -> None:
 # ===========================================================================
 # 3. Cycles tests
 # ===========================================================================
+
 
 async def test_create_cycle_success(payroll_service) -> None:
     payload = PayrollCycleCreateSchema(payroll_group_id=2, cycle_date=date(2026, 2, 28))
@@ -344,31 +425,103 @@ async def test_update_cycle_finalized(payroll_service) -> None:
 # 4. Computation, Generate, Finalize & Payments tests
 # ===========================================================================
 
+# A ₹3100 monthly salary over a 31-day cycle gives an exact ₹100.00 daily wage, so the
+# expected gross is not obscured by the rounding of ``daily_wage`` to two places.
+_FULL_MONTH = [_attendance_day(d) for d in range(1, 32)]
+
+
 async def test_preview_payroll(payroll_service) -> None:
     payload = PayrollProcessRequestSchema(
-        payroll_group_id=2, cycle_from=date(2026, 1, 1), cycle_to=date(2026, 1, 31), employee_ids=[5]
+        payroll_group_id=2,
+        cycle_from=date(2026, 1, 1),
+        cycle_to=date(2026, 1, 31),
+        employee_ids=[5],
     )
-    # Mock sub-repos/session executions
-    payroll_service.session.execute = AsyncMock()
-    payroll_service.session.execute.return_value.scalars.return_value.all.return_value = []
+    employee = _employee(monthly_salary=Decimal("3100.00"))
+    payroll_service.session.execute = AsyncMock(
+        side_effect=[_result([employee]), *_per_employee_results(att_days=_FULL_MONTH)]
+    )
 
     res = await payroll_service.preview_payroll(org_id=1, payload=payload)
+
     assert len(res) == 1
-    assert res[0].employee_id == 5
-    assert res[0].gross_wages == Decimal("3000.00")
+    row = res[0]
+    assert row.employee_id == 5
+    assert row.total_days == 31
+    assert row.full_day_count == 31
+    assert row.paid_day_count == Decimal("31")
+    assert row.unpaid_day_count == Decimal("0.0")
+    assert row.daily_wage == Decimal("100.00")
+    assert row.gross_wages == Decimal("3100.00")
+    assert row.gross_earnings == Decimal("3100.00")
+    assert row.to_pay == Decimal("3100.00")
+    # Preview must not persist anything.
+    payroll_service.computed_rows.create.assert_not_awaited()
+
+
+async def test_preview_payroll_unpaid_days_reduce_gross(payroll_service) -> None:
+    """Twenty present days out of a 31-day cycle pays twenty daily wages, not the full month."""
+    payload = PayrollProcessRequestSchema(
+        payroll_group_id=2,
+        cycle_from=date(2026, 1, 1),
+        cycle_to=date(2026, 1, 31),
+        employee_ids=[5],
+    )
+    employee = _employee(monthly_salary=Decimal("3100.00"))
+    att = [_attendance_day(d) for d in range(1, 21)]
+    payroll_service.session.execute = AsyncMock(
+        side_effect=[_result([employee]), *_per_employee_results(att_days=att)]
+    )
+
+    res = await payroll_service.preview_payroll(org_id=1, payload=payload)
+
+    assert res[0].full_day_count == 20
+    assert res[0].paid_day_count == Decimal("20")
+    assert res[0].unpaid_day_count == Decimal("11")
+    assert res[0].gross_wages == Decimal("2000.00")
 
 
 async def test_generate_payroll(payroll_service) -> None:
     payload = PayrollProcessRequestSchema(
-        payroll_group_id=2, cycle_from=date(2026, 1, 1), cycle_to=date(2026, 1, 31), employee_ids=[5]
+        payroll_group_id=2,
+        cycle_from=date(2026, 1, 1),
+        cycle_to=date(2026, 1, 31),
+        employee_ids=[5],
     )
+    employee = _employee(monthly_salary=Decimal("3100.00"))
     payroll_service.computed_rows.get_row.return_value = None
-    payroll_service.session.execute = AsyncMock()
-    payroll_service.session.execute.return_value.scalars.return_value.all.return_value = []
+    payroll_service.session.execute = AsyncMock(
+        side_effect=[_result([employee]), *_per_employee_results(att_days=_FULL_MONTH)]
+    )
 
     res = await payroll_service.generate_payroll(org_id=1, payload=payload, user_id=9)
+
     assert res.results[0].success is True
+    assert res.results[0].employee_id == 5
     payroll_service.computed_rows.create.assert_awaited_once()
+    persisted = payroll_service.computed_rows.create.await_args.args[0]
+    assert persisted["gross_wages"] == Decimal("3100.00")
+    assert persisted["is_finalized"] is False
+    assert persisted["computed_by"] == 9
+    payroll_service.audit.record.assert_awaited_once()
+
+
+async def test_generate_payroll_skips_finalized_employee(payroll_service) -> None:
+    """An already-finalized employee is reported as a failure, not recomputed."""
+    payload = PayrollProcessRequestSchema(
+        payroll_group_id=2,
+        cycle_from=date(2026, 1, 1),
+        cycle_to=date(2026, 1, 31),
+        employee_ids=[5],
+    )
+    payroll_service.computed_rows.get_row.return_value = _computed_row(is_finalized=True)
+    payroll_service.session.execute = AsyncMock(side_effect=[_result([_employee()])])
+
+    res = await payroll_service.generate_payroll(org_id=1, payload=payload, user_id=9)
+
+    assert res.results[0].success is False
+    assert res.results[0].error_code == "PAYROLL_ALREADY_FINALIZED"
+    payroll_service.computed_rows.create.assert_not_awaited()
 
 
 async def test_finalize_payroll_success(payroll_service) -> None:
@@ -376,31 +529,84 @@ async def test_finalize_payroll_success(payroll_service) -> None:
         payroll_group_id=2, cycle_from=date(2026, 1, 1), cycle_to=date(2026, 1, 31)
     )
     payroll_service.runs.create.return_value = _run()
-    payroll_service.computed_rows.get_row.return_value = None
-
-    # mock session execute returns
-    mock_exec = AsyncMock()
-    mock_exec.scalar_one_or_none.return_value = None
-    # comp_rows returns list of unfinalized rows
-    mock_exec.scalars.return_value.all.side_effect = [
-        [_computed_row(is_finalized=False)], # comp_rows
-        [], # loans
-    ]
-    payroll_service.session.execute = AsyncMock(return_value=mock_exec)
+    payroll_service.session.execute = AsyncMock(
+        side_effect=[
+            _result(scalar_one=None),  # no existing finalized run
+            _result([_computed_row(is_finalized=False)]),  # computed rows to lock
+        ]
+    )
 
     res = await payroll_service.finalize_payroll(org_id=1, payload=payload, user_id=9)
+
     assert res.finalized_amount == Decimal("3000.00")
     payroll_service.runs.create.assert_awaited_once()
+    assert payroll_service.runs.create.await_args.args[0]["finalized_amount"] == Decimal("3000.00")
     payroll_service.computed_rows.update.assert_awaited_once()
+    locked = payroll_service.computed_rows.update.await_args.args[1]
+    assert locked == {"is_finalized": True, "finalized_run_id": 4}
+
+
+async def test_finalize_payroll_settles_loan_deduction(payroll_service) -> None:
+    """Finalizing debits the employee's active loan and writes a ledger transaction."""
+    payload = PayrollProcessRequestSchema(
+        payroll_group_id=2, cycle_from=date(2026, 1, 1), cycle_to=date(2026, 1, 31)
+    )
+    row = _computed_row(
+        is_finalized=False,
+        loan_advance_deduction=Decimal("100.00"),
+        arrears_amount=Decimal("0.00"),
+        to_pay=Decimal("2900.00"),
+    )
+    loan = _loan()
+    payroll_service.runs.create.return_value = _run(finalized_amount=Decimal("2900.00"))
+    payroll_service.session.add = MagicMock()
+    payroll_service.session.execute = AsyncMock(
+        side_effect=[
+            _result(scalar_one=None),  # no existing finalized run
+            _result([row]),  # computed rows
+            _result([loan]),  # active loans, ordered by id
+            _result(),  # re-load the loan into the session
+        ]
+    )
+
+    res = await payroll_service.finalize_payroll(org_id=1, payload=payload, user_id=9)
+
+    assert res.finalized_amount == Decimal("2900.00")
+    assert loan.outstanding_amount == Decimal("400.00")
+    assert loan.status == "active"
+    payroll_service.session.add.assert_called_once()
+    tx = payroll_service.session.add.call_args.args[0]
+    assert tx.amount == Decimal("100.00")
+    assert tx.loan_advance_id == loan.id
+    assert tx.payroll_run_id == 4
+
+
+async def test_finalize_payroll_no_rows_conflicts(payroll_service) -> None:
+    payload = PayrollProcessRequestSchema(
+        payroll_group_id=2, cycle_from=date(2026, 1, 1), cycle_to=date(2026, 1, 31)
+    )
+    payroll_service.session.execute = AsyncMock(side_effect=[_result(scalar_one=None), _result([])])
+    with pytest.raises(ConflictException):
+        await payroll_service.finalize_payroll(org_id=1, payload=payload, user_id=9)
+
+
+async def test_finalize_payroll_existing_run_conflicts(payroll_service) -> None:
+    payload = PayrollProcessRequestSchema(
+        payroll_group_id=2, cycle_from=date(2026, 1, 1), cycle_to=date(2026, 1, 31)
+    )
+    payroll_service.session.execute = AsyncMock(side_effect=[_result(scalar_one=_run())])
+    with pytest.raises(PayrollAlreadyFinalizedException):
+        await payroll_service.finalize_payroll(org_id=1, payload=payload, user_id=9)
 
 
 async def test_definalize_payroll(payroll_service) -> None:
     payroll_service.runs.get_by_id_in_org.return_value = _run(is_definalized=False)
-    mock_exec = AsyncMock()
+    payroll_service.runs.update.return_value = _run(is_definalized=True)
+    mock_exec = MagicMock()
     mock_exec.scalars.return_value.all.side_effect = [
-        [], # loans tx
-        [], # arrears tx
-        [_computed_row(is_finalized=True)], # comp rows
+        [],  # loans tx
+        [],  # arrears tx
+        [_computed_row(is_finalized=True)],  # comp rows
     ]
     payroll_service.session.execute = AsyncMock(return_value=mock_exec)
 
@@ -410,7 +616,9 @@ async def test_definalize_payroll(payroll_service) -> None:
 
 
 async def test_record_payment(payroll_service) -> None:
-    payload = RecordPaymentRequestSchema(paid_amount=Decimal("3000.00"), payment_status=PaymentStatus.PAID)
+    payload = RecordPaymentRequestSchema(
+        paid_amount=Decimal("3000.00"), payment_status=PaymentStatus.PAID
+    )
     await payroll_service.record_payment(org_id=1, run_id=4, payload=payload, user_id=9)
     payroll_service.runs.update.assert_awaited_once()
 
@@ -418,6 +626,7 @@ async def test_record_payment(payroll_service) -> None:
 # ===========================================================================
 # 5. Payslips & History tests
 # ===========================================================================
+
 
 async def test_view_payslip(payroll_service) -> None:
     res = await payroll_service.view_payslip(org_id=1, row_id=10)
@@ -441,12 +650,13 @@ async def test_download_payslip_pdf_unfinalized_raises(payroll_service) -> None:
 # 6. Adjustments tests
 # ===========================================================================
 
+
 async def test_add_adjustment(payroll_service) -> None:
     payload = AttendanceAdjustmentCreateSchema(
-        employee_id=5, attendance_date=date(2026, 1, 15), adjusted_status=AdjustedStatus.FD
+        employee_id=5, attendance_date=date(2026, 1, 15), adjusted_status=AdjustedStatus.FULL_DAY
     )
     # mock unfinalized period check
-    payroll_service.session.execute = AsyncMock()
+    payroll_service.session.execute = AsyncMock(return_value=MagicMock())
     payroll_service.session.execute.return_value.first.return_value = None
 
     await payroll_service.add_adjustment(org_id=1, payload=payload, user_id=9)
@@ -457,7 +667,7 @@ async def test_add_penalty(payroll_service) -> None:
     payload = AttendanceAdjustmentPenaltyCreateSchema(
         employee_id=5, attendance_date=date(2026, 1, 15), penalty_amount=Decimal("50.00")
     )
-    payroll_service.session.execute = AsyncMock()
+    payroll_service.session.execute = AsyncMock(return_value=MagicMock())
     payroll_service.session.execute.return_value.first.return_value = None
 
     await payroll_service.add_penalty(org_id=1, payload=payload, user_id=9)
@@ -468,7 +678,7 @@ async def test_add_extra_hours(payroll_service) -> None:
     payload = AttendanceAdjustmentExtraHoursCreateSchema(
         employee_id=5, attendance_date=date(2026, 1, 15), extra_hours=Decimal("2.5")
     )
-    payroll_service.session.execute = AsyncMock()
+    payroll_service.session.execute = AsyncMock(return_value=MagicMock())
     payroll_service.session.execute.return_value.first.return_value = None
     payroll_service.extra_hours.get_extra_hours.return_value = None
 

@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Response, status
 
 from app.core.constants.enums import PermissionAction as A
 from app.core.dependencies.auth import (
@@ -224,9 +224,10 @@ async def deactivate_user(
 )
 async def delete_user(
     user_id: int, service: ServiceDep, current_user: CurrentUserDep, org_id: OrgIdDep
-) -> None:
+) -> Response:
     """Soft-delete a user (cannot delete self)."""
     await service.delete_user(org_id=org_id, actor_id=current_user.user_id, user_id=user_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post(
@@ -262,9 +263,10 @@ async def assign_employee(
     summary="Remove Employee Mapping",
     dependencies=[Depends(require_permission(_USER, A.EDIT))],
 )
-async def remove_employee(user_id: int, service: ServiceDep, org_id: OrgIdDep) -> None:
+async def remove_employee(user_id: int, service: ServiceDep, org_id: OrgIdDep) -> Response:
     """Unlink the employee from a user."""
     await service.remove_employee(org_id=org_id, user_id=user_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 # ===========================================================================
@@ -350,9 +352,10 @@ async def update_role(
     summary="Delete Role (soft)",
     dependencies=[Depends(require_permission(_ROLE, A.DELETE))],
 )
-async def delete_role(template_id: int, service: ServiceDep, org_id: OrgIdDep) -> None:
+async def delete_role(template_id: int, service: ServiceDep, org_id: OrgIdDep) -> Response:
     """Soft-delete a role (blocked while assigned to users)."""
     await service.delete_role(org_id=org_id, template_id=template_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post(
@@ -448,11 +451,12 @@ async def replace_template_permissions(
 )
 async def remove_template_permission(
     template_id: int, feature_key: str, service: ServiceDep, org_id: OrgIdDep
-) -> None:
+) -> Response:
     """Remove one feature's permission from a role."""
     await service.remove_template_permission(
         org_id=org_id, template_id=template_id, feature_key=feature_key
     )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 # ===========================================================================
@@ -497,9 +501,10 @@ async def assign_role(
     summary="Remove User Role",
     dependencies=[Depends(require_permission(_ACCESS, A.EDIT))],
 )
-async def remove_role(user_id: int, service: ServiceDep, org_id: OrgIdDep) -> None:
+async def remove_role(user_id: int, service: ServiceDep, org_id: OrgIdDep) -> Response:
     """Remove the user's template assignment."""
     await service.remove_role(org_id=org_id, user_id=user_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 # ===========================================================================
@@ -568,9 +573,10 @@ async def replace_custom_permissions(
 )
 async def remove_custom_permission(
     user_id: int, feature_key: str, service: ServiceDep, org_id: OrgIdDep
-) -> None:
+) -> Response:
     """Remove a per-user permission override."""
     await service.remove_custom_permission(org_id=org_id, user_id=user_id, feature_key=feature_key)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get(
@@ -653,9 +659,10 @@ async def replace_branch_access(
 )
 async def remove_branch_access(
     user_id: int, branch_id: int, service: ServiceDep, org_id: OrgIdDep
-) -> None:
+) -> Response:
     """Revoke a branch grant from a user."""
     await service.remove_branch_access(org_id=org_id, user_id=user_id, branch_id=branch_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 # ===========================================================================
@@ -731,8 +738,9 @@ async def replace_department_access(
 )
 async def remove_department_access(
     user_id: int, department_id: int, service: ServiceDep, org_id: OrgIdDep
-) -> None:
+) -> Response:
     """Revoke a department grant from a user."""
     await service.remove_department_access(
         org_id=org_id, user_id=user_id, department_id=department_id
     )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

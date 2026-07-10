@@ -21,7 +21,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Response, status
 
 from app.core.constants.enums import PermissionAction as A
 from app.core.dependencies.auth import (
@@ -202,11 +202,12 @@ async def update_shift(
 )
 async def delete_shift(
     shift_id: int, service: ServiceDep, current_user: CurrentUserDep, org_id: OrgIdDep
-) -> None:
+) -> Response:
     """Deactivate a shift (soft delete); blocked when active assignments reference it."""
     await service.delete_shift(
         org_id=org_id, actor_id=current_user.user_id, shift_id=shift_id
     )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post(

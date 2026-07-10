@@ -28,10 +28,19 @@ from app.modules.rbac.schemas import (
 )
 
 
-def _perm_row(feature_key: str, **flags: bool) -> SimpleNamespace:
+def _perm_row(feature_key: str, perm_id: int = 1, **flags: bool) -> SimpleNamespace:
     base = {"can_create": False, "can_read": False, "can_edit": False, "can_delete": False}
     base.update(flags)
-    return SimpleNamespace(feature_key=feature_key, **base)
+    # Mirrors ``RightsTemplatePermission``: ``id``, ``feature_label`` and
+    # ``parent_feature_key`` are real columns that ``clone_role`` copies onto the
+    # cloned template and that ``TemplatePermissionSchema`` requires.
+    return SimpleNamespace(
+        id=perm_id,
+        feature_key=feature_key,
+        feature_label=feature_key.replace("_", " ").title(),
+        parent_feature_key=None,
+        **base,
+    )
 
 
 # --- User CRUD -------------------------------------------------------------
