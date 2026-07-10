@@ -2,44 +2,50 @@
 name = "hrms-backend"
 version = "0.1.0"
 description = "Enterprise HRMS backend (FastAPI, PostgreSQL, modular monolith)"
-requires-python = ">=3.11"
+# Python 3.12 is the only interpreter the test suite is verified against; see
+# docs/environment.md. 3.11 was never validated, and the pinned toolchain below was
+# resolved and green on 3.12 exclusively. The upper bound keeps local, Docker, and CI
+# on one interpreter rather than letting each pick its own.
+requires-python = ">=3.12,<3.13"
 readme = "README.md"
 
+# Every direct dependency is pinned to an exact version. `uv.lock` pins the full
+# transitive graph with hashes; requirements*.txt are generated from it. Change a
+# version here, then regenerate with `make lock`.
 dependencies = [
-    "fastapi",
-    "uvicorn[standard]",
-    "sqlalchemy[asyncio]",
-    "alembic",
-    "asyncpg",
-    "psycopg2-binary",
-    "pydantic",
-    "pydantic-settings",
-    "python-jose[cryptography]",
+    "fastapi==0.139.0",
+    "uvicorn[standard]==0.51.0",
+    "sqlalchemy[asyncio]==2.0.51",
+    "alembic==1.18.5",
+    "asyncpg==0.31.0",
+    "psycopg2-binary==2.9.12",
+    "pydantic==2.13.4",
+    "pydantic-settings==2.14.2",
+    "python-jose[cryptography]==3.5.0",
     # passlib 1.7.4 probes the bcrypt backend with a 73-byte password. bcrypt >= 5
     # raises ValueError instead of truncating, which makes every hash_password()
     # call fail; bcrypt >= 4.1 removed __about__, which passlib logs as a trapped
     # error on import. Pin to the last release that is clean on both counts.
     "passlib[bcrypt]==1.7.4",
-    "bcrypt>=4.0,<4.1",
-    "redis",
-    "python-multipart",
-    "jinja2",
-    "httpx",
-    "structlog",
-    "websockets",
+    "bcrypt==4.0.1",
+    "redis==8.0.1",
+    "python-multipart==0.0.32",
+    "jinja2==3.1.6",
+    "httpx==0.28.1",
+    "structlog==26.1.0",
+    "websockets==16.1",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest",
-    "pytest-asyncio",
-    "pytest-cov",
-    "httpx",
-    "faker",
-    "ruff",
-    "black",
-    "mypy",
-    "pre-commit",
+    "pytest==9.1.1",
+    "pytest-asyncio==1.4.0",
+    "pytest-cov==7.1.0",
+    "faker==40.28.1",
+    "ruff==0.15.21",
+    "black==26.5.1",
+    "mypy==2.2.0",
+    "pre-commit==4.6.0",
 ]
 
 # NOTE: background-job library (e.g. arq or celery) is intentionally left as a

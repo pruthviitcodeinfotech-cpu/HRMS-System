@@ -1,6 +1,9 @@
+# Local development stack. Image tags are pinned to a patch release so every machine
+# runs the same Postgres and Redis, matching the frozen Python toolchain.
+
 services:
   db:
-    image: postgres:16
+    image: postgres:16.14-bookworm
     environment:
       POSTGRES_USER: hrms
       POSTGRES_PASSWORD: hrms
@@ -9,33 +12,76 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hrms -d hrms"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   redis:
-    image: redis:7
+    image: redis:7.4.9-alpine
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   api:
-    build: .
+    build:
+      context: .
+      target: runtime
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-    env_file: .env
+    # `.env` is developer-local and never committed. Without `required: false` the whole
+    # stack refuses to start on a fresh clone, so the defaults below stand in until a
+    # developer copies `.env.example` to `.env`.
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://hrms:hrms@db:5432/hrms}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      SECRET_KEY: ${SECRET_KEY:-change-me}
+      JWT_SECRET: ${JWT_SECRET:-change-me}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000}
     ports:
       - "8000:8000"
+    # Bind-mount the source for --reload. The virtualenv lives at /opt/venv, so it is
+    # not shadowed by this mount.
     volumes:
-      - .:/app
+      - ./app:/app/app
+      - ./alembic:/app/alembic
     depends_on:
-      - db
-      - redis
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
+  # The background worker is not started by default: `app/jobs/worker.py` is still a
+  # placeholder with no entrypoint (the queue library is an open decision — see
+  # docs/architecture.md), so the container would exit immediately. Enable it with
+  # `docker compose --profile worker up` once the worker is implemented.
   worker:
-    build: .
+    profiles: ["worker"]
+    build:
+      context: .
+      target: runtime
     command: python -m app.jobs.worker
-    env_file: .env
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://hrms:hrms@db:5432/hrms}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
     volumes:
-      - .:/app
+      - ./app:/app/app
     depends_on:
-      - db
-      - redis
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
 volumes:
   pgdata:

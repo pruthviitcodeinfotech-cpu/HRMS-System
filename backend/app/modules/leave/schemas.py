@@ -183,6 +183,10 @@ class LeaveCreditDebitRequest(BaseSchema):
     leave_type_id: int = Field(..., description="Target leave type ID.")
     cycle_year: int = Field(..., description="Target cycle year.")
     days: Decimal = Field(..., gt=0, description="Number of days to credit or debit.")
+    adjustment_type: AdjustmentType = Field(
+        default=AdjustmentType.MANUAL,
+        description="Type of adjustment (manual, bulk_adjust, bulk_update).",
+    )
     remarks: str | None = Field(default=None, max_length=500, description="Optional reason.")
 
 

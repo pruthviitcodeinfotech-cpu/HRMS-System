@@ -32,6 +32,7 @@ from app.modules.attendance.exceptions import (
     EmployeeNotFoundException,
     PenaltyAlreadyWaivedException,
     PenaltyNotFoundException,
+    RegularizationDisabledException,
     ShiftNotFoundException,
 )
 from app.modules.attendance.models import AttendanceDay, AttendancePenalty
@@ -64,6 +65,7 @@ from app.modules.attendance.schemas import (
 from app.modules.audit.constants import ActionType
 from app.modules.audit.service import AuditService
 from app.modules.employee.models.employee import Employee
+from app.modules.settings.repository import OrgSettingsRepository
 from app.modules.shift.schemas import ShiftResolveQuery
 from app.modules.shift.service import ShiftService
 from app.shared.base.repository import BaseRepository
@@ -85,6 +87,7 @@ class AttendanceService(BaseService):
         # Cross-module lookup readers
         self.employees = EmployeeLookupRepository(session)
         self.shifts = ShiftLookupRepository(session)
+        self.org_settings = OrgSettingsRepository(session)
 
         # Audit logger
         self.audit = AuditService(session)
@@ -129,6 +132,17 @@ class AttendanceService(BaseService):
             employee_id=employee_id,
             employee_name=employee_name,
         )
+
+    async def _require_regularization_enabled(self, org_id: int) -> None:
+        """Reject the request when Settings has regularization turned off for the org.
+
+        ``org_settings.enable_regularization`` is the organization-wide toggle owned by the
+        Settings module. An org with no settings row has never enabled it, so the schema
+        default (``false``) applies and regularization stays off.
+        """
+        settings = await self.org_settings.get_by_org_id(org_id)
+        if settings is None or not settings.enable_regularization:
+            raise RegularizationDisabledException()
 
     async def _validate_employee(self, org_id: int, employee_id: int) -> Employee:
         """Ensure an active employee exists in the tenant's context."""
@@ -1125,6 +1139,7 @@ class AttendanceService(BaseService):
         data: AttendanceCorrectionCreateRequest,
     ) -> AttendanceCorrectionSchema:
         """Create a regularization request along with its polymorphic approval record."""
+        await self._require_regularization_enabled(org_id)
         employee = await self._validate_employee(org_id, data.employee_id)
         day = await self.days.get_by_employee_date(org_id, data.employee_id, data.date)
         if not day:

@@ -2,7 +2,7 @@
 
 Enterprise HR & Payroll Management System — backend service.
 
-- **Language:** Python 3.11+
+- **Language:** Python 3.12 (exactly — see [`docs/environment.md`](docs/environment.md))
 - **Framework:** FastAPI (async)
 - **Database:** PostgreSQL + SQLAlchemy (async) + Alembic
 - **Validation:** Pydantic
@@ -13,8 +13,9 @@ Enterprise HR & Payroll Management System — backend service.
 - **Testing:** Pytest
 - **Architecture:** Modular Monolith (package-by-feature)
 
-> **Status:** Backend Foundation Phase — project structure only. No business
-> modules, models, APIs, or authentication are implemented yet.
+> **Status:** 12 modules are implemented and mounted (222 endpoints under `/api/v1`).
+> The `payroll`, `leave`, `audit`, and `organization` routers are still placeholders and
+> are deliberately not mounted; their service layers exist but have no HTTP surface.
 
 ## Layout
 
@@ -33,17 +34,28 @@ tests/             Unit / integration / e2e test suite
 Every folder under `app/modules/` follows the same internal structure — see
 [`app/modules/README.md`](app/modules/README.md).
 
-## Getting started (once dependencies are added)
+## Getting started
+
+Requires **Python 3.12** and [`uv`](https://docs.astral.sh/uv/). Dependencies are frozen in
+`uv.lock`; `make install` reproduces the exact environment used by Docker and CI.
 
 ```bash
-make install     # install dependencies
+make install     # frozen install into ./.venv (uv sync --frozen --extra dev)
 cp .env.example .env
-make run         # start the API (uvicorn app.main:app --reload)
-make worker      # start the background worker
+make run         # start the API on :8000
 make migrate     # apply database migrations
 make test        # run the test suite
 make lint        # ruff + mypy
 make format      # black + ruff --fix
+make lock        # regenerate uv.lock + requirements*.txt after editing pyproject.toml
 ```
 
-See [`docs/architecture.md`](docs/architecture.md) for the full architecture reference.
+Or with Docker:
+
+```bash
+docker compose up --build    # db + redis + api on :8000
+```
+
+See [`docs/environment.md`](docs/environment.md) for the supported Python version and the
+dependency workflow, and [`docs/architecture.md`](docs/architecture.md) for the full
+architecture reference.

@@ -55,3 +55,27 @@ class InvalidTransactionException(ValidationException):
 
     code = "INVALID_TRANSACTION"
     message = "Invalid ledger transaction."
+
+
+class EmployeeNotExitedException(ConflictException):
+    """Full & Final settlement was attempted for an employee who has not exited."""
+
+    code = "EMPLOYEE_NOT_EXITED"
+    message = "Full & Final settlement requires the employee to have exited."
+
+
+class PayrollNotFinalizedException(ConflictException):
+    """No finalized payroll run covers the employee's last working day."""
+
+    code = "PAYROLL_NOT_FINALIZED"
+    message = (
+        "Full & Final settlement requires a finalized payroll run covering the "
+        "employee's last working day."
+    )
+
+
+class SettlementAlreadyFinalizedException(ConflictException):
+    """The employee's Full & Final settlement has already been finalized."""
+
+    code = "SETTLEMENT_ALREADY_FINALIZED"
+    message = "Full & Final settlement has already been finalized for this employee."

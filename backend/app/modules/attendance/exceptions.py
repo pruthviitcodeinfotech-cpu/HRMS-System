@@ -38,6 +38,13 @@ class PenaltyAlreadyWaivedException(ConflictException):
     message = "This penalty has already been waived."
 
 
+class RegularizationDisabledException(ConflictException):
+    """The organization has turned attendance regularization off in Settings."""
+
+    code = "REGULARIZATION_DISABLED"
+    message = "Attendance regularization is disabled for this organization."
+
+
 class EmployeeNotFoundException(NotFoundException):
     """The referenced employee does not exist in the caller's organization."""
 

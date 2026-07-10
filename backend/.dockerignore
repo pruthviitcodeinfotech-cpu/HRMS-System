@@ -13,3 +13,15 @@ var/uploads/*
 .env
 .env.*
 !.env.example
+
+# Build artifacts that must never shadow a fresh install
+*.egg-info
+build
+dist
+
+# Dev-only content: the runtime image copies app/, alembic/ and the two config files.
+tests
+docs
+scripts
+Makefile
+docker-compose.yml

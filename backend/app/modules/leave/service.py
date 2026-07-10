@@ -301,6 +301,7 @@ class LeaveService(BaseService):
         leave_type_id = data["leave_type_id"]
         cycle_year = data["cycle_year"]
         days = data["days"]
+        adjustment_type = data.get("adjustment_type", AdjustmentType.MANUAL)
         remarks = data.get("remarks")
 
         await self.get_leave_type(org_id, leave_type_id)
@@ -341,7 +342,7 @@ class LeaveService(BaseService):
                 {
                     "employee_id": employee_id,
                     "leave_type_id": leave_type_id,
-                    "adjustment_type": AdjustmentType.MANUAL,
+                    "adjustment_type": adjustment_type,
                     "delta": days,
                     "new_balance": new_closing,
                     "remarks": remarks,
@@ -373,6 +374,7 @@ class LeaveService(BaseService):
         leave_type_id = data["leave_type_id"]
         cycle_year = data["cycle_year"]
         days = data["days"]
+        adjustment_type = data.get("adjustment_type", AdjustmentType.MANUAL)
         remarks = data.get("remarks")
 
         await self.get_leave_type(org_id, leave_type_id)
@@ -399,7 +401,7 @@ class LeaveService(BaseService):
                 {
                     "employee_id": employee_id,
                     "leave_type_id": leave_type_id,
-                    "adjustment_type": AdjustmentType.MANUAL,
+                    "adjustment_type": adjustment_type,
                     "delta": -days,
                     "new_balance": new_closing,
                     "remarks": remarks,
@@ -544,6 +546,12 @@ class LeaveService(BaseService):
         if available < duration_days:
             raise InsufficientBalanceException()
 
+        # Local imports avoid a circular import (approvals.service depends on the
+        # leave repositories/constants). Matches the cross-module orchestration
+        # pattern already used by ApprovalService.
+        from app.modules.approvals.constants import RequestType
+        from app.modules.approvals.service import ApprovalService
+
         async with self.transaction():
             request = await self.requests.create(
                 {
@@ -568,6 +576,20 @@ class LeaveService(BaseService):
                 performed_by_name=f"User {applied_by}",
                 employee_id=employee_id,
                 employee_name=emp.employee_name,
+            )
+
+            # Initiate the approval workflow in the SAME transaction: create the
+            # polymorphic ApprovalRequest envelope (request_type='leave',
+            # reference_id=<leave request id>) so a reviewer can act on it. Without
+            # this the request would remain permanently pending. Delegated to
+            # ApprovalService so envelope creation logic is not duplicated.
+            approval_service = ApprovalService(self.session)
+            await approval_service.submit_approval_request(
+                org_id=org_id,
+                request_type=RequestType.LEAVE,
+                reference_id=request.id,
+                employee_id=employee_id,
+                created_by=applied_by,
             )
 
             return request

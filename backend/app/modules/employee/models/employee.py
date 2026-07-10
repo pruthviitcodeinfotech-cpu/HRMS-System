@@ -83,6 +83,17 @@ class Employee(Base):
         String(20), nullable=False, server_default=text("'active'")
     )
     profile_photo_url: Mapped[str | None] = mapped_column(Text)
+    # Stamped when the employee's Full & Final settlement is finalized. That operation
+    # debits the loan and arrears ledgers, so it must not run twice — see migration 0017.
+    settlement_finalized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    settlement_finalized_by: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "users.id",
+            name="fk_employees_settlement_finalized_by_users",
+            ondelete="SET NULL",
+        ),
+    )
     is_deleted: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     # DEFERRED cross-module FK -> users.id
     created_by: Mapped[int | None] = mapped_column(BigInteger)

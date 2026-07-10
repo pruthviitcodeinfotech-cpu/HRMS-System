@@ -16,15 +16,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.constants.enums import SortOrder
 from app.modules.audit.constants import ActionType
 from app.modules.audit.service import AuditService
+from app.modules.employee.constants import EmploymentStatus
 from app.modules.employee.models.employee import Employee
+from app.modules.payroll.models.run import FinalizedPayrollRun
 from app.modules.settlements.exceptions import (
     ArrearsNotFoundException,
+    EmployeeNotExitedException,
     EmployeeNotFoundException,
     InsufficientArrearsException,
     InvalidTransactionException,
     LoanAdvanceClosedException,
     LoanAdvanceHasTransactionsException,
     LoanAdvanceNotFoundException,
+    PayrollNotFinalizedException,
+    SettlementAlreadyFinalizedException,
 )
 from app.modules.settlements.models import (
     ArrearsTransaction,
@@ -50,6 +55,7 @@ from app.modules.settlements.schemas import (
 )
 from app.shared.base.service import BaseService
 from app.shared.schemas.pagination import PaginatedResponse
+from app.shared.utils.datetime import utcnow
 
 
 class SettlementService(BaseService):
@@ -81,6 +87,40 @@ class SettlementService(BaseService):
         emp = (await self.session.execute(stmt.limit(1))).scalar_one_or_none()
         if emp is None:
             raise EmployeeNotFoundException()
+        return emp
+
+    async def _validate_ff_preconditions(self, org_id: int, employee_id: int) -> Employee:
+        """Return the employee, having enforced every Full & Final precondition.
+
+        A Full & Final settlement debits the employee's loan and arrears ledgers, so it may
+        only run once, and only when the employee has actually left and their final payroll
+        has been locked:
+
+        * **Employee Exit -> Settlement** — ``employment_status`` must be ``terminated``.
+        * **Payroll -> Settlement** — a finalized (not de-finalized) payroll run must cover
+          the employee's ``date_of_leaving``.
+        * **Idempotency** — ``settlement_finalized_at`` must not already be stamped.
+        """
+        emp = await self._validate_employee(org_id, employee_id)
+
+        if emp.employment_status != EmploymentStatus.TERMINATED.value:
+            raise EmployeeNotExitedException()
+        if emp.settlement_finalized_at is not None:
+            raise SettlementAlreadyFinalizedException()
+        if emp.date_of_leaving is None:
+            raise PayrollNotFinalizedException(
+                "The employee has no last working day recorded, so no payroll run can cover it."
+            )
+
+        run_stmt = select(FinalizedPayrollRun.id).where(
+            FinalizedPayrollRun.org_id == org_id,
+            FinalizedPayrollRun.cycle_from <= emp.date_of_leaving,
+            FinalizedPayrollRun.cycle_to >= emp.date_of_leaving,
+            FinalizedPayrollRun.is_definalized.is_(False),
+        )
+        if (await self.session.execute(run_stmt.limit(1))).first() is None:
+            raise PayrollNotFinalizedException()
+
         return emp
 
     # =========================================================================
@@ -644,35 +684,36 @@ class SettlementService(BaseService):
         self, org_id: int, employee_id: int, user_id: int
     ) -> dict[str, Any]:
         """Record the approval of a Full & Final Settlement preview."""
-        emp = await self._validate_employee(org_id, employee_id)
+        emp = await self._validate_ff_preconditions(org_id, employee_id)
 
-        await self.audit.record(
-            org_id=org_id,
-            module="settlements",
-            sub_module="approvals",
-            action_type=ActionType.UPDATE,
-            title="Approve F&F Settlement",
-            description=(
-                f"Approved Full & Final Settlement calculations for employee {employee_id}."
-            ),
-            performed_by_user_id=user_id,
-            performed_by_name=f"User {user_id}",
-            employee_id=employee_id,
-            employee_name=emp.employee_name,
-        )
+        async with self.transaction():
+            await self.audit.record(
+                org_id=org_id,
+                module="settlements",
+                sub_module="approvals",
+                action_type=ActionType.UPDATE,
+                title="Approve F&F Settlement",
+                description=(
+                    f"Approved Full & Final Settlement calculations for employee {employee_id}."
+                ),
+                performed_by_user_id=user_id,
+                performed_by_name=f"User {user_id}",
+                employee_id=employee_id,
+                employee_name=emp.employee_name,
+            )
 
         return {
             "employee_id": employee_id,
             "status": "approved",
             "approved_by": user_id,
-            "approved_at": datetime.now(),
+            "approved_at": utcnow(),
         }
 
     async def finalize_ff_settlement(
         self, org_id: int, employee_id: int, user_id: int
     ) -> dict[str, Any]:
         """Process and finalize Full & Final Settlement by settling outstanding ledgers."""
-        emp = await self._validate_employee(org_id, employee_id)
+        emp = await self._validate_ff_preconditions(org_id, employee_id)
 
         async with self.transaction():
             # 1. Clear active loans/advances
@@ -733,10 +774,18 @@ class SettlementService(BaseService):
                 )
                 arrears.arrears_paid += arrears_cleared_amount
                 arrears.outstanding_arrears = Decimal("0.00")
-                arrears.updated_at = datetime.now()
+                arrears.updated_at = utcnow()
                 await self.arrears.update(arrears, {})
 
-            # 3. Log audit log
+            # 3. Stamp the settlement as complete. This is the idempotency marker checked
+            #    by _validate_ff_preconditions, written in the same transaction as the
+            #    ledger debits above so the two can never disagree.
+            emp.settlement_finalized_at = utcnow()
+            emp.settlement_finalized_by = user_id
+            self.session.add(emp)
+            await self.session.flush()
+
+            # 4. Log audit log
             await self.audit.record(
                 org_id=org_id,
                 module="settlements",

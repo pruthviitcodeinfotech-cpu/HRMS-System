@@ -8,14 +8,18 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from app.modules.employee.constants import EmploymentStatus
 from app.modules.settlements.exceptions import (
     ArrearsNotFoundException,
+    EmployeeNotExitedException,
     EmployeeNotFoundException,
     InsufficientArrearsException,
     InvalidTransactionException,
     LoanAdvanceClosedException,
     LoanAdvanceHasTransactionsException,
     LoanAdvanceNotFoundException,
+    PayrollNotFinalizedException,
+    SettlementAlreadyFinalizedException,
 )
 from app.modules.settlements.models import (
     EmployeeArrears,
@@ -36,6 +40,8 @@ def mock_session() -> AsyncMock:
 @pytest.fixture
 def settlement_service(mock_session: AsyncMock) -> SettlementService:
     svc = SettlementService(mock_session)
+    # ``AsyncSession.add`` is synchronous.
+    svc.session.add = MagicMock()
     svc.loans_advances = AsyncMock()
     svc.loan_transactions = AsyncMock()
     svc.arrears = AsyncMock()
@@ -56,6 +62,45 @@ def mock_employee_exists(session: AsyncMock, exists: bool = True) -> None:
     else:
         mock_result.scalar_one_or_none.return_value = None
     session.execute.return_value = mock_result
+
+
+def _exited_employee(**overrides: object) -> MagicMock:
+    """An employee who satisfies the Full & Final preconditions."""
+    emp = MagicMock()
+    emp.employee_id = 42
+    emp.employee_name = "John Doe"
+    emp.employment_status = EmploymentStatus.TERMINATED.value
+    emp.date_of_leaving = datetime.date(2026, 1, 31)
+    emp.settlement_finalized_at = None
+    for key, value in overrides.items():
+        setattr(emp, key, value)
+    return emp
+
+
+def _result(scalars_all: list | None = None, scalar_one: object = None, first: object = None):
+    """`await session.execute(...)` returns a SYNCHRONOUS Result."""
+    result = MagicMock()
+    result.scalars.return_value.all.return_value = scalars_all if scalars_all is not None else []
+    result.scalar_one_or_none.return_value = scalar_one
+    result.first.return_value = first
+    return result
+
+
+def mock_ff_preconditions(
+    session: AsyncMock,
+    emp: MagicMock | None = None,
+    *,
+    finalized_run: bool = True,
+    extra: list | None = None,
+) -> None:
+    """Drive ``_validate_ff_preconditions``: employee lookup, then finalized-run lookup."""
+    session.execute = AsyncMock(
+        side_effect=[
+            _result(scalar_one=emp if emp is not None else _exited_employee()),
+            _result(first=(1,) if finalized_run else None),
+            *(extra or []),
+        ]
+    )
 
 
 # --- 1. Employee Loan & Advance Service Tests ----------------------------
@@ -492,18 +537,52 @@ async def test_calculate_ff_settlement(
 async def test_approve_ff_settlement(
     settlement_service: SettlementService, mock_session: AsyncMock
 ) -> None:
-    mock_employee_exists(mock_session, exists=True)
+    mock_ff_preconditions(mock_session)
     res = await settlement_service.approve_ff_settlement(10, 42, 101)
     assert res["status"] == "approved"
+    assert res["approved_at"].tzinfo is not None  # timezone-aware
     settlement_service.audit.record.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_ff_settlement_requires_employee_exit(
+    settlement_service: SettlementService, mock_session: AsyncMock
+) -> None:
+    """Employee Exit -> Settlement: an active employee cannot be settled."""
+    active = _exited_employee(employment_status=EmploymentStatus.ACTIVE.value)
+    mock_ff_preconditions(mock_session, active)
+    with pytest.raises(EmployeeNotExitedException):
+        await settlement_service.finalize_ff_settlement(10, 42, 101)
+    settlement_service.loan_transactions.create.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_ff_settlement_requires_finalized_payroll(
+    settlement_service: SettlementService, mock_session: AsyncMock
+) -> None:
+    """Payroll -> Settlement: no finalized run covering the last working day."""
+    mock_ff_preconditions(mock_session, finalized_run=False)
+    with pytest.raises(PayrollNotFinalizedException):
+        await settlement_service.finalize_ff_settlement(10, 42, 101)
+    settlement_service.loan_transactions.create.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_ff_settlement_is_idempotent(
+    settlement_service: SettlementService, mock_session: AsyncMock
+) -> None:
+    """A second finalize must not debit the ledgers again."""
+    already = _exited_employee(settlement_finalized_at=datetime.datetime(2026, 2, 1))
+    mock_ff_preconditions(mock_session, already)
+    with pytest.raises(SettlementAlreadyFinalizedException):
+        await settlement_service.finalize_ff_settlement(10, 42, 101)
+    settlement_service.loan_transactions.create.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_finalize_ff_settlement(
     settlement_service: SettlementService, mock_session: AsyncMock
 ) -> None:
-    mock_employee_exists(mock_session, exists=True)
-
     loan1 = EmployeeLoanAdvance(
         id=1,
         org_id=10,
@@ -513,9 +592,9 @@ async def test_finalize_ff_settlement(
         type="loan",
         total_debit=Decimal("0.00"),
     )
-    mock_execute_res = MagicMock()
-    mock_execute_res.scalars.return_value.all.return_value = [loan1]
-    mock_session.execute.return_value = mock_execute_res
+    emp = _exited_employee()
+    # employee lookup -> finalized-run lookup -> active-loans lookup
+    mock_ff_preconditions(mock_session, emp, extra=[_result(scalars_all=[loan1])])
 
     arr_obj = EmployeeArrears(
         id=2,
@@ -535,6 +614,9 @@ async def test_finalize_ff_settlement(
     assert arr_obj.outstanding_arrears == Decimal("0.00")
     assert arr_obj.arrears_paid == Decimal("300.00")
     settlement_service.audit.record.assert_called_once()
+    # The completion marker is stamped in the same transaction as the ledger debits.
+    assert emp.settlement_finalized_at is not None
+    assert emp.settlement_finalized_by == 101
 
 
 # --- 6. Additional Edge Cases & List Queries Tests ------------------------
