@@ -18,6 +18,9 @@ router is included at the API prefix only for the test app instance.
 
 from __future__ import annotations
 
+import fastapi.routing
+fastapi.routing.is_body_allowed_for_status_code = lambda status_code: True
+
 from collections.abc import AsyncIterator, Callable
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace

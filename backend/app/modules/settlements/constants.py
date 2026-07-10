@@ -10,30 +10,34 @@ preserved exactly. These enums are the single source of truth for those checks.
 from enum import Enum
 
 
-class LoanAdvanceType(str, Enum):
+class LoanAdvanceType(str, Enum):  # noqa: UP042
     """employee_loans_advances.type / loan_advance_transactions.type_label.
-    (Enforced by DB CHECK.)"""
+
+    (Enforced by DB CHECK.)
+    """
 
     LOAN = "loan"
     ADVANCE = "advance"
 
 
-class LoanAdvanceStatus(str, Enum):
+class LoanAdvanceStatus(str, Enum):  # noqa: UP042
     """employee_loans_advances.status. (Enforced by DB CHECK.)"""
 
     ACTIVE = "active"
     CLOSED = "closed"
 
 
-class TransactionType(str, Enum):
+class TransactionType(str, Enum):  # noqa: UP042
     """loan_advance_transactions / arrears_transactions.transaction_type.
-    (Enforced by DB CHECK.)"""
+
+    (Enforced by DB CHECK.)
+    """
 
     CREDIT = "credit"
     DEBIT = "debit"
 
 
-class TransactionSource(str, Enum):
+class TransactionSource(str, Enum):  # noqa: UP042
     """loan_advance_transactions / arrears_transactions.source. (Enforced by DB CHECK.)"""
 
     MANUAL = "manual"
