@@ -25,10 +25,10 @@ from app.modules.hardware.constants import DeviceProtocol, DeviceStatus
 from app.modules.hardware.dependencies import HardwareServiceDep
 from app.modules.hardware.schemas import (
     BiometricDeviceAssignBranchRequest,
-    BiometricDeviceConfigureRequest,
     BiometricDeviceConfigurationSchema,
-    BiometricDeviceHeartbeatRequest,
+    BiometricDeviceConfigureRequest,
     BiometricDeviceHealthSchema,
+    BiometricDeviceHeartbeatRequest,
     BiometricDeviceListResponse,
     BiometricDeviceRegisterRequest,
     BiometricDeviceSchema,

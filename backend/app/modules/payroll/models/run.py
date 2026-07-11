@@ -42,7 +42,9 @@ class FinalizedPayrollRun(Base):
     org_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     payroll_group_id: Mapped[int] = mapped_column(
         BigInteger,
-        ForeignKey("payroll_groups.id", name="fk_finalized_payroll_runs_payroll_group_id_payroll_groups"),
+        ForeignKey(
+            "payroll_groups.id", name="fk_finalized_payroll_runs_payroll_group_id_payroll_groups"
+        ),
         nullable=False,
     )
     cycle_from: Mapped[date] = mapped_column(Date, nullable=False)
@@ -53,7 +55,11 @@ class FinalizedPayrollRun(Base):
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
     # DEFERRED cross-module FK -> users.id (NOT NULL per the architecture)
-    finalized_by: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    finalized_by: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", name="fk_finalized_payroll_runs_finalized_by_users"),
+        nullable=False,
+    )
     paid_amount: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
     paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     payment_status: Mapped[str] = mapped_column(
@@ -64,7 +70,10 @@ class FinalizedPayrollRun(Base):
     )
     definalized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # DEFERRED cross-module FK -> users.id
-    definalized_by: Mapped[int | None] = mapped_column(BigInteger)
+    definalized_by: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", name="fk_finalized_payroll_runs_definalized_by_users"),
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
@@ -85,7 +94,9 @@ class FinalizedPayrollRun(Base):
         ),
     )
 
-    payroll_group: Mapped["PayrollGroup"] = relationship(back_populates="finalized_runs")  # noqa: F821
+    payroll_group: Mapped["PayrollGroup"] = relationship(
+        back_populates="finalized_runs"
+    )  # noqa: F821
     computed_rows: Mapped[list["PayrollComputedRow"]] = relationship(back_populates="finalized_run")
 
 
@@ -95,7 +106,9 @@ class PayrollComputedRow(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     payroll_group_id: Mapped[int] = mapped_column(
         BigInteger,
-        ForeignKey("payroll_groups.id", name="fk_payroll_computed_rows_payroll_group_id_payroll_groups"),
+        ForeignKey(
+            "payroll_groups.id", name="fk_payroll_computed_rows_payroll_group_id_payroll_groups"
+        ),
         nullable=False,
     )
     # DEFERRED cross-module FK -> employees
@@ -103,9 +116,15 @@ class PayrollComputedRow(Base):
     cycle_from: Mapped[date] = mapped_column(Date, nullable=False)
     cycle_to: Mapped[date] = mapped_column(Date, nullable=False)
     total_days: Mapped[int] = mapped_column(SmallInteger, nullable=False)
-    full_day_count: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default=text("0"))
-    half_day_count: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default=text("0"))
-    off_day_count: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default=text("0"))
+    full_day_count: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, server_default=text("0")
+    )
+    half_day_count: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, server_default=text("0")
+    )
+    off_day_count: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, server_default=text("0")
+    )
     paid_leave_count: Mapped[Decimal] = mapped_column(
         Numeric(5, 1), nullable=False, server_default=text("0")
     )
@@ -139,12 +158,16 @@ class PayrollComputedRow(Base):
     arrears_amount: Mapped[Decimal] = mapped_column(
         Numeric(10, 2), nullable=False, server_default=text("0")
     )
-    to_pay: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, server_default=text("0"))
+    to_pay: Mapped[Decimal] = mapped_column(
+        Numeric(12, 2), nullable=False, server_default=text("0")
+    )
     balance_arrears: Mapped[Decimal] = mapped_column(
         Numeric(10, 2), nullable=False, server_default=text("0")
     )
     payment_method: Mapped[str | None] = mapped_column(String(30))
-    is_finalized: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    is_finalized: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
     finalized_run_id: Mapped[int | None] = mapped_column(
         BigInteger,
         ForeignKey(
@@ -156,7 +179,10 @@ class PayrollComputedRow(Base):
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
     # DEFERRED cross-module FK -> users.id
-    computed_by: Mapped[int | None] = mapped_column(BigInteger)
+    computed_by: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", name="fk_payroll_computed_rows_computed_by_users"),
+    )
 
     __table_args__ = (
         UniqueConstraint(
@@ -175,5 +201,7 @@ class PayrollComputedRow(Base):
         Index("ix_payroll_computed_rows_employee_id_is_finalized", "employee_id", "is_finalized"),
     )
 
-    payroll_group: Mapped["PayrollGroup"] = relationship(back_populates="computed_rows")  # noqa: F821
+    payroll_group: Mapped["PayrollGroup"] = relationship(
+        back_populates="computed_rows"
+    )  # noqa: F821
     finalized_run: Mapped["FinalizedPayrollRun"] = relationship(back_populates="computed_rows")

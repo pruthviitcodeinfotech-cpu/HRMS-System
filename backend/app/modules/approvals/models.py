@@ -32,6 +32,7 @@ from sqlalchemy import (
     CheckConstraint,
     Date,
     DateTime,
+    ForeignKey,
     Index,
     String,
     Text,
@@ -53,15 +54,18 @@ class ApprovalRequest(Base):
     reference_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     # DEFERRED cross-module FK -> employees
     employee_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    status: Mapped[
-        str
-    ] = mapped_column(String(10), nullable=False, server_default=text("'pending'"))
+    status: Mapped[str] = mapped_column(
+        String(10), nullable=False, server_default=text("'pending'")
+    )
     requested_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # DEFERRED cross-module FK -> users.id
-    reviewed_by: Mapped[int | None] = mapped_column(BigInteger)
+    reviewed_by: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", name="fk_approval_requests_reviewed_by_users"),
+    )
     reject_remarks: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
@@ -100,9 +104,9 @@ class AttendanceRegularizationRequest(Base):
     applied_on: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
-    status: Mapped[
-        str
-    ] = mapped_column(String(10), nullable=False, server_default=text("'pending'"))
+    status: Mapped[str] = mapped_column(
+        String(10), nullable=False, server_default=text("'pending'")
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
@@ -134,15 +138,18 @@ class LoginResetRequest(Base):
     request_description: Mapped[str] = mapped_column(
         String(255), nullable=False, server_default=text("'Login Reset Request'")
     )
-    status: Mapped[
-        str
-    ] = mapped_column(String(10), nullable=False, server_default=text("'pending'"))
+    status: Mapped[str] = mapped_column(
+        String(10), nullable=False, server_default=text("'pending'")
+    )
     applied_on: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # DEFERRED cross-module FK -> users.id
-    reviewed_by: Mapped[int | None] = mapped_column(BigInteger)
+    reviewed_by: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", name="fk_login_reset_requests_reviewed_by_users"),
+    )
     reject_remarks: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")

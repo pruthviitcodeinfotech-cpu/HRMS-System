@@ -59,12 +59,10 @@ services:
       redis:
         condition: service_healthy
 
-  # The background worker is not started by default: `app/jobs/worker.py` is still a
-  # placeholder with no entrypoint (the queue library is an open decision — see
-  # docs/architecture.md), so the container would exit immediately. Enable it with
-  # `docker compose --profile worker up` once the worker is implemented.
+  # The arq worker runs the scheduled and queued jobs (leave accrual, device sync,
+  # payslip email, report exports). It starts by default: without it those features are
+  # accepted by the API and never execute.
   worker:
-    profiles: ["worker"]
     build:
       context: .
       target: runtime
@@ -73,10 +71,14 @@ services:
       - path: .env
         required: false
     environment:
+      ENVIRONMENT: ${ENVIRONMENT:-development}
       DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://hrms:hrms@db:5432/hrms}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      SECRET_KEY: ${SECRET_KEY:-change-me}
+      JWT_SECRET: ${JWT_SECRET:-change-me}
     volumes:
       - ./app:/app/app
+    restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy

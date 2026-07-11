@@ -16,8 +16,14 @@ from app.core.constants.enums import SortOrder
 from app.core.exceptions.base import ValidationException
 from app.modules.audit.constants import ActionType
 from app.modules.audit.service import AuditService
+from app.modules.employee.constants import EmploymentStatus
 from app.modules.employee.models.employee import Employee
-from app.modules.leave.constants import AdjustmentType, LeaveRequestStatus
+from app.modules.leave.constants import (
+    AdjustmentType,
+    AllocationFrequency,
+    AllocationSource,
+    LeaveRequestStatus,
+)
 from app.modules.leave.exceptions import (
     EmployeeNotFoundException,
     HolidayItemNotFoundException,
@@ -56,6 +62,15 @@ from app.modules.leave.repository import (
 )
 from app.shared.base.service import BaseService
 from app.shared.schemas.pagination import PaginatedResponse
+from app.shared.utils.datetime import utcnow
+
+#: Upper bound on the leave types the accrual run reads in one page. An org configures a
+#: handful (CL/SL/PL/…); this is a guard rail, not a real limit.
+_MAX_LEAVE_TYPES_PER_ORG = 500
+
+#: ``performed_by_name`` recorded for machine-driven writes (the nightly accrual job),
+#: which have no human actor.
+_SYSTEM_ACTOR = "System (auto-allocation)"
 
 
 class LeaveService(BaseService):
@@ -527,6 +542,190 @@ class LeaveService(BaseService):
         """List leave allocation history in org context."""
         await self._validate_employee(org_id, employee_id)
         return await self.allocations.list_allocations(employee_id, cycle_year=cycle_year)
+
+    # =========================================================================
+    # Auto-allocation (accrual)
+    #
+    # Driven by the nightly ``run_leave_accrual`` job (:mod:`app.jobs.tasks`); the API
+    # exposes allocations read-only. The business rules live here, in the service, so
+    # the job stays a thin wrapper around a session.
+    #
+    # This is NOT ``credit_leave_balance``: that method is the *manual adjustment* path
+    # (it moves ``adjusted`` and writes a ``leave_balance_adjustments`` history row). An
+    # accrual is an *allocation* — it moves ``allocated`` and writes an
+    # ``employee_leave_allocations`` event, which is what ``list_leave_allocations``
+    # reads back. Routing accruals through the manual-credit path would mislabel every
+    # nightly grant as a hand-made adjustment.
+    # =========================================================================
+
+    def _cycle_period(self, target: date, allocation_frequency: str) -> str | None:
+        """Return the allocation period key for ``target`` (``None`` for yearly types).
+
+        Monthly leave types accrue once per calendar month, so the month is part of the
+        idempotency key (``2026-07``). Yearly types accrue once per cycle year, so they
+        have no period.
+        """
+        if allocation_frequency == AllocationFrequency.MONTHLY.value:
+            return f"{target.year:04d}-{target.month:02d}"
+        return None
+
+    async def _list_active_employee_ids(self, org_id: int) -> list[int]:
+        """Return the ids of the org's active, non-deleted employees."""
+        stmt = (
+            select(Employee.employee_id)
+            .where(
+                Employee.org_id == org_id,
+                Employee.is_deleted.is_(False),
+                Employee.employment_status == EmploymentStatus.ACTIVE.value,
+            )
+            .order_by(Employee.employee_id)
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def allocate_leave(
+        self,
+        org_id: int,
+        employee_id: int,
+        leave_type: LeaveType,
+        *,
+        cycle_year: int,
+        allocation_date: date,
+        allocated_by: int | None = None,
+    ) -> EmployeeLeaveAllocation | None:
+        """Credit one employee's auto-allocation for one leave type, exactly once.
+
+        Idempotent by construction: an allocation event already recorded for this
+        ``employee + leave_type + cycle_year (+ cycle_period)`` short-circuits and
+        returns ``None``. Both the balance mutation and the allocation event are written
+        in a single transaction, so a crash mid-way cannot leave a credited balance with
+        no allocation row (which would let the next run credit it again).
+        """
+        days = leave_type.auto_allocation_count
+        if days is None or days <= 0:
+            return None
+
+        period = self._cycle_period(allocation_date, leave_type.allocation_frequency)
+        existing = await self.allocations.get_for_cycle(
+            employee_id, leave_type.id, cycle_year, cycle_period=period
+        )
+        if existing is not None:
+            return None
+
+        async with self.transaction():
+            balance = await self.balances.get_by_employee_type_year(
+                employee_id, leave_type.id, cycle_year
+            )
+            if not balance:
+                balance = await self.balances.create(
+                    {
+                        "employee_id": employee_id,
+                        "leave_type_id": leave_type.id,
+                        "cycle_year": cycle_year,
+                        "opening_balance": 0.00,
+                        "allocated": 0.00,
+                        "used": 0.00,
+                        "carried_forward": 0.00,
+                        "encashed": 0.00,
+                        "adjusted": 0.00,
+                        "closing_balance": 0.00,
+                        "updated_by": allocated_by,
+                    }
+                )
+
+            await self.balances.update(
+                balance,
+                {
+                    "allocated": balance.allocated + days,
+                    "closing_balance": balance.closing_balance + days,
+                    "updated_by": allocated_by,
+                },
+            )
+
+            allocation = await self.allocations.create(
+                {
+                    "employee_id": employee_id,
+                    "leave_type_id": leave_type.id,
+                    "cycle_year": cycle_year,
+                    "cycle_period": period,
+                    "allocated_days": days,
+                    "allocation_date": allocation_date,
+                    "allocation_source": AllocationSource.AUTO.value,
+                    "created_by": allocated_by,
+                }
+            )
+
+            await self.audit.record(
+                org_id=org_id,
+                module="leave",
+                sub_module="leave_allocation",
+                action_type=ActionType.INSERT,
+                title="Auto-allocate Leave",
+                description=(
+                    f"Allocated {days} days of leave type {leave_type.id} to employee "
+                    f"{employee_id} for cycle {cycle_year}"
+                    + (f" ({period})" if period else "")
+                ),
+                performed_by_user_id=allocated_by,
+                # No actor: the accrual is machine-driven. ``action_from`` keeps its
+                # default — the DB CHECK on activity_logs admits only 'Web App' /
+                # 'Mobile App', so there is no 'System' value to record here.
+                performed_by_name=_SYSTEM_ACTOR,
+                employee_id=employee_id,
+            )
+            return allocation
+
+    async def run_auto_allocation(
+        self,
+        org_id: int,
+        *,
+        as_of: date | None = None,
+        allocated_by: int | None = None,
+    ) -> dict[str, int]:
+        """Credit every active employee's auto-allocation for the current leave cycle.
+
+        Walks the org's active leave types and active employees, allocating the ones not
+        yet allocated for the cycle. Safe to run repeatedly (see :meth:`allocate_leave`):
+        a second run on the same day allocates nothing.
+
+        Returns a ``{"employees", "leave_types", "allocated", "skipped"}`` tally.
+        """
+        target = as_of or utcnow().date()
+        config = await self.get_leave_settings(org_id)
+        cycle_year = self.get_cycle_year(target, config.leave_cycle, config.cycle_start_month)
+
+        leave_types = await self.leave_types.search(
+            org_id, is_active=True, page=1, page_size=_MAX_LEAVE_TYPES_PER_ORG
+        )
+        accruing = [
+            lt for lt in leave_types if lt.auto_allocation_count and lt.auto_allocation_count > 0
+        ]
+        employee_ids = await self._list_active_employee_ids(org_id)
+
+        allocated = 0
+        skipped = 0
+        for employee_id in employee_ids:
+            for leave_type in accruing:
+                result = await self.allocate_leave(
+                    org_id,
+                    employee_id,
+                    leave_type,
+                    cycle_year=cycle_year,
+                    allocation_date=target,
+                    allocated_by=allocated_by,
+                )
+                if result is None:
+                    skipped += 1
+                else:
+                    allocated += 1
+
+        return {
+            "org_id": org_id,
+            "cycle_year": cycle_year,
+            "employees": len(employee_ids),
+            "leave_types": len(accruing),
+            "allocated": allocated,
+            "skipped": skipped,
+        }
 
     # =========================================================================
     # Leave Request Endpoints

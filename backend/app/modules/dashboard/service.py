@@ -17,9 +17,6 @@ from app.core.cache.redis import cache_get_json, cache_set_json
 from app.core.constants.enums import PermissionAction
 from app.core.dependencies.auth import CurrentUser
 from app.core.exceptions.base import AuthorizationException
-from app.shared.base.service import BaseService
-from app.shared.utils.datetime import utcnow
-
 from app.modules.dashboard.repository import DashboardRepository
 from app.modules.dashboard.schemas import (
     ApprovalDashboardResponse,
@@ -50,6 +47,8 @@ from app.modules.dashboard.schemas import (
     WidgetMetadataSchema,
     WidgetsMetadataResponse,
 )
+from app.shared.base.service import BaseService
+from app.shared.utils.datetime import utcnow
 
 # Feature keys for RBAC permission gating
 EMPLOYEE_FEATURE = "employee"

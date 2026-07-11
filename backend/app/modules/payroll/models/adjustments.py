@@ -19,6 +19,7 @@ from sqlalchemy import (
     CheckConstraint,
     Date,
     DateTime,
+    ForeignKey,
     Index,
     Numeric,
     String,
@@ -54,11 +55,17 @@ class AttendanceAdjustment(Base):
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
     # DEFERRED cross-module FK -> users.id (NOT NULL per the architecture)
-    adjusted_by: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    adjusted_by: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", name="fk_attendance_adjustments_adjusted_by_users"),
+        nullable=False,
+    )
 
     __table_args__ = (
         UniqueConstraint(
-            "employee_id", "attendance_date", name="uq_attendance_adjustments_employee_id_attendance_date"
+            "employee_id",
+            "attendance_date",
+            name="uq_attendance_adjustments_employee_id_attendance_date",
         ),
         Index("ix_attendance_adjustments_org_id_attendance_date", "org_id", "attendance_date"),
         Index(
@@ -87,7 +94,11 @@ class AttendanceAdjustmentPenalty(Base):
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
     # DEFERRED cross-module FK -> users.id (NOT NULL per the architecture)
-    created_by: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    created_by: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", name="fk_attendance_adjustment_penalties_created_by_users"),
+        nullable=False,
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
@@ -114,7 +125,11 @@ class AttendanceAdjustmentExtraHours(Base):
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
     # DEFERRED cross-module FK -> users.id (NOT NULL per the architecture)
-    created_by: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    created_by: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", name="fk_attendance_adjustment_extra_hours_created_by_users"),
+        nullable=False,
+    )
 
     __table_args__ = (
         UniqueConstraint(

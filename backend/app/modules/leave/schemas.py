@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Generic, TypeVar
 
 from pydantic import Field, model_validator
 
@@ -23,7 +22,6 @@ from app.modules.leave.constants import (
 )
 from app.shared.base.schema import BaseSchema, TimestampSchema
 from app.shared.schemas.pagination import PaginatedResponse
-
 
 # ===========================================================================
 # 1. Leave Type Schemas

@@ -85,7 +85,10 @@ class PayrollSetting(Base):
     )
     grace_time: Mapped[time] = mapped_column(Time, nullable=False, server_default=text("'00:00'"))
     # DEFERRED cross-module FK -> users.id
-    updated_by: Mapped[int | None] = mapped_column(BigInteger)
+    updated_by: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", name="fk_payroll_settings_updated_by_users"),
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
@@ -112,8 +115,14 @@ class PayrollGroup(Base):
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
     # DEFERRED cross-module FKs -> users.id
-    created_by: Mapped[int | None] = mapped_column(BigInteger)
-    updated_by: Mapped[int | None] = mapped_column(BigInteger)
+    created_by: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", name="fk_payroll_groups_created_by_users"),
+    )
+    updated_by: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", name="fk_payroll_groups_updated_by_users"),
+    )
 
     __table_args__ = (
         Index(
@@ -167,7 +176,11 @@ class EmployeePayrollGroupAssignment(Base):
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
     # DEFERRED cross-module FK -> users.id (NOT NULL per the architecture)
-    assigned_by: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    assigned_by: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", name="fk_employee_payroll_group_assignments_assigned_by_users"),
+        nullable=False,
+    )
     previous_group_id: Mapped[int | None] = mapped_column(
         BigInteger,
         ForeignKey(
@@ -201,20 +214,29 @@ class PayrollSalaryCycle(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     payroll_group_id: Mapped[int] = mapped_column(
         BigInteger,
-        ForeignKey("payroll_groups.id", name="fk_payroll_salary_cycles_payroll_group_id_payroll_groups"),
+        ForeignKey(
+            "payroll_groups.id", name="fk_payroll_salary_cycles_payroll_group_id_payroll_groups"
+        ),
         nullable=False,
     )
     cycle_date: Mapped[date] = mapped_column(Date, nullable=False)
-    is_finalized: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    is_finalized: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
     # DEFERRED cross-module FK -> users.id
-    created_by: Mapped[int | None] = mapped_column(BigInteger)
+    created_by: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", name="fk_payroll_salary_cycles_created_by_users"),
+    )
 
     __table_args__ = (
         UniqueConstraint(
-            "payroll_group_id", "cycle_date", name="uq_payroll_salary_cycles_payroll_group_id_cycle_date"
+            "payroll_group_id",
+            "cycle_date",
+            name="uq_payroll_salary_cycles_payroll_group_id_cycle_date",
         ),
     )
 
@@ -227,7 +249,9 @@ class PayrollColumnSetting(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     payroll_group_id: Mapped[int] = mapped_column(
         BigInteger,
-        ForeignKey("payroll_groups.id", name="fk_payroll_column_settings_payroll_group_id_payroll_groups"),
+        ForeignKey(
+            "payroll_groups.id", name="fk_payroll_column_settings_payroll_group_id_payroll_groups"
+        ),
         nullable=False,
     )
     column_key: Mapped[str] = mapped_column(String(50), nullable=False)
@@ -238,11 +262,16 @@ class PayrollColumnSetting(Base):
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
     # DEFERRED cross-module FK -> users.id
-    updated_by: Mapped[int | None] = mapped_column(BigInteger)
+    updated_by: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", name="fk_payroll_column_settings_updated_by_users"),
+    )
 
     __table_args__ = (
         UniqueConstraint(
-            "payroll_group_id", "column_key", name="uq_payroll_column_settings_payroll_group_id_column_key"
+            "payroll_group_id",
+            "column_key",
+            name="uq_payroll_column_settings_payroll_group_id_column_key",
         ),
     )
 

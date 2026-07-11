@@ -421,8 +421,13 @@ Existing modules are untouched.
 
 ## Open decisions (Foundation Phase)
 
-- **Background-job library:** `jobs/` is queue-agnostic. The API contract must
-  not depend on the concrete worker library. Select the Redis-backed worker
-  implementation before coding production background jobs.
+- ~~**Background-job library**~~ — **decided: `arq`.** Async-native (the codebase is
+  async end to end; a sync worker would need a bridge around every service call),
+  Redis-backed (no new broker — it shares `REDIS_URL`), and small. The queue lives in
+  `jobs/queue.py` (producer: `enqueue`), the job bodies in `jobs/tasks.py`, the schedule
+  in `jobs/scheduler.py`, and the worker in `jobs/worker.py`. Handlers depend only on
+  `enqueue`, so the API contract still does not name the worker library.
+  A failed enqueue raises `QueueUnavailableException` (503) rather than reporting work
+  that was never queued; see `jobs/queue.py` for the policy.
 - **Compliance & salary components** will live inside the `payroll` module as
   promoted sub-packages once their schema is finalized.

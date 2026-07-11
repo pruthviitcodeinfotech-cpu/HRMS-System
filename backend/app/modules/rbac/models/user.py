@@ -39,7 +39,11 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    org_id: Mapped[int] = mapped_column(BigInteger, nullable=False)  # deferred FK -> organizations
+    org_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("organizations.org_id", name="fk_users_org_id_organizations"),
+        nullable=False,
+    )
     name: Mapped[str] = mapped_column(String(150), nullable=False)
     email: Mapped[str] = mapped_column(String(255), nullable=False)
     mobile_country_code: Mapped[str] = mapped_column(
@@ -52,7 +56,12 @@ class User(Base):
     )
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
     # DEFERRED cross-module FK -> employees
-    employee_id: Mapped[int | None] = mapped_column(BigInteger)
+    employee_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "employees.employee_id", name="fk_users_employee_id_employees", ondelete="SET NULL"
+        ),
+    )
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_by: Mapped[int | None] = mapped_column(
         BigInteger,

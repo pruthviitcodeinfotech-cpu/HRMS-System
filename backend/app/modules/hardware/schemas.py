@@ -7,9 +7,10 @@ heartbeat logs, and health stats.
 
 from __future__ import annotations
 
-from datetime import datetime, time as dt_time
 import re
 import socket
+from datetime import datetime
+from datetime import time as dt_time
 from typing import Any
 
 from pydantic import Field, field_validator, model_validator

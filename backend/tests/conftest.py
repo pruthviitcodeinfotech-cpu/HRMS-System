@@ -34,6 +34,7 @@ from app.core.config.settings import settings
 from app.core.dependencies.auth import assert_session_live
 from app.core.security.jwt import create_access_token
 from app.core.security.password import hash_password
+from app.jobs import queue as job_queue
 from app.main import create_app
 from app.modules.auth.dependencies import get_auth_service
 from app.modules.auth.router import router as auth_router
@@ -109,6 +110,26 @@ class FakeRedis:
         return None
 
 
+class FakeArqPool:
+    """Minimal in-memory stand-in for the arq job pool (``ArqRedis``).
+
+    The same idea as :class:`FakeRedis`, one layer up: it records what was enqueued
+    instead of talking to a broker. ``enqueue`` only needs ``enqueue_job`` returning
+    something with a ``job_id``.
+    """
+
+    def __init__(self) -> None:
+        self.jobs: list[tuple[str, dict]] = []
+
+    async def enqueue_job(self, function_name: str, **kwargs: object) -> SimpleNamespace:
+        job_id = f"fake-job-{len(self.jobs)}"
+        self.jobs.append((function_name, dict(kwargs)))
+        return SimpleNamespace(job_id=job_id)
+
+    async def aclose(self) -> None:
+        return None
+
+
 @pytest.fixture(autouse=True)
 def fake_redis(monkeypatch: pytest.MonkeyPatch) -> FakeRedis:
     """Swap the process-wide Redis client for an in-memory fake, per test.
@@ -119,6 +140,21 @@ def fake_redis(monkeypatch: pytest.MonkeyPatch) -> FakeRedis:
     """
     fake = FakeRedis()
     monkeypatch.setattr(redis_cache, "_client", fake, raising=False)
+    return fake
+
+
+@pytest.fixture(autouse=True)
+def fake_queue(monkeypatch: pytest.MonkeyPatch) -> FakeArqPool:
+    """Swap the arq job pool for an in-memory fake, per test.
+
+    Autouse for the same reason as ``fake_redis``: a service that enqueues (the payslip
+    email, a large report export) must not dial a broker from a unit test. ``enqueue()``
+    reuses the cached module-level ``_pool`` when one is set, so patching it is enough —
+    ``create_pool`` is never reached. Tests that need to *observe* what was enqueued can
+    request this fixture and read ``.jobs``.
+    """
+    fake = FakeArqPool()
+    monkeypatch.setattr(job_queue, "_pool", fake, raising=False)
     return fake
 
 

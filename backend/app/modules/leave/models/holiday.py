@@ -48,8 +48,14 @@ class HolidayTemplate(Base):
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
     # DEFERRED cross-module FKs -> users.id
-    created_by: Mapped[int | None] = mapped_column(BigInteger)
-    updated_by: Mapped[int | None] = mapped_column(BigInteger)
+    created_by: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", name="fk_holiday_templates_created_by_users"),
+    )
+    updated_by: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", name="fk_holiday_templates_updated_by_users"),
+    )
 
     __table_args__ = (
         Index(
@@ -74,7 +80,9 @@ class HolidayTemplateItem(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     template_id: Mapped[int] = mapped_column(
         BigInteger,
-        ForeignKey("holiday_templates.id", name="fk_holiday_template_items_template_id_holiday_templates"),
+        ForeignKey(
+            "holiday_templates.id", name="fk_holiday_template_items_template_id_holiday_templates"
+        ),
         nullable=False,
     )
     name: Mapped[str] = mapped_column(String(150), nullable=False)
@@ -92,12 +100,13 @@ class HolidayTemplateItem(Base):
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
     # DEFERRED cross-module FK -> users.id
-    created_by: Mapped[int | None] = mapped_column(BigInteger)
+    created_by: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", name="fk_holiday_template_items_created_by_users"),
+    )
 
     __table_args__ = (
-        Index(
-            "ix_holiday_template_items_template_id_start_date", "template_id", "start_date"
-        ),
+        Index("ix_holiday_template_items_template_id_start_date", "template_id", "start_date"),
         CheckConstraint(
             "end_date >= start_date",
             name="ck_holiday_template_items_end_date_after_start_date",
@@ -124,7 +133,11 @@ class EmployeeHolidayAssignment(Base):
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
     # DEFERRED cross-module FK -> users.id (NOT NULL per the architecture)
-    assigned_by: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    assigned_by: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", name="fk_employee_holiday_assignments_assigned_by_users"),
+        nullable=False,
+    )
     previous_template_id: Mapped[int | None] = mapped_column(
         BigInteger,
         ForeignKey(

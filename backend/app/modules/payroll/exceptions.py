@@ -3,8 +3,6 @@
 from app.core.exceptions.base import (
     ConflictException,
     NotFoundException,
-    ValidationException,
-    AuthorizationException,
 )
 
 

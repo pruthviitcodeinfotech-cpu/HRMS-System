@@ -56,8 +56,14 @@ class LeaveSetting(Base):
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
     # DEFERRED cross-module FKs -> users.id
-    created_by: Mapped[int | None] = mapped_column(BigInteger)
-    updated_by: Mapped[int | None] = mapped_column(BigInteger)
+    created_by: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", name="fk_leave_settings_created_by_users"),
+    )
+    updated_by: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", name="fk_leave_settings_updated_by_users"),
+    )
 
     __table_args__ = (UniqueConstraint("org_id", name="uq_leave_settings_org_id"),)
 
@@ -94,8 +100,14 @@ class LeaveType(Base):
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
     # DEFERRED cross-module FKs -> users.id
-    created_by: Mapped[int | None] = mapped_column(BigInteger)
-    updated_by: Mapped[int | None] = mapped_column(BigInteger)
+    created_by: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", name="fk_leave_types_created_by_users"),
+    )
+    updated_by: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", name="fk_leave_types_updated_by_users"),
+    )
 
     __table_args__ = (
         UniqueConstraint("org_id", "alias", name="uq_leave_types_org_id_alias"),
@@ -131,7 +143,9 @@ class EmployeeLeaveAllocation(Base):
     employee_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     leave_type_id: Mapped[int] = mapped_column(
         BigInteger,
-        ForeignKey("leave_types.id", name="fk_employee_leave_allocations_leave_type_id_leave_types"),
+        ForeignKey(
+            "leave_types.id", name="fk_employee_leave_allocations_leave_type_id_leave_types"
+        ),
         nullable=False,
     )
     cycle_year: Mapped[int] = mapped_column(SmallInteger, nullable=False)
@@ -145,7 +159,10 @@ class EmployeeLeaveAllocation(Base):
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
     # DEFERRED cross-module FK -> users.id
-    created_by: Mapped[int | None] = mapped_column(BigInteger)
+    created_by: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", name="fk_employee_leave_allocations_created_by_users"),
+    )
 
     __table_args__ = (
         UniqueConstraint(
@@ -175,13 +192,19 @@ class EmployeeLeaveBalance(Base):
     opening_balance: Mapped[Decimal] = mapped_column(
         Numeric(6, 2), nullable=False, server_default=text("0")
     )
-    allocated: Mapped[Decimal] = mapped_column(Numeric(6, 2), nullable=False, server_default=text("0"))
+    allocated: Mapped[Decimal] = mapped_column(
+        Numeric(6, 2), nullable=False, server_default=text("0")
+    )
     used: Mapped[Decimal] = mapped_column(Numeric(6, 2), nullable=False, server_default=text("0"))
     carried_forward: Mapped[Decimal] = mapped_column(
         Numeric(6, 2), nullable=False, server_default=text("0")
     )
-    encashed: Mapped[Decimal] = mapped_column(Numeric(6, 2), nullable=False, server_default=text("0"))
-    adjusted: Mapped[Decimal] = mapped_column(Numeric(6, 2), nullable=False, server_default=text("0"))
+    encashed: Mapped[Decimal] = mapped_column(
+        Numeric(6, 2), nullable=False, server_default=text("0")
+    )
+    adjusted: Mapped[Decimal] = mapped_column(
+        Numeric(6, 2), nullable=False, server_default=text("0")
+    )
     closing_balance: Mapped[Decimal] = mapped_column(
         Numeric(6, 2), nullable=False, server_default=text("0")
     )
@@ -189,7 +212,10 @@ class EmployeeLeaveBalance(Base):
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
     # DEFERRED cross-module FK -> users.id
-    updated_by: Mapped[int | None] = mapped_column(BigInteger)
+    updated_by: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", name="fk_employee_leave_balances_updated_by_users"),
+    )
 
     __table_args__ = (
         UniqueConstraint(
@@ -227,7 +253,11 @@ class LeaveBalanceAdjustment(Base):
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
     # DEFERRED cross-module FK -> users.id (NOT NULL per the architecture)
-    adjusted_by: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    adjusted_by: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", name="fk_leave_balance_adjustments_adjusted_by_users"),
+        nullable=False,
+    )
 
     __table_args__ = (
         Index(
@@ -255,13 +285,18 @@ class LeaveRequest(Base):
     end_date: Mapped[date] = mapped_column(Date, nullable=False)
     duration_days: Mapped[Decimal] = mapped_column(Numeric(4, 1), nullable=False)
     reason: Mapped[str | None] = mapped_column(Text)
-    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'pending'"))
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default=text("'pending'")
+    )
     applied_on: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # DEFERRED cross-module FK -> users.id
-    reviewed_by: Mapped[int | None] = mapped_column(BigInteger)
+    reviewed_by: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", name="fk_leave_requests_reviewed_by_users"),
+    )
     rejection_reason: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")

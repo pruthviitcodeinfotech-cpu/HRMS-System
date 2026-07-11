@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Any
 
-from sqlalchemy import and_, delete, func, select, update
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -29,7 +29,6 @@ from app.modules.leave.models import (
 )
 from app.shared.base.repository import BaseRepository
 from app.shared.utils.query import apply_sorting
-
 
 # ===========================================================================
 # 1. Leave Type Repository
@@ -324,6 +323,33 @@ class EmployeeLeaveAllocationRepository(BaseRepository[EmployeeLeaveAllocation])
 
     def __init__(self, session: AsyncSession) -> None:
         super().__init__(session, EmployeeLeaveAllocation)
+
+    async def get_for_cycle(
+        self,
+        employee_id: int,
+        leave_type_id: int,
+        cycle_year: int,
+        *,
+        cycle_period: str | None = None,
+    ) -> EmployeeLeaveAllocation | None:
+        """Return the allocation already made for this employee/type/cycle, if any.
+
+        This is the idempotency probe for the auto-allocation job: the accrual credits
+        an employee only when this returns ``None``, so a re-run (or an arq retry) can
+        never double-credit. ``cycle_period`` discriminates the monthly accruals within
+        a cycle year; yearly leave types allocate once, with ``cycle_period IS NULL``.
+        """
+        stmt = select(EmployeeLeaveAllocation).where(
+            EmployeeLeaveAllocation.employee_id == employee_id,
+            EmployeeLeaveAllocation.leave_type_id == leave_type_id,
+            EmployeeLeaveAllocation.cycle_year == cycle_year,
+            (
+                EmployeeLeaveAllocation.cycle_period.is_(None)
+                if cycle_period is None
+                else EmployeeLeaveAllocation.cycle_period == cycle_period
+            ),
+        )
+        return (await self.session.execute(stmt.limit(1))).scalar_one_or_none()
 
     async def list_allocations(
         self, employee_id: int, *, cycle_year: int | None = None

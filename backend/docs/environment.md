@@ -92,8 +92,7 @@ interpreter happens to be first on your `PATH`.
 ## Docker
 
 ```bash
-docker compose up --build          # db + redis + api on :8000
-docker compose --profile worker up # additionally start the background worker
+docker compose up --build   # db + redis + api on :8000 + the background worker
 ```
 
 The image is multi-stage: a builder stage creates `/opt/venv` from `requirements.txt`
@@ -103,8 +102,13 @@ application, running as the unprivileged `hrms` user.
 `docker-compose.yml` reads `.env` if present but does not require it — a fresh clone
 comes up on the defaults declared in the file. Copy `.env.example` to `.env` to override.
 
-The `worker` service sits behind a Compose profile and does not start by default, because
-`app/jobs/worker.py` is still a placeholder with no entrypoint.
+The `worker` service starts by default. It runs the arq worker
+(`python -m app.jobs.worker`, i.e. `make worker`): the same image as the API, a different
+entrypoint, and its own database engine. Without it, leave accrual, device sync, payslip
+email and report exports are accepted by the API and never execute.
+
+See [`operations.md`](operations.md) for health probes, the Redis requirement, logging,
+and the backup/recovery procedure.
 
 ## Environment variables
 

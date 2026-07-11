@@ -27,6 +27,7 @@ from app.core.dependencies.auth import (
 from app.core.dependencies.pagination import PaginationParams, pagination_params
 from app.core.exceptions.base import AppException
 from app.core.middleware.request_context import get_request_id
+from app.jobs.queue import JobName, enqueue
 from app.modules.payroll.constants import PaymentStatus
 from app.modules.payroll.dependencies import PayrollServiceDep
 from app.modules.payroll.schemas import (
@@ -696,16 +697,30 @@ async def download_payslip(
 async def email_payslip(
     row_id: int,
     service: PayrollServiceDep,
+    current_user: CurrentUserDep,
     org_id: OrgIdDep,
 ) -> dict[str, Any]:
-    """Queue delivery of the payslip via the Notifications/email infrastructure.
+    """Queue delivery of the payslip on the background job queue.
 
-    Validates the computed row exists, then acknowledges the queued request.
-    Actual delivery is delegated to the Notifications module (out of core scope).
+    Validates the computed row exists, then enqueues ``send_payslip_email``, which
+    renders the payslip and sends it over SMTP in the worker. If the queue is
+    unreachable the enqueue raises (503) rather than reporting a delivery that was
+    never scheduled — see :mod:`app.jobs.queue` for the policy.
     """
     payslip = await service.view_payslip(org_id=org_id, row_id=row_id)
+    job_id = await enqueue(
+        JobName.SEND_PAYSLIP_EMAIL,
+        org_id=org_id,
+        row_id=row_id,
+        actor_id=current_user.user_id,
+    )
     return _ok(
-        {"row_id": payslip.row_id, "employee_id": payslip.employee_id, "queued": True},
+        {
+            "row_id": payslip.row_id,
+            "employee_id": payslip.employee_id,
+            "queued": True,
+            "job_id": job_id,
+        },
         "Payslip email queued for delivery.",
     )
 

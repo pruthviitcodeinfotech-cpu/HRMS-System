@@ -66,8 +66,15 @@ class EmployeeLoanAdvance(Base):
     status: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'active'"))
     comment: Mapped[str | None] = mapped_column(Text)
     # DEFERRED cross-module FKs -> users.id
-    created_by: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    updated_by: Mapped[int | None] = mapped_column(BigInteger)
+    created_by: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", name="fk_employee_loans_advances_created_by_users"),
+        nullable=False,
+    )
+    updated_by: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", name="fk_employee_loans_advances_updated_by_users"),
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
@@ -77,9 +84,7 @@ class EmployeeLoanAdvance(Base):
 
     __table_args__ = (
         CheckConstraint("type IN ('loan', 'advance')", name="ck_employee_loans_advances_type"),
-        CheckConstraint(
-            "status IN ('active', 'closed')", name="ck_employee_loans_advances_status"
-        ),
+        CheckConstraint("status IN ('active', 'closed')", name="ck_employee_loans_advances_status"),
         CheckConstraint("principal_amount > 0", name="ck_employee_loans_advances_principal_amount"),
         CheckConstraint(
             "monthly_installment > 0", name="ck_employee_loans_advances_monthly_installment"
@@ -120,7 +125,11 @@ class LoanAdvanceTransaction(Base):
     # DEFERRED cross-module FK -> Payroll (ambiguous target)
     payroll_run_id: Mapped[int | None] = mapped_column(BigInteger)
     # DEFERRED cross-module FK -> users.id
-    created_by: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    created_by: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", name="fk_loan_advance_transactions_created_by_users"),
+        nullable=False,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
@@ -181,9 +190,7 @@ class EmployeeArrears(Base):
         UniqueConstraint("org_id", "employee_id", name="uq_employee_arrears_org_id_employee_id"),
         CheckConstraint("arrears_created >= 0", name="ck_employee_arrears_arrears_created"),
         CheckConstraint("arrears_paid >= 0", name="ck_employee_arrears_arrears_paid"),
-        CheckConstraint(
-            "outstanding_arrears >= 0", name="ck_employee_arrears_outstanding_arrears"
-        ),
+        CheckConstraint("outstanding_arrears >= 0", name="ck_employee_arrears_outstanding_arrears"),
     )
 
     transactions: Mapped[list["ArrearsTransaction"]] = relationship(
@@ -216,7 +223,11 @@ class ArrearsTransaction(Base):
     # DEFERRED cross-module FK -> Payroll (ambiguous target)
     payroll_run_id: Mapped[int | None] = mapped_column(BigInteger)
     # DEFERRED cross-module FK -> users.id
-    created_by: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    created_by: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", name="fk_arrears_transactions_created_by_users"),
+        nullable=False,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
@@ -227,9 +238,7 @@ class ArrearsTransaction(Base):
             "employee_id",
             "transaction_date",
         ),
-        Index(
-            "ix_arrears_transactions_org_id_transaction_date", "org_id", "transaction_date"
-        ),
+        Index("ix_arrears_transactions_org_id_transaction_date", "org_id", "transaction_date"),
         # FK -> employee_arrears ON DELETE RESTRICT, and the natural
         # "list the transactions of this arrear" read path.
         Index("ix_arrears_transactions_employee_arrears_id", "employee_arrears_id"),
@@ -237,9 +246,7 @@ class ArrearsTransaction(Base):
             "transaction_type IN ('credit', 'debit')",
             name="ck_arrears_transactions_transaction_type",
         ),
-        CheckConstraint(
-            "source IN ('manual', 'payroll')", name="ck_arrears_transactions_source"
-        ),
+        CheckConstraint("source IN ('manual', 'payroll')", name="ck_arrears_transactions_source"),
     )
 
     employee_arrears: Mapped["EmployeeArrears"] = relationship(back_populates="transactions")

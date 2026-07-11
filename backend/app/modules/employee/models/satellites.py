@@ -180,7 +180,15 @@ class EmployeeBiometric(Base):
         nullable=False,
     )
     # DEFERRED cross-module FK -> biometric_devices.device_id (required column)
-    device_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    device_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "biometric_devices.id",
+            name="fk_employee_biometrics_device_id_biometric_devices",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+    )
     biometric_type: Mapped[str] = mapped_column(
         String(30), nullable=False, server_default=text("'fingerprint'")
     )
@@ -304,7 +312,14 @@ class OrgAttendanceSetting(Base):
         ForeignKey("branches.branch_id", name="fk_org_attendance_settings_branch_id_branches"),
     )
     # DEFERRED cross-module FK -> biometric_devices.device_id
-    device_id: Mapped[int | None] = mapped_column(BigInteger)
+    device_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "biometric_devices.id",
+            name="fk_org_attendance_settings_device_id_biometric_devices",
+            ondelete="SET NULL",
+        ),
+    )
     mobile_attendance_enabled: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("false")
     )

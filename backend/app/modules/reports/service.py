@@ -22,6 +22,8 @@ from app.core.cache.redis import cache_get_json, cache_set_json
 from app.core.constants.enums import PermissionAction
 from app.core.dependencies.auth import CurrentUser
 from app.core.exceptions.base import AuthorizationException, NotFoundException
+from app.core.logging import get_logger
+from app.jobs.queue import JobName, enqueue
 from app.modules.reports.repository import ReportsRepository
 from app.modules.reports.schemas import (
     ApprovalHistoryReportItemSchema,
@@ -103,6 +105,8 @@ from app.modules.reports.schemas import (
 from app.shared.base.service import BaseService
 from app.shared.utils.datetime import utcnow
 
+_logger = get_logger("reports")
+
 #: Strong references to in-flight export tasks. asyncio only holds a weak reference to
 #: a task, so a fire-and-forget ``create_task`` can be garbage-collected mid-run; each
 #: task removes itself here on completion.
@@ -157,6 +161,75 @@ class ReportsService(BaseService):
         content += "%%EOF\n"
         return content.encode("utf-8")
 
+    async def _dispatch_export(
+        self,
+        *,
+        job_id: str,
+        org_id: int,
+        report_name: str,
+        repo_method: str,
+        repo_kwargs: dict[str, Any],
+        format_type: str,
+    ) -> str:
+        """Hand a large export to the durable queue, or run it in-process if that fails.
+
+        The queue is the primary path: a worker survives an API restart and arq retries a
+        failed run. Redis being down is not a reason to *lose* an export the caller has
+        already been promised, so a failed enqueue degrades to the legacy in-process task
+        (which works, but dies with the process and is not retried) rather than raising.
+        The response is identical either way — the client polls ``job_id`` regardless.
+
+        Returns ``"queued"`` or ``"in_process"`` (the path actually taken).
+        """
+        try:
+            await enqueue(
+                JobName.GENERATE_REPORT_EXPORT,
+                org_id=org_id,
+                job_id=job_id,
+                report_name=report_name,
+                repo_method=repo_method,
+                repo_kwargs=repo_kwargs,
+                format_type=format_type,
+            )
+            return "queued"
+        except Exception as exc:  # noqa: BLE001 - never lose the export over a queue outage
+            _logger.error(
+                "export_enqueue_failed_running_in_process",
+                export_job_id=job_id,
+                report=report_name,
+                error=str(exc),
+            )
+
+        self._spawn_export(
+            job_id=job_id,
+            org_id=org_id,
+            report_name=report_name,
+            repo_method=repo_method,
+            repo_kwargs=repo_kwargs,
+            format_type=format_type,
+        )
+        return "in_process"
+
+    async def run_export_job(
+        self,
+        *,
+        job_id: str,
+        org_id: int,
+        report_name: str,
+        repo_method: str,
+        repo_kwargs: dict[str, Any],
+        format_type: str,
+    ) -> None:
+        """Execute an export end-to-end on this service's session (the worker's entrypoint).
+
+        The queued job (``app.jobs.tasks.generate_report_export``) constructs the service
+        with a session it opened itself and calls this; the in-process fallback below does
+        the same on a session of its own.
+        """
+        repo = ReportsRepository(self.session)
+        fetch = getattr(repo, repo_method)(org_id=org_id, **repo_kwargs)
+        await self._run_async_export(job_id, org_id, report_name, fetch, format_type)
+
     def _spawn_export(
         self,
         *,
@@ -167,9 +240,10 @@ class ReportsService(BaseService):
         repo_kwargs: dict[str, Any],
         format_type: str,
     ) -> None:
-        """Launch the export on its own session and keep the task alive.
+        """Fallback path: launch the export on its own session and keep the task alive.
 
-        Two hazards this closes:
+        Used only when the queue is unreachable (see :meth:`_dispatch_export`). Two
+        hazards this closes:
 
         * **Session reuse** — the task opens a *fresh* ``AsyncSession`` from the factory
           rather than borrowing the request-scoped one, which is closed by ``get_db`` as
@@ -183,9 +257,23 @@ class ReportsService(BaseService):
             from app.core.database.session import get_session_factory
 
             async with get_session_factory()() as session:
-                repo = ReportsRepository(session)
-                fetch = getattr(repo, repo_method)(org_id=org_id, **repo_kwargs)
-                await self._run_async_export(job_id, org_id, report_name, fetch, format_type)
+                service = ReportsService(session)
+                try:
+                    await service.run_export_job(
+                        job_id=job_id,
+                        org_id=org_id,
+                        report_name=report_name,
+                        repo_method=repo_method,
+                        repo_kwargs=repo_kwargs,
+                        format_type=format_type,
+                    )
+                except Exception as exc:  # noqa: BLE001 - nothing awaits this task
+                    # The job is already marked "failed" in the cache by
+                    # ``_run_async_export``; there is no retry on this path, so log and
+                    # stop rather than let asyncio swallow the traceback.
+                    _logger.error(
+                        "export_in_process_failed", export_job_id=job_id, error=str(exc)
+                    )
 
         task = asyncio.create_task(_runner())
         _EXPORT_TASKS.add(task)
@@ -199,7 +287,12 @@ class ReportsService(BaseService):
         fetch_coro: Awaitable[tuple[list[dict[str, Any]], int] | dict[str, Any]],
         format_type: str,
     ) -> None:
-        """Background worker to fetch data and write compiled file contents into Redis."""
+        """Fetch the data, render the file, and publish it to the cache under ``job_id``.
+
+        Marks the job ``failed`` **and re-raises**: on the queued path the raised error is
+        what tells arq to retry the run (a swallowed failure would look like success and
+        the export would never be retried). The in-process fallback catches and logs it.
+        """
         try:
             expires_at = utcnow() + datetime.timedelta(hours=1)
             await cache_set_json(
@@ -272,6 +365,7 @@ class ReportsService(BaseService):
                 },
                 ttl=3600,
             )
+            raise
 
     async def _handle_report_query(
         self,
@@ -390,13 +484,14 @@ class ReportsService(BaseService):
                         ttl=3600,
                     )
 
-                    # The export runs AFTER this handler returns, at which point
+                    # The export runs AFTER this handler returns — in a worker process,
+                    # or (if the queue is down) in a task on this one. Either way
                     # ``get_db`` has already committed and CLOSED the request-scoped
-                    # session. Binding the fetch to ``self.repo`` (and therefore to
-                    # that session) would query a closed session — an AsyncSession is
-                    # not reusable after close and is not concurrency-safe. Hand the
-                    # task the *arguments* and let it open its own session instead.
-                    self._spawn_export(
+                    # session by then. Binding the fetch to ``self.repo`` (and therefore
+                    # to that session) would query a closed session — an AsyncSession is
+                    # not reusable after close and is not concurrency-safe. Hand the job
+                    # the *arguments* and let it open its own session instead.
+                    await self._dispatch_export(
                         job_id=job_id,
                         org_id=org_id,
                         report_name=report_name,

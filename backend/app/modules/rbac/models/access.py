@@ -39,7 +39,15 @@ class UserBranchAccess(Base):
         nullable=False,
     )
     # DEFERRED cross-module FK -> branches
-    branch_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    branch_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "branches.branch_id",
+            name="fk_user_branch_access_branch_id_branches",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+    )
     granted_by: Mapped[int] = mapped_column(
         BigInteger,
         ForeignKey("users.id", name="fk_user_branch_access_granted_by_users"),
@@ -71,7 +79,15 @@ class UserDepartmentAccess(Base):
         nullable=False,
     )
     # DEFERRED cross-module FK -> departments
-    department_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    department_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "departments.dept_id",
+            name="fk_user_department_access_department_id_departments",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+    )
     granted_by: Mapped[int] = mapped_column(
         BigInteger,
         ForeignKey("users.id", name="fk_user_department_access_granted_by_users"),

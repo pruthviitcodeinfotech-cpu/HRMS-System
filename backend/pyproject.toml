@@ -29,6 +29,10 @@ dependencies = [
     "passlib[bcrypt]==1.7.4",
     "bcrypt==4.0.1",
     "redis==8.0.1",
+    # Background jobs. arq is async-native (this codebase is fully async end to end;
+    # celery's worker is not and would force a sync bridge around every service call),
+    # Redis-backed (no new broker — it reuses REDIS_URL), and small.
+    "arq==0.28.0",
     "python-multipart==0.0.32",
     "jinja2==3.1.6",
     "httpx==0.28.1",
@@ -48,8 +52,15 @@ dev = [
     "pre-commit==4.6.0",
 ]
 
-# NOTE: background-job library (e.g. arq or celery) is intentionally left as a
-# decision point — see docs/architecture.md. The jobs/ package is queue-agnostic.
+# arq 0.28.0 caps its redis-py requirement at `<6` — a conservative bound it has not
+# lifted, not a known incompatibility: arq only uses the long-stable `redis.asyncio`
+# surface (`Redis`, `ConnectionPool`, `from_url`, pipelines), all unchanged in redis-py
+# 8.x, and the worker/queue are exercised against redis==8.0.1 here. Downgrading redis
+# for the job library would be the wrong trade — the cache, rate limiter, and event
+# broker all run on it — so the bound is overridden rather than obeyed. Revisit when arq
+# widens the pin upstream.
+[tool.uv]
+override-dependencies = ["redis==8.0.1"]
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]

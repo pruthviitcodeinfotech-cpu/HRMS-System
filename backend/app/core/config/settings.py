@@ -90,8 +90,25 @@ class Settings(BaseSettings):
     max_upload_size_mb: int = Field(default=10, ge=1)
 
     # --- Background jobs -----------------------------------------------------
+    # The queue is arq (Redis-backed); it shares ``redis_url`` with the cache. The
+    # worker (``python -m app.jobs.worker``) reads these; the API process only needs
+    # ``redis_url`` to enqueue. See :mod:`app.jobs.queue`.
     queue_backend: str = Field(default="redis")
     worker_concurrency: int = Field(default=4, ge=1)
+    #: How many times arq runs a job before it is abandoned (1 = no retry).
+    job_max_tries: int = Field(default=3, ge=1)
+    #: Wall-clock budget for a single job run, in seconds.
+    job_timeout_seconds: int = Field(default=300, ge=1)
+    #: How long a finished job's result is kept in Redis, in seconds.
+    job_result_ttl_seconds: int = Field(default=86400, ge=0)
+    #: Nightly leave-accrual cron, in the worker's local time (24h clock).
+    leave_accrual_cron_hour: int = Field(default=1, ge=0, le=23)
+    leave_accrual_cron_minute: int = Field(default=30, ge=0, le=59)
+    #: Device-sync cron cadence: the job runs at every minute divisible by this value.
+    device_sync_interval_minutes: int = Field(default=15, ge=1, le=59)
+    #: Master switch for the scheduled (cron) jobs. Turn off to run a worker that only
+    #: drains enqueued work — e.g. a second worker that must not double-schedule.
+    scheduler_enabled: bool = Field(default=True)
 
     # --- Logging -------------------------------------------------------------
     log_level: str = Field(default="INFO")

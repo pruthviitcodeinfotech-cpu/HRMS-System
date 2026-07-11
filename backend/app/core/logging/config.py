@@ -15,13 +15,23 @@ import structlog
 
 from app.core.config.settings import settings
 from app.core.constants.enums import LogFormat
-from app.core.middleware.request_context import get_current_user_id, get_request_id
 
 
 def _add_request_context(
     _logger: Any, _method: str, event_dict: dict[str, Any]
 ) -> dict[str, Any]:
-    """structlog processor: inject request_id / user_id when available."""
+    """structlog processor: inject request_id / user_id when available.
+
+    The context helpers are imported *inside* the processor, not at module scope. At
+    module scope they close an import cycle — ``app.core.middleware`` imports
+    ``app.core.exceptions``, whose handlers import this module — which made importing
+    ``app.core.logging`` first in a process fail outright. ``app.main`` happened to load
+    the exceptions package before logging and so never tripped it; the worker
+    entrypoint (``python -m app.jobs.worker``) does not have that luck. The import is a
+    ``sys.modules`` lookup after the first call.
+    """
+    from app.core.middleware.request_context import get_current_user_id, get_request_id
+
     request_id = get_request_id()
     if request_id is not None:
         event_dict.setdefault("request_id", request_id)

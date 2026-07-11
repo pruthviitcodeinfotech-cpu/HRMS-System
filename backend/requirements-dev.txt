@@ -19,6 +19,10 @@ anyio==4.14.1 \
     #   httpx
     #   starlette
     #   watchfiles
+arq==0.28.0 \
+    --hash=sha256:a458188aefc2d7ee17d136f80d8fa8df1d6eba4ceebdead87e9f172d027dc311 \
+    --hash=sha256:b1696bf5614d60f4172a2c0cbdc177e23ba03a5eb9acc29bd8181f4ea71fff94
+    # via hrms-backend
 ast-serialize==0.6.0 \
     --hash=sha256:093cb8bb91b720d8523580498d031791bb1bbaa048599c3d21085d380e11a596 \
     --hash=sha256:113b58346f9ceb664352032770caca817d4a3c86f611c6088e6ef65ddaa70f0e \
@@ -104,6 +108,7 @@ click==8.4.2 \
     --hash=sha256:9a6cea6e60b17ebe0a44c5cc636d94f09bd66142c1cd7d8b4cd731c4917a15f6 \
     --hash=sha256:e6f9f66136c816745b9d65817da91d61d957fb16e02e4dcd0552553c5a197b76
     # via
+    #   arq
     #   black
     #   uvicorn
 colorama==0.4.6 ; sys_platform == 'win32' \
@@ -448,7 +453,9 @@ pyyaml==6.0.3 \
 redis==8.0.1 \
     --hash=sha256:47daa35a058c23468d6437f17a8c76882cb316b838ef763036af99b96cedd743 \
     --hash=sha256:afc5a7a2f5a084f5b1880dec548dd45be17db7e43c82a30d84f952aefb05cfb0
-    # via hrms-backend
+    # via
+    #   arq
+    #   hrms-backend
 rsa==4.9.1 \
     --hash=sha256:68635866661c6836b8d39430f97a996acbd61bfa49406748ea243539fe239762 \
     --hash=sha256:e7bdbfdb5497da4c07dfd35530e1a902659db6ff241e39d9953cad06ebd0ae75
