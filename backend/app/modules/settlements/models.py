@@ -137,6 +137,9 @@ class LoanAdvanceTransaction(Base):
             "transaction_date",
             "type_label",
         ),
+        # FK -> employee_loans_advances ON DELETE RESTRICT, and the natural
+        # "list the transactions of this loan" read path.
+        Index("ix_loan_advance_transactions_loan_advance_id", "loan_advance_id"),
         CheckConstraint(
             "transaction_type IN ('credit', 'debit')",
             name="ck_loan_advance_transactions_transaction_type",
@@ -227,6 +230,9 @@ class ArrearsTransaction(Base):
         Index(
             "ix_arrears_transactions_org_id_transaction_date", "org_id", "transaction_date"
         ),
+        # FK -> employee_arrears ON DELETE RESTRICT, and the natural
+        # "list the transactions of this arrear" read path.
+        Index("ix_arrears_transactions_employee_arrears_id", "employee_arrears_id"),
         CheckConstraint(
             "transaction_type IN ('credit', 'debit')",
             name="ck_arrears_transactions_transaction_type",

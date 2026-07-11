@@ -203,10 +203,14 @@ class RBACService(BaseService):
         user = await self._get_active_user(org_id, user_id)
         updates = data.model_dump(exclude_unset=True)
 
-        if updates.get("is_super_admin") and not actor_is_super_admin:
-            raise AuthorizationException(
-                "Only a super admin may grant super-admin.", code="AUTH_FORBIDDEN"
-            )
+        # Gate any *change* to the flag, not just grants. Checking only the truthy case
+        # would let a non-super-admin user-editor strip another user's super-admin —
+        # privilege manipulation, and a route to locking the org out of its own admin.
+        if "is_super_admin" in updates and updates["is_super_admin"] != user.is_super_admin:
+            if not actor_is_super_admin:
+                raise AuthorizationException(
+                    "Only a super admin may grant or revoke super-admin.", code="AUTH_FORBIDDEN"
+                )
         if "email" in updates and updates["email"] != user.email:
             if await self.users.email_exists(org_id, updates["email"], exclude_user_id=user_id):
                 raise ConflictException("Email already in use.", code="USER_EMAIL_EXISTS")

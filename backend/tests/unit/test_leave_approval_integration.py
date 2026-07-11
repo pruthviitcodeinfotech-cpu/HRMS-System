@@ -80,7 +80,10 @@ def leave_service() -> LeaveService:
     )
     svc.requests.has_overlap.return_value = False
     svc.balances.get_by_employee_type_year.return_value = SimpleNamespace(closing_balance=10.0)
-    svc.requests.create.return_value = SimpleNamespace(id=777, employee_id=_EMPLOYEE)
+    _req = SimpleNamespace(id=777, employee_id=_EMPLOYEE)
+    svc.requests.create.return_value = _req
+    # apply_leave returns the row re-read through the eager-loading accessor.
+    svc.requests.get_by_id_in_org.return_value = _req
     return svc
 
 

@@ -369,6 +369,13 @@ class UserSessionSchema(BaseSchema):
     revoked_at: datetime | None = None
     is_active: bool
 
+    @field_validator("ip_address", mode="before")
+    @classmethod
+    def _stringify_ip(cls, value: object) -> str | None:
+        # The ``INET`` column deserialises to an ``ipaddress`` object under asyncpg;
+        # coerce it to its string form for the response.
+        return None if value is None else str(value)
+
 
 class SessionsRevokedSchema(BaseSchema):
     """Result of ``POST /users/{user_id}/sessions/revoke-all``."""

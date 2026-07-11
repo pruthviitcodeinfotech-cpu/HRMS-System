@@ -159,6 +159,8 @@ class AttendanceDay(Base):
             name="ck_attendance_days_early_leaving_minutes_non_negative",
         ),
         Index("ix_attendance_days_org_id_attendance_date", "org_id", "attendance_date"),
+        # attendance/repository.py:103 filters days by shift_id.
+        Index("ix_attendance_days_shift_id", "shift_id"),
     )
 
     punches: Mapped[list["AttendancePunch"]] = relationship(back_populates="attendance_day")
@@ -231,6 +233,9 @@ class AttendancePunch(Base):
         ),
         Index("ix_attendance_punches_employee_id_punch_time", "employee_id", "punch_time"),
         Index("ix_attendance_punches_device_id_punch_time", "device_id", "punch_time"),
+        # AttendancePunchRepository.search(): WHERE org_id = ? ORDER BY punch_time DESC.
+        # The leading org_id also supplies the missing FK index.
+        Index("ix_attendance_punches_org_id_punch_time", "org_id", "punch_time"),
     )
 
     attendance_day: Mapped["AttendanceDay"] = relationship(back_populates="punches")
@@ -300,6 +305,9 @@ class AttendancePenalty(Base):
             name="ck_attendance_penalties_penalty_value_non_negative",
         ),
         Index("ix_attendance_penalties_employee_id_status", "employee_id", "status"),
+        # AttendancePenaltyRepository._search_stmt(): WHERE org_id = ? [AND status = ?].
+        # The leading org_id also supplies the missing FK index.
+        Index("ix_attendance_penalties_org_id_status", "org_id", "status"),
         Index("ix_attendance_penalties_attendance_day_id", "attendance_day_id"),
         Index("ix_attendance_penalties_payroll_reference_id", "payroll_reference_id"),
     )

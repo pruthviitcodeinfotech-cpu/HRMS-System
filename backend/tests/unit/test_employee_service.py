@@ -103,12 +103,61 @@ def make_employee():
     return _employee
 
 
+def _bank_detail_row(**overrides: object) -> SimpleNamespace:
+    """A stand-in ``employee_bank_details`` ORM row (sensitive: account number / IFSC)."""
+    base: dict[str, object] = {
+        "bank_detail_id": 3,
+        "bank_name": "HDFC",
+        "bank_branch_name": "MG Road",
+        "account_number": "1234567890",
+        "ifsc_code": "HDFC0001234",
+        "is_primary": True,
+        "created_at": _NOW,
+        "updated_at": _NOW,
+    }
+    base.update(overrides)
+    return SimpleNamespace(**base)
+
+
+def _document_row(**overrides: object) -> SimpleNamespace:
+    """A stand-in ``employee_documents`` ORM row."""
+    base: dict[str, object] = {
+        "document_id": 5,
+        "document_type": "pan_card",
+        "file_url": "employees/1/deadbeef.pdf",
+        "original_filename": "pan.pdf",
+        "file_size_bytes": 1024,
+        "uploaded_by": 9,
+        "created_at": _NOW,
+        "updated_at": _NOW,
+    }
+    base.update(overrides)
+    return SimpleNamespace(**base)
+
+
+class _FakeUpload:
+    """Minimal stand-in for Starlette's ``UploadFile`` (the storage upload protocol)."""
+
+    def __init__(self, content: bytes, filename: str, content_type: str) -> None:
+        self.filename = filename
+        self.content_type = content_type
+        self._content = content
+        self._done = False
+
+    async def read(self, size: int = -1) -> bytes:
+        if self._done:
+            return b""
+        self._done = True
+        return self._content
+
+
 @pytest.fixture
 def employee_service():
     """A real :class:`EmployeeService` with every repository replaced by an ``AsyncMock``."""
+    from app.infrastructure.storage.client import StoredFile
     from app.modules.employee.service import EmployeeService
 
-    svc = EmployeeService(AsyncMock())
+    svc = EmployeeService(AsyncMock(), storage=AsyncMock())
     for attr in (
         "employees",
         "branches",
@@ -124,6 +173,13 @@ def employee_service():
         "audit",
     ):
         setattr(svc, attr, AsyncMock())
+    # The storage client always hands back a server-generated key (never a client path).
+    svc.storage.save_upload.return_value = StoredFile(
+        key="employees/1/deadbeef.pdf",
+        original_filename="pan.pdf",
+        size_bytes=1024,
+        content_type="application/pdf",
+    )
     # Sensible defaults: valid org FKs, race-free code allocation, no collisions.
     svc.branches.exists_active.return_value = True
     svc.departments.exists_active.return_value = True
@@ -294,6 +350,70 @@ async def test_get_employee_salary_included_when_permitted(employee_service) -> 
 
 async def test_get_employee_salary_hidden_by_default(employee_service) -> None:
     result = await employee_service.get_employee(org_id=1, employee_id=1, include_salary=False)
+    assert result.salary is None
+
+
+# --- Sensitive sections of the detail projection (bank details) -------------
+async def test_get_employee_bank_details_hidden_without_permission(employee_service) -> None:
+    """employee:read alone must NOT leak account numbers via the embedded copy."""
+    employee_service.employees.get_detail.return_value = _employee(
+        bank_details=[_bank_detail_row()]
+    )
+    result = await employee_service.get_employee(
+        org_id=1, employee_id=1, include_salary=False, include_bank_details=False
+    )
+    assert result.bank_details == []
+    assert result.salary is None
+    dumped = result.model_dump()
+    assert dumped["bank_details"] == []
+    assert "1234567890" not in str(dumped)
+
+
+async def test_get_employee_bank_details_included_when_permitted(employee_service) -> None:
+    employee_service.employees.get_detail.return_value = _employee(
+        bank_details=[_bank_detail_row()]
+    )
+    result = await employee_service.get_employee(
+        org_id=1, employee_id=1, include_salary=True, include_bank_details=True
+    )
+    assert [row.account_number for row in result.bank_details] == ["1234567890"]
+    assert result.bank_details[0].ifsc_code == "HDFC0001234"
+    assert result.salary is not None
+
+
+async def test_get_employee_bank_details_omitted_by_default(employee_service) -> None:
+    """The flag defaults to False: forgetting to pass it fails closed."""
+    employee_service.employees.get_detail.return_value = _employee(
+        bank_details=[_bank_detail_row()]
+    )
+    result = await employee_service.get_employee(org_id=1, employee_id=1)
+    assert result.bank_details == []
+
+
+async def test_get_employee_documents_are_not_salary_gated(employee_service) -> None:
+    """Documents are governed by employee:read (contract §7/§11) — metadata only."""
+    employee_service.employees.get_detail.return_value = _employee(documents=[_document_row()])
+    result = await employee_service.get_employee(org_id=1, employee_id=1)
+    assert [doc.document_id for doc in result.documents] == [5]
+    # The storage key is never exposed on the wire.
+    assert "file_url" not in result.documents[0].model_dump()
+
+
+async def test_update_employee_response_hides_bank_details_without_salary_permission(
+    employee_service,
+) -> None:
+    """The post-update projection honours the same gate as the read path."""
+    employee_service.employees.get_detail.return_value = _employee(
+        bank_details=[_bank_detail_row()]
+    )
+    result = await employee_service.update_employee(
+        org_id=1,
+        actor_id=1,
+        employee_id=1,
+        data=EmployeeUpdateRequest(employee_name="New Name"),
+        can_set_salary=False,
+    )
+    assert result.bank_details == []
     assert result.salary is None
 
 
@@ -470,32 +590,113 @@ async def test_assign_reporting_manager_unsupported_by_schema(employee_service) 
 # Documents / photo
 # ===========================================================================
 async def test_add_document_success(employee_service) -> None:
-    row = SimpleNamespace(
-        document_id=5,
-        document_type="pan_card",
-        file_url="s3://bucket/doc.pdf",
-        original_filename="pan.pdf",
-        file_size_bytes=1024,
-        uploaded_by=9,
-        created_at=_NOW,
-        updated_at=_NOW,
-    )
-    employee_service.documents.create.return_value = row
-    data = EmployeeDocumentCreateRequest(document_type="pan_card", file_url="s3://bucket/doc.pdf")
+    employee_service.documents.create.return_value = _document_row()
+    data = EmployeeDocumentCreateRequest(document_type="pan_card")
+    upload = _FakeUpload(b"%PDF-1.4", "pan.pdf", "application/pdf")
+
     result = await employee_service.add_document(
-        org_id=1, actor_id=9, employee_id=1, data=data
+        org_id=1, actor_id=9, employee_id=1, data=data, upload=upload
     )
+
     assert result.document_id == 5
     employee_service.documents.create.assert_awaited_once()
     employee_service.audit.record.assert_awaited_once()
 
 
+async def test_add_document_persists_server_generated_key(employee_service) -> None:
+    """The stored path comes from the storage client, never from the client request."""
+    employee_service.documents.create.return_value = _document_row()
+    upload = _FakeUpload(b"%PDF-1.4", "../../etc/passwd", "application/pdf")
+
+    await employee_service.add_document(
+        org_id=1,
+        actor_id=9,
+        employee_id=1,
+        data=EmployeeDocumentCreateRequest(document_type="pan_card"),
+        upload=upload,
+    )
+
+    # The upload is handed to storage under an employee-scoped prefix ...
+    assert employee_service.storage.save_upload.await_args.kwargs["prefix"] == "employees/1"
+    # ... and only the key storage returned is persisted.
+    payload = employee_service.documents.create.await_args.args[0]
+    assert payload["file_url"] == "employees/1/deadbeef.pdf"
+    assert payload["original_filename"] == "pan.pdf"
+    assert payload["file_size_bytes"] == 1024
+    assert payload["uploaded_by"] == 9
+
+
 async def test_add_document_employee_not_found(employee_service) -> None:
     employee_service.employees.get_active_by_id.return_value = None
-    data = EmployeeDocumentCreateRequest(document_type="pan_card", file_url="s3://x")
+    data = EmployeeDocumentCreateRequest(document_type="pan_card")
+    upload = _FakeUpload(b"%PDF-1.4", "pan.pdf", "application/pdf")
     with pytest.raises(NotFoundException) as exc:
-        await employee_service.add_document(org_id=1, actor_id=9, employee_id=404, data=data)
+        await employee_service.add_document(
+            org_id=1, actor_id=9, employee_id=404, data=data, upload=upload
+        )
     assert exc.value.code == "not_found"
+    employee_service.storage.save_upload.assert_not_awaited()
+
+
+async def test_add_document_removes_orphan_blob_when_persist_fails(employee_service) -> None:
+    """A failed metadata write must not leave the uploaded bytes behind."""
+    employee_service.documents.create.side_effect = RuntimeError("db down")
+    with pytest.raises(RuntimeError):
+        await employee_service.add_document(
+            org_id=1,
+            actor_id=9,
+            employee_id=1,
+            data=EmployeeDocumentCreateRequest(document_type="pan_card"),
+            upload=_FakeUpload(b"%PDF-1.4", "pan.pdf", "application/pdf"),
+        )
+    employee_service.storage.delete.assert_awaited_once_with("employees/1/deadbeef.pdf")
+
+
+async def test_open_document_resolves_stored_key(employee_service, tmp_path) -> None:
+    """Download streams the stored file, resolved from the server-side key."""
+    from app.infrastructure.storage.client import LocalStorageClient
+
+    employee_service.storage = LocalStorageClient(base_dir=tmp_path)
+    stored = tmp_path / "employees" / "1"
+    stored.mkdir(parents=True)
+    (stored / "deadbeef.pdf").write_bytes(b"%PDF-1.4")
+    employee_service.documents.get_by_id_in_org.return_value = _document_row()
+
+    download = await employee_service.open_document(org_id=1, employee_id=1, document_id=5)
+
+    assert download.path == tmp_path.resolve() / "employees/1/deadbeef.pdf"
+    assert download.filename == "pan.pdf"
+    assert download.content_type == "application/pdf"
+
+
+async def test_open_document_not_found(employee_service) -> None:
+    employee_service.documents.get_by_id_in_org.return_value = None
+    with pytest.raises(NotFoundException) as exc:
+        await employee_service.open_document(org_id=1, employee_id=1, document_id=404)
+    assert exc.value.code == "DOCUMENT_NOT_FOUND"
+
+
+async def test_open_document_rejects_escaping_key(employee_service, tmp_path) -> None:
+    """A key that tries to escape the storage root is a 404, never a file read."""
+    from app.infrastructure.storage.client import LocalStorageClient
+
+    employee_service.storage = LocalStorageClient(base_dir=tmp_path)
+    employee_service.documents.get_by_id_in_org.return_value = _document_row(
+        file_url="../../../../etc/passwd"
+    )
+    with pytest.raises(NotFoundException) as exc:
+        await employee_service.open_document(org_id=1, employee_id=1, document_id=5)
+    assert exc.value.code == "DOCUMENT_NOT_FOUND"
+
+
+async def test_delete_document_writes_audit(employee_service) -> None:
+    employee_service.documents.get_by_id_in_org.return_value = _document_row()
+    await employee_service.delete_document(org_id=1, actor_id=9, employee_id=1, document_id=5)
+    employee_service.documents.update.assert_awaited_once()
+    assert employee_service.documents.update.await_args.args[1] == {"is_deleted": True}
+    kwargs = employee_service.audit.record.await_args.kwargs
+    assert kwargs["action_type"].value == "Delete"
+    assert kwargs["sub_module"] == "Documents"
 
 
 async def test_set_photo_success(employee_service) -> None:

@@ -61,6 +61,22 @@ class Settings(BaseSettings):
     access_token_ttl: int = Field(default=900, ge=1)  # seconds (15 min)
     refresh_token_ttl: int = Field(default=1209600, ge=1)  # seconds (14 days)
 
+    # --- Rate limiting / brute-force protection ------------------------------
+    # Two independent controls guard the unauthenticated auth endpoints:
+    #   1. a fixed-window request throttle (per client IP *and* per submitted
+    #      identifier) on ``login`` / ``refresh`` — see
+    #      :mod:`app.core.dependencies.rate_limit`;
+    #   2. a consecutive-failure account lockout on ``login`` — see
+    #      :meth:`app.modules.auth.service.AuthService.login`.
+    rate_limit_enabled: bool = Field(default=True)
+    login_rate_limit_attempts: int = Field(default=10, ge=1)
+    login_rate_limit_window_seconds: int = Field(default=60, ge=1)
+    refresh_rate_limit_attempts: int = Field(default=30, ge=1)
+    refresh_rate_limit_window_seconds: int = Field(default=60, ge=1)
+    login_max_failed_attempts: int = Field(default=5, ge=1)
+    login_failure_window_seconds: int = Field(default=900, ge=1)  # seconds (15 min)
+    login_lockout_seconds: int = Field(default=900, ge=1)  # seconds (15 min)
+
     # --- Email / SMTP --------------------------------------------------------
     smtp_host: str = Field(default="")
     smtp_port: int = Field(default=587, ge=1, le=65535)

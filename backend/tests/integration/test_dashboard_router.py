@@ -10,6 +10,7 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
+from app.core.dependencies.auth import assert_session_live
 from app.modules.dashboard.dependencies import get_dashboard_service
 from app.modules.dashboard.schemas import (
     ApprovalDashboardResponse,
@@ -52,6 +53,12 @@ async def dashboard_client(app, mock_dashboard_service: AsyncMock):
     router_included = any(getattr(route, "path", "").startswith(prefix) for route in app.routes)
     if not router_included:
         app.include_router(dashboard_router, prefix="/api/v1")
+
+    # The auth dependency re-validates the session against the DB on every request;
+
+    # router tests exercise the HTTP layer without a database, so stub that check.
+
+    app.dependency_overrides[assert_session_live] = lambda: None
 
     app.dependency_overrides[get_dashboard_service] = lambda: mock_dashboard_service
     transport = ASGITransport(app=app)

@@ -10,6 +10,7 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
+from app.core.dependencies.auth import assert_session_live
 from app.main import create_app
 from app.modules.settlements.constants import (
     LoanAdvanceStatus,
@@ -53,6 +54,9 @@ def settlement_app():
 @pytest_asyncio.fixture
 async def settlement_client(settlement_app, mock_settlement_service: AsyncMock):
     """An async HTTP client bound to the app with the settlement service mocked."""
+    # The auth dependency re-validates the session against the DB on every request;
+    # router tests exercise the HTTP layer without a database, so stub that check.
+    settlement_app.dependency_overrides[assert_session_live] = lambda: None
     settlement_app.dependency_overrides[get_settlement_service] = lambda: mock_settlement_service
     transport = ASGITransport(app=settlement_app)
     async with AsyncClient(transport=transport, base_url="http://test") as http_client:

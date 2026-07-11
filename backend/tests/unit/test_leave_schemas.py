@@ -30,7 +30,6 @@ from app.modules.leave.schemas import (
     LeaveTypeUpdateRequest,
 )
 
-
 # --- 1. Leave Type Schemas -------------------------------------------------
 
 

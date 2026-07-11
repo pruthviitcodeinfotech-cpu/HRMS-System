@@ -132,6 +132,9 @@ class UserTemplateAssignment(Base):
 
     __table_args__ = (
         UniqueConstraint("user_id", name="uq_user_template_assignments_user_id"),
+        # FK -> rights_templates ON DELETE RESTRICT: indexes the template_id probe
+        # run on every rights-template delete, and the "who has this template?" read.
+        Index("ix_user_template_assignments_template_id", "template_id"),
     )
 
     user: Mapped["User"] = relationship(  # noqa: F821

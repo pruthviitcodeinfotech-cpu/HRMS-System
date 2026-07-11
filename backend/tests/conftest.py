@@ -18,6 +18,8 @@ router is included at the API prefix only for the test app instance.
 
 from __future__ import annotations
 
+import math
+import time
 from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -27,7 +29,9 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
+from app.core.cache import redis as redis_cache
 from app.core.config.settings import settings
+from app.core.dependencies.auth import assert_session_live
 from app.core.security.jwt import create_access_token
 from app.core.security.password import hash_password
 from app.main import create_app
@@ -38,6 +42,84 @@ from app.modules.rbac.router import router as rbac_router
 
 API_PREFIX = settings.api_v1_prefix
 TEST_PASSWORD = "Secret123"
+
+
+class FakeRedis:
+    """Minimal in-memory stand-in for the async Redis client.
+
+    ``fakeredis`` is not a project dependency (and adding one for this is not worth
+    it), so the handful of commands the rate limiter and account lockout use —
+    ``get/set/incr/expire/ttl/delete`` — are implemented here directly. Keys expire
+    lazily against a monotonic clock, which is enough for TTL assertions.
+    """
+
+    def __init__(self) -> None:
+        self.store: dict[str, str] = {}
+        self.expiry: dict[str, float] = {}
+
+    def _purge(self, key: str) -> None:
+        deadline = self.expiry.get(key)
+        if deadline is not None and deadline <= time.monotonic():
+            self.store.pop(key, None)
+            self.expiry.pop(key, None)
+
+    async def get(self, key: str) -> str | None:
+        self._purge(key)
+        return self.store.get(key)
+
+    async def set(self, key: str, value: object, ex: int | None = None) -> bool:
+        self.store[key] = str(value)
+        if ex:
+            self.expiry[key] = time.monotonic() + ex
+        else:
+            self.expiry.pop(key, None)
+        return True
+
+    async def incr(self, key: str, amount: int = 1) -> int:
+        self._purge(key)
+        value = int(self.store.get(key, "0")) + amount
+        self.store[key] = str(value)
+        return value
+
+    async def expire(self, key: str, seconds: int) -> bool:
+        self._purge(key)
+        if key not in self.store:
+            return False
+        self.expiry[key] = time.monotonic() + seconds
+        return True
+
+    async def ttl(self, key: str) -> int:
+        self._purge(key)
+        if key not in self.store:
+            return -2  # no such key
+        deadline = self.expiry.get(key)
+        if deadline is None:
+            return -1  # exists, no expiry
+        return max(0, math.ceil(deadline - time.monotonic()))
+
+    async def delete(self, *keys: str) -> int:
+        removed = 0
+        for key in keys:
+            self.expiry.pop(key, None)
+            if self.store.pop(key, None) is not None:
+                removed += 1
+        return removed
+
+    async def aclose(self) -> None:
+        return None
+
+
+@pytest.fixture(autouse=True)
+def fake_redis(monkeypatch: pytest.MonkeyPatch) -> FakeRedis:
+    """Swap the process-wide Redis client for an in-memory fake, per test.
+
+    Autouse so rate-limit / lockout counters never leak between tests (and so the
+    suite never opens a real Redis connection). ``get_redis()`` returns the cached
+    module-level ``_client`` when one is set, so patching it is enough.
+    """
+    fake = FakeRedis()
+    monkeypatch.setattr(redis_cache, "_client", fake, raising=False)
+    return fake
 
 
 @pytest.fixture
@@ -66,6 +148,9 @@ async def client(
     app, mock_auth_service: AsyncMock, mock_rbac_service: AsyncMock
 ) -> AsyncIterator[AsyncClient]:
     """An async HTTP client bound to the app, with the module services mocked."""
+    # The auth dependency re-validates the session against the DB on every request;
+    # router tests exercise the HTTP layer without a database, so stub that check.
+    app.dependency_overrides[assert_session_live] = lambda: None
     app.dependency_overrides[get_auth_service] = lambda: mock_auth_service
     app.dependency_overrides[get_rbac_service] = lambda: mock_rbac_service
     transport = ASGITransport(app=app)

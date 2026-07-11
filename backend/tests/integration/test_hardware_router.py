@@ -9,6 +9,7 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
+from app.core.dependencies.auth import assert_session_live
 from app.main import create_app
 from app.modules.hardware.constants import DeviceProtocol, DeviceStatus
 from app.modules.hardware.dependencies import get_hardware_service
@@ -42,6 +43,9 @@ def hardware_app():
 @pytest_asyncio.fixture
 async def hardware_client(hardware_app, mock_hardware_service: AsyncMock):
     """An async HTTP client bound to the app with the hardware service mocked."""
+    # The auth dependency re-validates the session against the DB on every request;
+    # router tests exercise the HTTP layer without a database, so stub that check.
+    hardware_app.dependency_overrides[assert_session_live] = lambda: None
     hardware_app.dependency_overrides[get_hardware_service] = lambda: mock_hardware_service
     transport = ASGITransport(app=hardware_app)
     async with AsyncClient(transport=transport, base_url="http://test") as http_client:

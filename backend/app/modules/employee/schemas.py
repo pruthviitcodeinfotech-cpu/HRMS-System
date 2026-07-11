@@ -131,11 +131,15 @@ class EmployeeBankDetailSchema(BaseSchema):
 
 
 class EmployeeDocumentSchema(BaseSchema):
-    """A persisted ``employee_documents`` row (metadata only; binary in storage)."""
+    """A persisted ``employee_documents`` row (metadata only; binary in storage).
+
+    The storage key (``employee_documents.file_url``) is **never** exposed — the
+    contract (§7 #34) requires "document metadata (no filesystem path)". Clients fetch
+    the bytes through ``GET /employees/{id}/documents/{document_id}``.
+    """
 
     document_id: int
     document_type: DocumentType
-    file_url: str
     original_filename: str | None = None
     file_size_bytes: int | None = None
     uploaded_by: int | None = None
@@ -351,17 +355,16 @@ class EmployeeUpdateRequest(BaseSchema):
 
 
 class EmployeeDocumentCreateRequest(BaseSchema):
-    """Body for ``POST /employees/{id}/documents`` (pre-signed upload metadata).
+    """Metadata part of ``POST /employees/{id}/documents`` (``multipart/form-data``).
 
-    ``file_url`` is the object-storage path (the contract's ``file_path``).
-    ``mime`` and ``expires_at`` are transport hints for the storage layer.
+    The binary arrives as the multipart ``file`` part; the **server** validates it
+    (size / extension / content type) and generates the storage key. A client-supplied
+    path is never accepted — it would be a path-traversal primitive (contract §7 #34:
+    "Server validates content-type/size from config, generates the storage key (does
+    not trust client filename)").
     """
 
     document_type: DocumentType
-    file_url: str = Field(..., min_length=1)
-    original_filename: str | None = Field(default=None, max_length=255)
-    file_size_bytes: int | None = Field(default=None, ge=0)
-    mime: str | None = Field(default=None, max_length=150, description="Content-type hint.")
     expires_at: date | None = Field(
         default=None, description="Optional expiry for ID / contract documents."
     )
@@ -618,7 +621,11 @@ class EmployeeSchema(EmployeeSummarySchema):
 class EmployeeDetailSchema(EmployeeSchema):
     """Response for ``GET /employees/{id}`` — the full profile with nested links.
 
-    ``salary`` is populated only when the caller holds ``employee.salary.view``.
+    ``salary`` **and** ``bank_details`` are populated only when the caller holds
+    ``employee_salary:read`` — the same gate the standalone
+    ``GET /employees/{id}/bank-details`` route enforces, so the embedded copy cannot be
+    used to bypass it. Callers without it get the employee record with those sections
+    omitted (``salary=None``, ``bank_details=[]``), not a ``403``.
     """
 
     branch: BranchRefSchema | None = None

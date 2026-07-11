@@ -19,6 +19,7 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
+from app.core.dependencies.auth import assert_session_live
 from app.main import create_app
 from app.modules.shift.router import get_shift_service
 from app.modules.shift.router import router as shift_router
@@ -63,6 +64,9 @@ def shift_app():
 @pytest_asyncio.fixture
 async def shift_client(shift_app, mock_shift_service: AsyncMock):
     """An async HTTP client bound to the app, with ``ShiftService`` mocked."""
+    # The auth dependency re-validates the session against the DB on every request;
+    # router tests exercise the HTTP layer without a database, so stub that check.
+    shift_app.dependency_overrides[assert_session_live] = lambda: None
     shift_app.dependency_overrides[get_shift_service] = lambda: mock_shift_service
     transport = ASGITransport(app=shift_app)
     async with AsyncClient(transport=transport, base_url="http://test") as http_client:

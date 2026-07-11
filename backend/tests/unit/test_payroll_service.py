@@ -2,56 +2,46 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, time, timezone
+from datetime import UTC, date, datetime, time
 from decimal import Decimal
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.core.exceptions.base import ConflictException, NotFoundException, ValidationException
+from app.core.exceptions.base import ConflictException
 from app.modules.payroll.constants import (
-    PaymentStatus,
-    WorkingHourType,
-    AttendanceMode,
-    PayrollType,
-    PayrollSalaryType,
     AdjustedStatus,
     AdjustmentSource,
+    AttendanceMode,
+    PaymentStatus,
+    PayrollSalaryType,
+    PayrollType,
+    WorkingHourType,
 )
 from app.modules.payroll.exceptions import (
-    PayrollGroupNotFoundException,
-    PayrollGroupNameExistsException,
-    PayrollGroupInUseException,
-    CycleNotFoundException,
     CycleExistsException,
     CycleFinalizedException,
-    ComputedRowNotFoundException,
-    FinalizedRunNotFoundException,
     PayrollAlreadyFinalizedException,
-    PayrollNotFinalizedException,
-    AdjustmentNotFoundException,
-    AdjustmentExistsException,
-    EmployeeNotFoundException,
+    PayrollGroupInUseException,
+    PayrollGroupNameExistsException,
 )
 from app.modules.payroll.schemas import (
-    PayrollSettingUpdateSchema,
-    PayrollGroupCreateSchema,
-    PayrollGroupUpdateSchema,
+    AttendanceAdjustmentCreateSchema,
+    AttendanceAdjustmentExtraHoursCreateSchema,
+    AttendanceAdjustmentPenaltyCreateSchema,
     EmployeeGroupAssignRequestSchema,
-    PayrollColumnSettingsReplaceSchema,
     PayrollColumnSettingInputSchema,
+    PayrollColumnSettingsReplaceSchema,
     PayrollCycleCreateSchema,
     PayrollCycleUpdateSchema,
+    PayrollGroupCreateSchema,
     PayrollProcessRequestSchema,
+    PayrollSettingUpdateSchema,
     RecordPaymentRequestSchema,
-    AttendanceAdjustmentCreateSchema,
-    AttendanceAdjustmentUpdateSchema,
-    AttendanceAdjustmentPenaltyCreateSchema,
-    AttendanceAdjustmentExtraHoursCreateSchema,
 )
 
-_NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
+_NOW = datetime(2026, 1, 1, tzinfo=UTC)
 
 
 # ---------------------------------------------------------------------------
@@ -204,6 +194,7 @@ def _adjustment(**overrides: object) -> SimpleNamespace:
 
 def _attendance_day(day: int, status: str = "present", **overrides: object) -> SimpleNamespace:
     base: dict[str, object] = {
+        "employee_id": 5,
         "attendance_date": date(2026, 1, day),
         "status": status,
         "total_working_minutes": 480,
@@ -240,19 +231,49 @@ def _result(scalars_all: list | None = None, scalar_one: object = None) -> Magic
     return result
 
 
-# ``_calculate_employee_payroll`` issues exactly four queries per employee, in this order.
-def _per_employee_results(
+# Payroll batches are computed by bulk-prefetching every input ONCE for the whole employee
+# set, then calculating purely in memory. ``_prefetch_batch_inputs`` issues exactly these
+# four ``session.execute`` queries, in this order, no matter how many employees are in the
+# run — the other four inputs (assignments, adjustments, penalties, extra hours) come from
+# the repositories, which the fixture mocks directly.
+def _batch_results(
     att_days: list | None = None,
     leaves: list | None = None,
     loans: list | None = None,
-    arrears: object = None,
+    arrears: list | None = None,
 ) -> list[MagicMock]:
     return [
-        _result(att_days),  # attendance days
-        _result(leaves),  # approved leave requests
+        _result(att_days),  # attendance days for the whole cycle
+        _result(leaves),  # approved leave requests overlapping the cycle
         _result(loans),  # active loans / advances
-        _result(scalar_one=arrears),  # arrears record
+        _result(arrears),  # arrears records
     ]
+
+
+# Every data-access call ``generate_payroll`` can make, so a test can count DB round-trips.
+_DB_CALLS: dict[str, tuple[str, ...]] = {
+    "assignments": ("get_by_employees", "get_by_employee"),
+    "adjustments": ("get_adjustments_for_employees", "search"),
+    "penalties": ("get_penalties_for_employees", "get_penalties"),
+    "extra_hours": ("get_extra_hours_for_employees", "get_extra_hours_range"),
+    "computed_rows": (
+        "get_rows_for_cycle",
+        "get_row",
+        "create",
+        "update",
+        "bulk_insert_rows",
+        "bulk_update_rows",
+    ),
+}
+
+
+def _db_round_trips(svc) -> int:
+    """Total DB round-trips a run made: raw ``session.execute`` calls + repository calls."""
+    total = svc.session.execute.await_count
+    for repo_name, methods in _DB_CALLS.items():
+        repo = getattr(svc, repo_name)
+        total += sum(getattr(repo, method).await_count for method in methods)
+    return total
 
 
 # ---------------------------------------------------------------------------
@@ -299,7 +320,14 @@ def payroll_service():
     svc.adjustments.get_by_id.return_value = _adjustment()
     svc.adjustments.get_adjustment.return_value = None
 
-    # Collections read by ``_calculate_employee_payroll``; default to "nothing recorded".
+    # Collections bulk-prefetched by ``_prefetch_batch_inputs``; default to "nothing recorded".
+    svc.assignments.get_by_employees.return_value = [_assignment()]
+    svc.adjustments.get_adjustments_for_employees.return_value = []
+    svc.penalties.get_penalties_for_employees.return_value = []
+    svc.extra_hours.get_extra_hours_for_employees.return_value = []
+    svc.computed_rows.get_rows_for_cycle.return_value = []
+
+    # Single-employee reads still used elsewhere in the service.
     svc.adjustments.search.return_value = []
     svc.penalties.get_penalties.return_value = []
     svc.extra_hours.get_extra_hours_range.return_value = []
@@ -443,7 +471,7 @@ async def test_preview_payroll(payroll_service) -> None:
     )
     employee = _employee(monthly_salary=Decimal("3100.00"))
     payroll_service.session.execute = AsyncMock(
-        side_effect=[_result([employee]), *_per_employee_results(att_days=_FULL_MONTH)]
+        side_effect=[_result([employee]), *_batch_results(att_days=_FULL_MONTH)]
     )
 
     res = await payroll_service.preview_payroll(org_id=1, payload=payload)
@@ -474,7 +502,7 @@ async def test_preview_payroll_unpaid_days_reduce_gross(payroll_service) -> None
     employee = _employee(monthly_salary=Decimal("3100.00"))
     att = [_attendance_day(d) for d in range(1, 21)]
     payroll_service.session.execute = AsyncMock(
-        side_effect=[_result([employee]), *_per_employee_results(att_days=att)]
+        side_effect=[_result([employee]), *_batch_results(att_days=att)]
     )
 
     res = await payroll_service.preview_payroll(org_id=1, payload=payload)
@@ -493,21 +521,51 @@ async def test_generate_payroll(payroll_service) -> None:
         employee_ids=[5],
     )
     employee = _employee(monthly_salary=Decimal("3100.00"))
-    payroll_service.computed_rows.get_row.return_value = None
+    payroll_service.computed_rows.get_rows_for_cycle.return_value = []
     payroll_service.session.execute = AsyncMock(
-        side_effect=[_result([employee]), *_per_employee_results(att_days=_FULL_MONTH)]
+        side_effect=[_result([employee]), *_batch_results(att_days=_FULL_MONTH)]
     )
 
     res = await payroll_service.generate_payroll(org_id=1, payload=payload, user_id=9)
 
     assert res.results[0].success is True
     assert res.results[0].employee_id == 5
-    payroll_service.computed_rows.create.assert_awaited_once()
-    persisted = payroll_service.computed_rows.create.await_args.args[0]
+    # New rows are written with ONE bulk insert carrying every employee's row.
+    payroll_service.computed_rows.bulk_insert_rows.assert_awaited_once()
+    inserted = payroll_service.computed_rows.bulk_insert_rows.await_args.args[0]
+    assert len(inserted) == 1
+    persisted = inserted[0]
     assert persisted["gross_wages"] == Decimal("3100.00")
     assert persisted["is_finalized"] is False
     assert persisted["computed_by"] == 9
     payroll_service.audit.record.assert_awaited_once()
+
+
+async def test_generate_payroll_updates_existing_row_in_bulk(payroll_service) -> None:
+    """An existing unfinalized row is refreshed via the bulk UPDATE path, keyed by its id."""
+    payload = PayrollProcessRequestSchema(
+        payroll_group_id=2,
+        cycle_from=date(2026, 1, 1),
+        cycle_to=date(2026, 1, 31),
+        employee_ids=[5],
+    )
+    employee = _employee(monthly_salary=Decimal("3100.00"))
+    payroll_service.computed_rows.get_rows_for_cycle.return_value = [
+        _computed_row(id=10, employee_id=5, is_finalized=False)
+    ]
+    payroll_service.session.execute = AsyncMock(
+        side_effect=[_result([employee]), *_batch_results(att_days=_FULL_MONTH)]
+    )
+
+    res = await payroll_service.generate_payroll(org_id=1, payload=payload, user_id=9)
+
+    assert res.results[0].success is True
+    payroll_service.computed_rows.bulk_insert_rows.assert_awaited_once_with([])
+    payroll_service.computed_rows.bulk_update_rows.assert_awaited_once()
+    updated = payroll_service.computed_rows.bulk_update_rows.await_args.args[0]
+    assert len(updated) == 1
+    assert updated[0]["id"] == 10
+    assert updated[0]["gross_wages"] == Decimal("3100.00")
 
 
 async def test_generate_payroll_skips_finalized_employee(payroll_service) -> None:
@@ -518,14 +576,122 @@ async def test_generate_payroll_skips_finalized_employee(payroll_service) -> Non
         cycle_to=date(2026, 1, 31),
         employee_ids=[5],
     )
-    payroll_service.computed_rows.get_row.return_value = _computed_row(is_finalized=True)
-    payroll_service.session.execute = AsyncMock(side_effect=[_result([_employee()])])
+    payroll_service.computed_rows.get_rows_for_cycle.return_value = [
+        _computed_row(is_finalized=True)
+    ]
+    payroll_service.session.execute = AsyncMock(
+        side_effect=[_result([_employee()]), *_batch_results()]
+    )
 
     res = await payroll_service.generate_payroll(org_id=1, payload=payload, user_id=9)
 
     assert res.results[0].success is False
     assert res.results[0].error_code == "PAYROLL_ALREADY_FINALIZED"
+    # Nothing persisted: the finalized employee reaches neither the insert nor the update batch.
     payroll_service.computed_rows.create.assert_not_awaited()
+    payroll_service.computed_rows.bulk_insert_rows.assert_awaited_once_with([])
+    payroll_service.computed_rows.bulk_update_rows.assert_awaited_once_with([])
+
+
+async def test_recalculate_payroll_raises_when_any_row_finalized(payroll_service) -> None:
+    """A finalized row anywhere in the target period aborts the whole recalculation."""
+    payload = PayrollProcessRequestSchema(
+        payroll_group_id=2,
+        cycle_from=date(2026, 1, 1),
+        cycle_to=date(2026, 1, 31),
+        employee_ids=[5],
+    )
+    payroll_service.computed_rows.get_rows_for_cycle.return_value = [
+        _computed_row(is_finalized=True)
+    ]
+    payroll_service.session.execute = AsyncMock(
+        side_effect=[_result([_employee()]), *_batch_results()]
+    )
+
+    with pytest.raises(PayrollAlreadyFinalizedException):
+        await payroll_service.recalculate_payroll(org_id=1, payload=payload, user_id=9)
+
+    payroll_service.computed_rows.bulk_insert_rows.assert_not_awaited()
+    payroll_service.computed_rows.bulk_update_rows.assert_not_awaited()
+
+
+async def test_recalculate_payroll_reads_existing_rows_once(payroll_service) -> None:
+    """The cycle's existing rows are fetched ONCE.
+
+    The old code read each employee's row twice: once in the finalized-check loop and
+    again in the compute loop.
+    """
+    payload = PayrollProcessRequestSchema(
+        payroll_group_id=2,
+        cycle_from=date(2026, 1, 1),
+        cycle_to=date(2026, 1, 31),
+        employee_ids=[5],
+    )
+    employee = _employee(monthly_salary=Decimal("3100.00"))
+    payroll_service.computed_rows.get_rows_for_cycle.return_value = [
+        _computed_row(id=10, employee_id=5, is_finalized=False)
+    ]
+    payroll_service.session.execute = AsyncMock(
+        side_effect=[_result([employee]), *_batch_results(att_days=_FULL_MONTH)]
+    )
+
+    res = await payroll_service.recalculate_payroll(org_id=1, payload=payload, user_id=9)
+
+    assert res.results[0].success is True
+    payroll_service.computed_rows.get_rows_for_cycle.assert_awaited_once()
+    payroll_service.computed_rows.get_row.assert_not_awaited()
+    updated = payroll_service.computed_rows.bulk_update_rows.await_args.args[0]
+    assert updated[0]["gross_wages"] == Decimal("3100.00")
+
+
+@pytest.mark.parametrize("headcount", [1, 5, 50])
+async def test_generate_payroll_query_count_does_not_scale_with_headcount(
+    payroll_service, headcount: int
+) -> None:
+    """Payroll generation must cost a BOUNDED number of DB round-trips.
+
+    The old implementation issued ~11 queries *per employee* (2,206 for a 200-employee
+    run). Inputs are now bulk-prefetched once and the computed rows are written with two
+    bulk statements, so the total is constant. This test fails loudly if a per-employee
+    query ever creeps back into the loop.
+    """
+    employees = [
+        _employee(employee_id=i, monthly_salary=Decimal("3100.00"))
+        for i in range(1, headcount + 1)
+    ]
+    payload = PayrollProcessRequestSchema(
+        payroll_group_id=2,
+        cycle_from=date(2026, 1, 1),
+        cycle_to=date(2026, 1, 31),
+        employee_ids=[e.employee_id for e in employees],
+    )
+    # Every employee has an assignment and a full month of attendance, so each one takes
+    # the full compute path rather than short-circuiting on missing data.
+    payroll_service.assignments.get_by_employees.return_value = [
+        _assignment(id=e.employee_id, employee_id=e.employee_id) for e in employees
+    ]
+    attendance = [
+        _attendance_day(d, employee_id=e.employee_id)
+        for e in employees
+        for d in range(1, 32)
+    ]
+    payroll_service.computed_rows.get_rows_for_cycle.return_value = []
+    payroll_service.session.execute = AsyncMock(
+        side_effect=[_result(employees), *_batch_results(att_days=attendance)]
+    )
+
+    res = await payroll_service.generate_payroll(org_id=1, payload=payload, user_id=9)
+
+    # Every employee was computed, and computed correctly.
+    assert len(res.results) == headcount
+    assert all(item.success for item in res.results)
+    inserted = payroll_service.computed_rows.bulk_insert_rows.await_args.args[0]
+    assert len(inserted) == headcount
+    assert all(row["gross_wages"] == Decimal("3100.00") for row in inserted)
+
+    # ... at a fixed cost: 1 employee select + 8 bulk prefetches + 1 existing-rows read
+    # + 2 bulk writes. Bounded, and identical for 1 employee and for 50.
+    assert _db_round_trips(payroll_service) == 12
 
 
 async def test_finalize_payroll_success(payroll_service) -> None:

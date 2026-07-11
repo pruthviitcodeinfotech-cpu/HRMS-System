@@ -20,6 +20,7 @@ from sqlalchemy import (
     BigInteger,
     DateTime,
     ForeignKey,
+    Index,
     UniqueConstraint,
     text,
 )
@@ -50,6 +51,9 @@ class UserBranchAccess(Base):
 
     __table_args__ = (
         UniqueConstraint("user_id", "branch_id", name="uq_user_branch_access_user_id_branch_id"),
+        # FK -> branches ON DELETE RESTRICT. The uq above leads with user_id, so it
+        # cannot serve the branch_id probe PostgreSQL runs on every branch delete.
+        Index("ix_user_branch_access_branch_id", "branch_id"),
     )
 
     user: Mapped["User"] = relationship(  # noqa: F821
@@ -81,6 +85,9 @@ class UserDepartmentAccess(Base):
         UniqueConstraint(
             "user_id", "department_id", name="uq_user_department_access_user_id_department_id"
         ),
+        # FK -> departments ON DELETE RESTRICT. The uq above leads with user_id, so it
+        # cannot serve the department_id probe run on every department delete.
+        Index("ix_user_department_access_department_id", "department_id"),
     )
 
     user: Mapped["User"] = relationship(  # noqa: F821

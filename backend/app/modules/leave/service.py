@@ -366,7 +366,12 @@ class LeaveService(BaseService):
                 employee_name=emp.employee_name,
             )
 
-            return balance
+        # Re-read through the eager-loading accessor: a freshly created row has its
+        # ``leave_type`` relationship unloaded, and serialising the response would
+        # trigger a lazy load outside the async greenlet context (MissingGreenlet).
+        return await self.balances.get_by_employee_type_year(
+            employee_id, leave_type_id, cycle_year
+        )
 
     async def debit_leave_balance(
         self, org_id: int, employee_id: int, data: dict[str, Any], adjusted_by: int
@@ -425,7 +430,12 @@ class LeaveService(BaseService):
                 employee_name=emp.employee_name,
             )
 
-            return balance
+        # Re-read through the eager-loading accessor: a freshly created row has its
+        # ``leave_type`` relationship unloaded, and serialising the response would
+        # trigger a lazy load outside the async greenlet context (MissingGreenlet).
+        return await self.balances.get_by_employee_type_year(
+            employee_id, leave_type_id, cycle_year
+        )
 
     async def adjust_leave_balance(
         self, org_id: int, employee_id: int, data: dict[str, Any], adjusted_by: int
@@ -497,7 +507,12 @@ class LeaveService(BaseService):
                 employee_name=emp.employee_name,
             )
 
-            return balance
+        # Re-read through the eager-loading accessor: a freshly created row has its
+        # ``leave_type`` relationship unloaded, and serialising the response would
+        # trigger a lazy load outside the async greenlet context (MissingGreenlet).
+        return await self.balances.get_by_employee_type_year(
+            employee_id, leave_type_id, cycle_year
+        )
 
     async def get_leave_balance_history(
         self, org_id: int, employee_id: int, cycle_year: int, *, leave_type_id: int | None = None
@@ -599,7 +614,10 @@ class LeaveService(BaseService):
                 created_by=applied_by,
             )
 
-            return request
+        # Re-read through the eager-loading accessor: the freshly created row has its
+        # ``leave_type`` relationship unloaded, and serialising the response would
+        # trigger a lazy load outside the async greenlet context (MissingGreenlet).
+        return await self.requests.get_by_id_in_org(org_id, request.id)
 
     async def get_leave_request(self, org_id: int, request_id: int) -> LeaveRequest:
         """Get leave request details."""

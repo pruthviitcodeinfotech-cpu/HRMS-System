@@ -14,13 +14,16 @@ and header fixtures from :mod:`tests.conftest`.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from decimal import Decimal
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
+from app.core.dependencies.auth import assert_session_live
 from app.main import create_app
 from app.modules.employee.router import get_employee_service
 from app.modules.employee.router import router as employee_router
@@ -34,6 +37,7 @@ from app.modules.employee.schemas import (
     EmployeeSummarySchema,
     EmployeeTagSchema,
 )
+from app.modules.employee.service import DocumentDownload, EmployeeService
 from tests.conftest import API_PREFIX
 
 _NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -61,6 +65,9 @@ def employee_app():
 @pytest_asyncio.fixture
 async def employee_client(employee_app, mock_employee_service: AsyncMock):
     """An async HTTP client bound to the app, with ``EmployeeService`` mocked."""
+    # The auth dependency re-validates the session against the DB on every request;
+    # router tests exercise the HTTP layer without a database, so stub that check.
+    employee_app.dependency_overrides[assert_session_live] = lambda: None
     employee_app.dependency_overrides[get_employee_service] = lambda: mock_employee_service
     transport = ASGITransport(app=employee_app)
     async with AsyncClient(transport=transport, base_url="http://test") as http_client:
@@ -282,6 +289,185 @@ async def test_get_employee_salary_hidden_without_permission(
 
 
 # ===========================================================================
+# Sensitive sections of GET /employees/{id} — bank details (regression)
+#
+# The embedded ``bank_details`` list must honour the SAME gate as the standalone
+# ``GET /employees/{id}/bank-details`` route (employee:read + employee_salary:read).
+# These drive the real detail projection (``EmployeeService._build_detail``) through the
+# router so the assertions are on the actual response body, not just a forwarded flag.
+# ===========================================================================
+def _orm_employee() -> SimpleNamespace:
+    """A stand-in eager-loaded ``employees`` row carrying sensitive satellites."""
+    bank_row = SimpleNamespace(
+        bank_detail_id=3,
+        bank_name="HDFC",
+        bank_branch_name="MG Road",
+        account_number="1234567890",
+        ifsc_code="HDFC0001234",
+        is_primary=True,
+        created_at=_NOW,
+        updated_at=_NOW,
+    )
+    document_row = SimpleNamespace(
+        document_id=5,
+        document_type="pan_card",
+        file_url="employees/1/deadbeef.pdf",
+        original_filename="pan.pdf",
+        file_size_bytes=1024,
+        uploaded_by=1,
+        created_at=_NOW,
+        updated_at=_NOW,
+    )
+    return SimpleNamespace(
+        employee_id=1,
+        org_id=1,
+        employee_code="EMP00001",
+        employee_name="Jane Doe",
+        display_name=None,
+        employee_uid=None,
+        gender="Female",
+        mobile_country_code="+91",
+        mobile_number="9876543210",
+        email="jane@example.com",
+        address=None,
+        master_branch_id=1,
+        dept_id=1,
+        designation_id=1,
+        employee_type=None,
+        date_of_joining=date(2026, 1, 1),
+        date_of_birth=None,
+        date_of_leaving=None,
+        door_lock_permission=False,
+        pf_account_number=None,
+        uan_number=None,
+        esic_ip_number=None,
+        salary_type="Monthly",
+        monthly_salary=Decimal("50000.00"),
+        payroll_group_id=None,
+        employment_status="active",
+        profile_photo_url=None,
+        is_deleted=False,
+        created_by=1,
+        created_at=_NOW,
+        updated_at=_NOW,
+        master_branch=SimpleNamespace(branch_id=1, branch_name="HQ"),
+        department=SimpleNamespace(dept_id=1, dept_name="Engineering"),
+        designation=SimpleNamespace(designation_id=1, designation_name="Engineer"),
+        bank_details=[bank_row],
+        documents=[document_row],
+        emergency_contacts=[],
+        references=[],
+        biometrics=[],
+        punch_branches=[],
+        attendance_permission=None,
+        tags=[],
+        status_history=[],
+    )
+
+
+def _real_projection(mock_employee_service: AsyncMock) -> None:
+    """Make the mocked service build the *real* detail projection from the flags."""
+
+    async def _get_employee(
+        *, org_id: int, employee_id: int, include_salary: bool, include_bank_details: bool
+    ) -> EmployeeDetailSchema:
+        return EmployeeService._build_detail(
+            _orm_employee(),
+            include_salary=include_salary,
+            include_bank_details=include_bank_details,
+        )
+
+    mock_employee_service.get_employee.side_effect = _get_employee
+
+
+async def test_get_employee_omits_bank_details_without_salary_permission(
+    employee_client: AsyncClient, mock_employee_service: AsyncMock, make_access_token
+) -> None:
+    """employee:read alone must NOT return account numbers via the employee detail."""
+    _real_projection(mock_employee_service)
+    token = make_access_token(
+        is_super_admin=False, permissions=[{"feature_key": "employee", "can_read": True}]
+    )
+    resp = await employee_client.get(
+        f"{API_PREFIX}/employees/1", headers={"Authorization": f"Bearer {token}"}
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()["data"]
+    assert body["employee_id"] == 1  # the employee itself is still readable
+    assert body["bank_details"] == []
+    assert body["salary"] is None
+    assert "1234567890" not in resp.text
+    assert "HDFC0001234" not in resp.text
+    assert mock_employee_service.get_employee.await_args.kwargs["include_bank_details"] is False
+
+
+async def test_get_employee_includes_bank_details_with_salary_permission(
+    employee_client: AsyncClient, mock_employee_service: AsyncMock, make_access_token
+) -> None:
+    """employee:read + employee_salary:read — the same pair the standalone route needs."""
+    _real_projection(mock_employee_service)
+    token = make_access_token(
+        is_super_admin=False,
+        permissions=[
+            {"feature_key": "employee", "can_read": True},
+            {"feature_key": "employee_salary", "can_read": True},
+        ],
+    )
+    resp = await employee_client.get(
+        f"{API_PREFIX}/employees/1", headers={"Authorization": f"Bearer {token}"}
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()["data"]
+    assert [row["account_number"] for row in body["bank_details"]] == ["1234567890"]
+    assert body["bank_details"][0]["ifsc_code"] == "HDFC0001234"
+    assert body["salary"]["monthly_salary"] == "50000.00"
+    assert mock_employee_service.get_employee.await_args.kwargs["include_bank_details"] is True
+
+
+async def test_get_employee_documents_readable_with_employee_read(
+    employee_client: AsyncClient, mock_employee_service: AsyncMock, make_access_token
+) -> None:
+    """Documents are governed by employee:read (contract §7/§11) — metadata only, no path."""
+    _real_projection(mock_employee_service)
+    token = make_access_token(
+        is_super_admin=False, permissions=[{"feature_key": "employee", "can_read": True}]
+    )
+    resp = await employee_client.get(
+        f"{API_PREFIX}/employees/1", headers={"Authorization": f"Bearer {token}"}
+    )
+
+    assert resp.status_code == 200
+    documents = resp.json()["data"]["documents"]
+    assert [doc["document_id"] for doc in documents] == [5]
+    assert "file_url" not in documents[0]
+    assert "employees/1/deadbeef.pdf" not in resp.text
+
+
+async def test_list_employees_never_exposes_bank_details_or_salary(
+    employee_client: AsyncClient, mock_employee_service: AsyncMock, make_access_token
+) -> None:
+    """The list projection (EmployeeSummarySchema) carries no sensitive sections at all."""
+    mock_employee_service.list_employees.return_value = _list_response()
+    token = make_access_token(
+        is_super_admin=False,
+        permissions=[
+            {"feature_key": "employee", "can_read": True},
+            {"feature_key": "employee_salary", "can_read": True},
+        ],
+    )
+    resp = await employee_client.get(
+        f"{API_PREFIX}/employees", headers={"Authorization": f"Bearer {token}"}
+    )
+
+    assert resp.status_code == 200
+    row = resp.json()["data"]["items"][0]
+    for sensitive in ("bank_details", "salary", "monthly_salary", "documents"):
+        assert sensitive not in row
+
+
+# ===========================================================================
 # Validation failures (422)
 # ===========================================================================
 async def test_create_employee_invalid_email_422(
@@ -324,23 +510,50 @@ async def test_exit_employee_invalid_dates_422(
 async def test_add_document_201(
     employee_client: AsyncClient, mock_employee_service: AsyncMock, super_admin_headers
 ) -> None:
-    mock_employee_service.add_document.return_value = EmployeeDocumentSchema(
-        document_id=5,
-        document_type="pan_card",
-        file_url="s3://bucket/doc.pdf",
-        original_filename="pan.pdf",
-        file_size_bytes=1024,
-        uploaded_by=1,
-        created_at=_NOW,
-        updated_at=_NOW,
-    )
+    """Upload is ``multipart/form-data``; the binary reaches the service untouched."""
+    seen: dict[str, object] = {}
+
+    async def _add_document(*, upload, data, **_kwargs):
+        seen["filename"] = upload.filename
+        seen["content_type"] = upload.content_type
+        seen["content"] = await upload.read()
+        seen["document_type"] = data.document_type.value
+        return _document()
+
+    mock_employee_service.add_document.side_effect = _add_document
+
     resp = await employee_client.post(
         f"{API_PREFIX}/employees/1/documents",
-        json={"document_type": "pan_card", "file_url": "s3://bucket/doc.pdf"},
+        data={"document_type": "pan_card"},
+        files={"file": ("pan.pdf", b"%PDF-1.4", "application/pdf")},
         headers=super_admin_headers,
     )
+
     assert resp.status_code == 201
-    assert resp.json()["data"]["document_id"] == 5
+    body = resp.json()["data"]
+    assert body["document_id"] == 5
+    # Metadata only — the storage key is never exposed (contract §7 #34).
+    assert "file_url" not in body
+    assert seen == {
+        "filename": "pan.pdf",
+        "content_type": "application/pdf",
+        "content": b"%PDF-1.4",
+        "document_type": "pan_card",
+    }
+
+
+async def test_add_document_rejects_client_supplied_path(
+    employee_client: AsyncClient, mock_employee_service: AsyncMock, super_admin_headers
+) -> None:
+    """A JSON body naming a file path is no longer an accepted upload at all."""
+    resp = await employee_client.post(
+        f"{API_PREFIX}/employees/1/documents",
+        json={"document_type": "pan_card", "file_url": "../../etc/passwd"},
+        headers=super_admin_headers,
+    )
+    assert resp.status_code == 422
+    assert resp.json()["error"]["code"] == "VALIDATION_ERROR"
+    mock_employee_service.add_document.assert_not_awaited()
 
 
 async def test_set_photo_200(
@@ -361,7 +574,8 @@ async def test_add_document_forbidden_without_permission(
     token = make_access_token(is_super_admin=False, permissions=[])
     resp = await employee_client.post(
         f"{API_PREFIX}/employees/1/documents",
-        json={"document_type": "pan_card", "file_url": "s3://x"},
+        data={"document_type": "pan_card"},
+        files={"file": ("pan.pdf", b"%PDF-1.4", "application/pdf")},
         headers={"Authorization": f"Bearer {token}"},
     )
     assert resp.status_code == 403
@@ -491,7 +705,6 @@ def _document() -> EmployeeDocumentSchema:
     return EmployeeDocumentSchema(
         document_id=5,
         document_type="pan_card",
-        file_url="s3://bucket/doc.pdf",
         original_filename="pan.pdf",
         file_size_bytes=1024,
         uploaded_by=1,
@@ -509,17 +722,31 @@ async def test_list_documents_200(
     )
     assert resp.status_code == 200
     assert resp.json()["data"][0]["document_id"] == 5
+    assert "file_url" not in resp.json()["data"][0]
 
 
-async def test_get_document_200(
-    employee_client: AsyncClient, mock_employee_service: AsyncMock, super_admin_headers
+async def test_download_document_streams_stored_file(
+    employee_client: AsyncClient,
+    mock_employee_service: AsyncMock,
+    super_admin_headers,
+    tmp_path,
 ) -> None:
-    mock_employee_service.get_document.return_value = _document()
+    """The download route streams the stored bytes, not a client-supplied URL."""
+    stored = tmp_path / "deadbeef.pdf"
+    stored.write_bytes(b"%PDF-1.4 payload")
+    mock_employee_service.open_document.return_value = DocumentDownload(
+        path=stored,
+        filename="pan.pdf",
+        content_type="application/pdf",
+        document=_document(),
+    )
     resp = await employee_client.get(
         f"{API_PREFIX}/employees/1/documents/5", headers=super_admin_headers
     )
     assert resp.status_code == 200
-    assert resp.json()["data"]["file_url"] == "s3://bucket/doc.pdf"
+    assert resp.content == b"%PDF-1.4 payload"
+    assert resp.headers["content-type"] == "application/pdf"
+    assert "pan.pdf" in resp.headers["content-disposition"]
 
 
 async def test_delete_document_204(

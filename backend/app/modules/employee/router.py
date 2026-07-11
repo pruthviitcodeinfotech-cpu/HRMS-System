@@ -23,10 +23,11 @@ deferred; its request/response schemas already exist in
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Query, status
-from fastapi.responses import Response
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
+from fastapi.responses import FileResponse, Response
 
 from app.core.constants.enums import PermissionAction as A
 from app.core.dependencies.auth import (
@@ -38,7 +39,7 @@ from app.core.dependencies.db import get_db
 from app.core.dependencies.pagination import PaginationParams, pagination_params
 from app.core.exceptions.base import AppException
 from app.core.middleware.request_context import get_request_id
-from app.modules.employee.constants import EmploymentStatus
+from app.modules.employee.constants import DocumentType, EmploymentStatus
 from app.modules.employee.schemas import (
     EmployeeBankDetailCreateRequest,
     EmployeeBankDetailSchema,
@@ -110,6 +111,18 @@ def _ok(data: Any, message: str = "OK") -> dict[str, Any]:
 
 def _can_view_salary(current_user: CurrentUser) -> bool:
     """Whether the caller may see/set the segregated salary block (``employee.salary.view``)."""
+    return current_user.permissions.has_permission(_EMPLOYEE_SALARY, A.READ)
+
+
+def _can_view_bank_details(current_user: CurrentUser) -> bool:
+    """Whether the caller may see bank details (account numbers / IFSC codes).
+
+    Same gate as the standalone ``GET /employees/{id}/bank-details`` route
+    (``employee:read`` **and** ``employee_salary:read``). The detail projection embeds
+    the same rows, so it must honour the same permission — otherwise plain
+    ``employee:read`` would read every colleague's account number. Missing the
+    permission omits the section; it never turns the whole employee read into a 403.
+    """
     return current_user.permissions.has_permission(_EMPLOYEE_SALARY, A.READ)
 
 
@@ -198,9 +211,17 @@ async def get_employee(
     current_user: CurrentUserDep,
     org_id: OrgIdDep,
 ) -> dict[str, Any]:
-    """Return an employee's full profile; the salary block requires ``employee.salary.view``."""
+    """Return an employee's full profile.
+
+    The ``salary`` and ``bank_details`` sections are sensitive: both require
+    ``employee_salary:read``. A caller with only ``employee:read`` still gets the
+    employee — those two sections are simply omitted.
+    """
     result = await service.get_employee(
-        org_id=org_id, employee_id=employee_id, include_salary=_can_view_salary(current_user)
+        org_id=org_id,
+        employee_id=employee_id,
+        include_salary=_can_view_salary(current_user),
+        include_bank_details=_can_view_bank_details(current_user),
     )
     return _ok(result)
 
@@ -410,17 +431,28 @@ async def rehire_employee(
 )
 async def add_employee_document(
     employee_id: int,
-    payload: EmployeeDocumentCreateRequest,
     service: ServiceDep,
     current_user: CurrentUserDep,
     org_id: OrgIdDep,
+    document_type: Annotated[DocumentType, Form(description="Document category.")],
+    file: Annotated[UploadFile, File(description="The document binary (pdf/png/jpg/jpeg).")],
+    expires_at: Annotated[
+        date | None, Form(description="Optional expiry for ID / contract documents.")
+    ] = None,
 ) -> dict[str, Any]:
-    """Attach a document's metadata to an employee (pre-signed upload pattern; audited)."""
+    """Upload a document (``multipart/form-data``; contract #34; audited).
+
+    The server validates size / extension / content type and generates the storage key —
+    no client-supplied path is accepted. The response is metadata only (no filesystem
+    path); the bytes are fetched from the download route.
+    """
+    payload = EmployeeDocumentCreateRequest(document_type=document_type, expires_at=expires_at)
     result = await service.add_document(
         org_id=org_id,
         actor_id=current_user.user_id,
         employee_id=employee_id,
         data=payload,
+        upload=file,
     )
     return _ok(result, "Document uploaded.")
 
@@ -443,7 +475,7 @@ async def list_employee_documents(
 
 @router.get(
     "/employees/{employee_id}/documents/{document_id}",
-    response_model=SuccessResponse[EmployeeDocumentSchema],
+    response_class=FileResponse,
     summary="Download Employee Document",
     dependencies=[Depends(require_permission(_EMPLOYEE, A.READ))],
 )
@@ -452,12 +484,20 @@ async def get_employee_document(
     document_id: int,
     service: ServiceDep,
     org_id: OrgIdDep,
-) -> dict[str, Any]:
-    """Return one document's stored URL + metadata (storage backend is URL-based)."""
-    result = await service.get_document(
+) -> FileResponse:
+    """Stream the stored document (contract #36).
+
+    The file is served from the storage root by its server-generated key — the client
+    never sees or supplies a filesystem path.
+    """
+    download = await service.open_document(
         org_id=org_id, employee_id=employee_id, document_id=document_id
     )
-    return _ok(result)
+    return FileResponse(
+        path=download.path,
+        media_type=download.content_type,
+        filename=download.filename,
+    )
 
 
 @router.delete(

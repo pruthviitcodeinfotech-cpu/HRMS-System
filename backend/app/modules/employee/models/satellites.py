@@ -60,6 +60,11 @@ class EmployeeBankDetail(Base):
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
 
+    __table_args__ = (
+        # GET /employees/{id} `selectinload`s this satellite by employee_id.
+        Index("ix_employee_bank_details_employee_id", "employee_id"),
+    )
+
     employee: Mapped["Employee"] = relationship(back_populates="bank_details")  # noqa: F821
 
 
@@ -92,6 +97,8 @@ class EmployeeDocument(Base):
             "'passport_photo', 'other')",
             name="ck_employee_documents_document_type",
         ),
+        # GET /employees/{id} `selectinload`s this satellite by employee_id.
+        Index("ix_employee_documents_employee_id", "employee_id"),
     )
 
     employee: Mapped["Employee"] = relationship(back_populates="documents")  # noqa: F821
@@ -124,6 +131,11 @@ class EmployeeEmergencyContact(Base):
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
 
+    __table_args__ = (
+        # GET /employees/{id} `selectinload`s this satellite by employee_id.
+        Index("ix_employee_emergency_contacts_employee_id", "employee_id"),
+    )
+
     employee: Mapped["Employee"] = relationship(back_populates="emergency_contacts")  # noqa: F821
 
 
@@ -148,6 +160,11 @@ class EmployeeReference(Base):
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+
+    __table_args__ = (
+        # GET /employees/{id} `selectinload`s this satellite by employee_id.
+        Index("ix_employee_references_employee_id", "employee_id"),
     )
 
     employee: Mapped["Employee"] = relationship(back_populates="references")  # noqa: F821
@@ -189,6 +206,9 @@ class EmployeeBiometric(Base):
             unique=True,
             postgresql_where=text("is_deleted = false"),
         ),
+        # FK -> biometric_devices ON DELETE RESTRICT: without this, every device
+        # delete sequentially scans employee_biometrics to enforce the constraint.
+        Index("ix_employee_biometrics_device_id", "device_id"),
     )
 
     employee: Mapped["Employee"] = relationship(back_populates="biometrics")  # noqa: F821
@@ -383,6 +403,11 @@ class EmployeeTag(Base):
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
 
+    __table_args__ = (
+        # GET /employees/{id} `selectinload`s this satellite by employee_id.
+        Index("ix_employee_tags_employee_id", "employee_id"),
+    )
+
     employee: Mapped["Employee"] = relationship(back_populates="tags")  # noqa: F821
 
 
@@ -413,6 +438,8 @@ class EmployeeStatusHistory(Base):
             "new_status IN ('active', 'inactive', 'terminated')",
             name="ck_employee_status_history_new_status",
         ),
+        # GET /employees/{id} `selectinload`s this satellite by employee_id.
+        Index("ix_employee_status_history_employee_id", "employee_id"),
     )
 
     employee: Mapped["Employee"] = relationship(back_populates="status_history")  # noqa: F821

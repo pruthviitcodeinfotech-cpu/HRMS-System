@@ -33,12 +33,21 @@ Schema-reconciliation notes (the models are the source of truth):
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from pathlib import Path
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions.base import (
     ConflictException,
     NotFoundException,
     ValidationException,
+)
+from app.infrastructure.storage.client import (
+    LocalStorageClient,
+    UploadedFile,
+    content_type_for,
+    get_storage_client,
 )
 from app.modules.audit.constants import ActionType
 from app.modules.audit.service import AuditService
@@ -114,11 +123,24 @@ _CODE_PAD = 5
 _AUDIT_MODULE = "Employee Management"
 
 
+@dataclass(frozen=True)
+class DocumentDownload:
+    """A document resolved to a streamable file (contract #36 — file stream)."""
+
+    path: Path
+    filename: str
+    content_type: str
+    document: EmployeeDocumentSchema
+
+
 class EmployeeService(BaseService):
     """Employee Management business logic (data access via repositories only)."""
 
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(
+        self, session: AsyncSession, storage: LocalStorageClient | None = None
+    ) -> None:
         super().__init__(session)
+        self.storage = storage or get_storage_client()
         self.employees = EmployeeRepository(session)
         self.branches = BranchRepository(session)
         self.departments = DepartmentRepository(session)
@@ -209,7 +231,10 @@ class EmployeeService(BaseService):
             )
 
         detail = await self._load_detail(
-            org_id, employee.employee_id, include_salary=can_set_salary
+            org_id,
+            employee.employee_id,
+            include_salary=can_set_salary,
+            include_bank_details=can_set_salary,
         )
         enrollment = [
             DeviceEnrollmentStatusSchema(device_id=device_id) for device_id in data.device_ids
@@ -262,16 +287,36 @@ class EmployeeService(BaseService):
                 employee=employee,
             )
 
-        return await self._load_detail(org_id, employee_id, include_salary=can_set_salary)
+        return await self._load_detail(
+            org_id,
+            employee_id,
+            include_salary=can_set_salary,
+            include_bank_details=can_set_salary,
+        )
 
     # =====================================================================
     # Read
     # =====================================================================
     async def get_employee(
-        self, *, org_id: int, employee_id: int, include_salary: bool = False
+        self,
+        *,
+        org_id: int,
+        employee_id: int,
+        include_salary: bool = False,
+        include_bank_details: bool = False,
     ) -> EmployeeDetailSchema:
-        """Return the full profile of an employee (salary only when permitted)."""
-        return await self._load_detail(org_id, employee_id, include_salary=include_salary)
+        """Return the full profile of an employee.
+
+        ``salary`` and ``bank_details`` are sensitive and both default to omitted; the
+        router passes the caller's ``employee_salary:read`` flag. Callers lacking it
+        still receive the employee record — those sections are simply left out.
+        """
+        return await self._load_detail(
+            org_id,
+            employee_id,
+            include_salary=include_salary,
+            include_bank_details=include_bank_details,
+        )
 
     async def list_employees(
         self,
@@ -724,7 +769,12 @@ class EmployeeService(BaseService):
                 ),
                 employee=employee,
             )
-        return await self._load_detail(org_id, employee_id, include_salary=can_set_salary)
+        return await self._load_detail(
+            org_id,
+            employee_id,
+            include_salary=can_set_salary,
+            include_bank_details=can_set_salary,
+        )
 
     # =====================================================================
     # Documents / photo
@@ -736,34 +786,47 @@ class EmployeeService(BaseService):
         actor_id: int,
         employee_id: int,
         data: EmployeeDocumentCreateRequest,
+        upload: UploadedFile,
     ) -> EmployeeDocumentSchema:
-        """Attach a document's metadata to an employee (pre-signed upload pattern).
+        """Store an uploaded document and persist its metadata (contract #34).
 
-        Only the persisted columns of ``employee_documents`` are written; ``mime`` /
-        ``expires_at`` are transport hints for object storage and have no column in
-        the approved schema, so they are intentionally not stored here.
+        The **storage layer** validates size / extension / content type and generates
+        the key (``employees/{employee_id}/<uuid><ext>``); nothing about the stored path
+        comes from the client. The original filename is kept as metadata only. If the
+        metadata write fails after the bytes land, the orphaned object is removed.
+
+        ``expires_at`` has no column in the approved schema, so it is intentionally not
+        persisted.
         """
         employee = await self._get_active_employee(org_id, employee_id)
-        async with self.transaction():
-            document = await self.documents.create(
-                {
-                    "employee_id": employee_id,
-                    "document_type": data.document_type.value,
-                    "file_url": data.file_url,
-                    "original_filename": data.original_filename,
-                    "file_size_bytes": data.file_size_bytes,
-                    "uploaded_by": actor_id,
-                }
-            )
-            await self._audit(
-                org_id=org_id,
-                actor_id=actor_id,
-                action_type=ActionType.INSERT,
-                title="Document uploaded",
-                description=f"Uploaded {data.document_type.value} document.",
-                employee=employee,
-                sub_module="Documents",
-            )
+        stored = await self.storage.save_upload(upload, prefix=f"employees/{employee_id}")
+        try:
+            async with self.transaction():
+                document = await self.documents.create(
+                    {
+                        "employee_id": employee_id,
+                        "document_type": data.document_type.value,
+                        "file_url": stored.key,
+                        "original_filename": stored.original_filename,
+                        "file_size_bytes": stored.size_bytes,
+                        "uploaded_by": actor_id,
+                    }
+                )
+                await self._audit(
+                    org_id=org_id,
+                    actor_id=actor_id,
+                    action_type=ActionType.INSERT,
+                    title="Document uploaded",
+                    description=(
+                        f"Uploaded {data.document_type.value} document "
+                        f"({stored.original_filename}, {stored.size_bytes} bytes)."
+                    ),
+                    employee=employee,
+                    sub_module="Documents",
+                )
+        except Exception:
+            await self.storage.delete(stored.key)
+            raise
         return EmployeeDocumentSchema.model_validate(document)
 
     async def list_documents(
@@ -774,18 +837,29 @@ class EmployeeService(BaseService):
         rows = await self.documents.list_for_employee(org_id, employee_id)
         return [EmployeeDocumentSchema.model_validate(row) for row in rows]
 
-    async def get_document(
+    async def open_document(
         self, *, org_id: int, employee_id: int, document_id: int
-    ) -> EmployeeDocumentSchema:
-        """Return one document's stored URL + metadata for download (contract #36).
+    ) -> DocumentDownload:
+        """Resolve a document to a streamable on-disk file (contract #36).
 
-        The storage client is a stub, so the persisted ``file_url`` is returned
-        directly instead of a short-lived signed URL / byte stream.
+        The row is looked up through the parent employee's ``org_id`` (tenant
+        isolation), then its stored key is re-validated against the storage root — a
+        key that tried to escape ``upload_dir`` can never be streamed back.
         """
         document = await self.documents.get_by_id_in_org(org_id, employee_id, document_id)
         if document is None:
             raise DocumentNotFoundException()
-        return EmployeeDocumentSchema.model_validate(document)
+        try:
+            path = self.storage.path_for(document.file_url)
+        except (NotFoundException, ValidationException) as exc:
+            raise DocumentNotFoundException() from exc
+        filename = document.original_filename or path.name
+        return DocumentDownload(
+            path=path,
+            filename=filename,
+            content_type=content_type_for(path.name),
+            document=EmployeeDocumentSchema.model_validate(document),
+        )
 
     async def delete_document(
         self, *, org_id: int, actor_id: int, employee_id: int, document_id: int
@@ -1303,17 +1377,44 @@ class EmployeeService(BaseService):
         )
 
     async def _load_detail(
-        self, org_id: int, employee_id: int, *, include_salary: bool
+        self,
+        org_id: int,
+        employee_id: int,
+        *,
+        include_salary: bool,
+        include_bank_details: bool = False,
     ) -> EmployeeDetailSchema:
         """Fetch the eager-loaded employee and build the detail projection."""
         employee = await self.employees.get_detail(employee_id, org_id)
         if employee is None:
             raise NotFoundException("Employee not found.", code="not_found")
-        return self._build_detail(employee, include_salary=include_salary)
+        return self._build_detail(
+            employee,
+            include_salary=include_salary,
+            include_bank_details=include_bank_details,
+        )
 
     @staticmethod
-    def _build_detail(employee: Employee, *, include_salary: bool) -> EmployeeDetailSchema:
-        """Assemble :class:`EmployeeDetailSchema` from an eager-loaded ORM instance."""
+    def _build_detail(
+        employee: Employee,
+        *,
+        include_salary: bool,
+        include_bank_details: bool = False,
+    ) -> EmployeeDetailSchema:
+        """Assemble :class:`EmployeeDetailSchema` from an eager-loaded ORM instance.
+
+        Both sensitive sections are opt-in and default to *omitted*:
+
+        * ``salary`` requires ``employee_salary:read``;
+        * ``bank_details`` (account numbers / IFSC codes) requires the same permission —
+          the standalone ``GET /employees/{id}/bank-details`` route enforces
+          ``employee:read`` **and** ``employee_salary:read``, and this embedded copy must
+          not be a way around that gate.
+
+        ``documents`` are *not* gated: the contract (§7 #35/#36, §11 matrix) governs
+        document reads with plain ``employee:read``, and the projection carries metadata
+        only — never the storage key.
+        """
         base = EmployeeSchema.model_validate(employee)
         salary = None
         if include_salary:
@@ -1341,9 +1442,11 @@ class EmployeeService(BaseService):
                 else None
             ),
             salary=salary,
-            bank_details=[
-                EmployeeBankDetailSchema.model_validate(row) for row in employee.bank_details
-            ],
+            bank_details=(
+                [EmployeeBankDetailSchema.model_validate(row) for row in employee.bank_details]
+                if include_bank_details
+                else []
+            ),
             documents=[EmployeeDocumentSchema.model_validate(row) for row in employee.documents],
             emergency_contacts=[
                 EmployeeEmergencyContactSchema.model_validate(row)
@@ -1370,4 +1473,4 @@ class EmployeeService(BaseService):
         )
 
 
-__all__ = ["EmployeeService"]
+__all__ = ["DocumentDownload", "EmployeeService"]

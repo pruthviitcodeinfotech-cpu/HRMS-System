@@ -112,6 +112,14 @@ class Employee(Base):
             unique=True,
             postgresql_where=text("is_deleted = false"),
         ),
+        Index("ix_employees_settlement_finalized_at", "settlement_finalized_at"),
+        # Employee lists filter on these three (employee/repository.py:183-187) and
+        # the dashboard JOINs departments/branches/designations on them. They also
+        # back the "is this department/branch/designation still in use?" FK guard,
+        # which otherwise sequentially scans employees on every parent delete.
+        Index("ix_employees_dept_id", "dept_id"),
+        Index("ix_employees_designation_id", "designation_id"),
+        Index("ix_employees_master_branch_id", "master_branch_id"),
         CheckConstraint(
             "employment_status IN ('active', 'inactive', 'terminated')",
             name="ck_employees_employment_status",

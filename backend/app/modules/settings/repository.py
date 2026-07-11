@@ -86,12 +86,22 @@ class OrgSalarySlipSettingsRepository(BaseRepository[OrgSalarySlipSettings]):
 class SettingsCrossModuleRepository:
     """Repository helper to check external configurations and activity logs."""
 
+    #: A table name cannot be a bound parameter, so it is interpolated into the SQL text.
+    #: Only these tables may ever be named. Today every caller passes a hardcoded literal,
+    #: but an allowlist removes the SQL-injection primitive rather than relying on that
+    #: remaining true — a future caller forwarding user input would otherwise be exploitable.
+    _ALLOWED_TABLES = frozenset(
+        {"org_attendance_settings", "payroll_settings", "leave_settings"}
+    )
+
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
     async def cross_module_exists(self, table_name: str, org_id: int) -> bool:
         """Check if a row exists in an external settings table for the organization."""
-        stmt = text(f"SELECT 1 FROM {table_name} WHERE org_id = :org_id LIMIT 1")
+        if table_name not in self._ALLOWED_TABLES:
+            raise ValueError(f"Table {table_name!r} is not an allowed cross-module settings table.")
+        stmt = text(f"SELECT 1 FROM {table_name} WHERE org_id = :org_id LIMIT 1")  # noqa: S608
         result = await self.session.execute(stmt, {"org_id": org_id})
         return result.first() is not None
 

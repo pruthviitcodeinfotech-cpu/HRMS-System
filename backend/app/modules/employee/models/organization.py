@@ -92,6 +92,11 @@ class Branch(Base):
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
 
+    __table_args__ = (
+        # Tenant scoping: every branch list query filters on org_id.
+        Index("ix_branches_org_id", "org_id"),
+    )
+
     organization: Mapped["Organization"] = relationship(back_populates="branches")
     master_employees: Mapped[list["Employee"]] = relationship(  # noqa: F821
         back_populates="master_branch"

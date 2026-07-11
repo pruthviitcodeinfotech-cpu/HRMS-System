@@ -39,7 +39,9 @@ class LoginRequest(BaseSchema):
     model_config = ConfigDict(str_strip_whitespace=False)
 
     email: str = Field(..., max_length=255, description="Login email (unique per org).")
-    password: str = Field(..., min_length=1, description="Plaintext password (verified server-side).")
+    password: str = Field(
+        ..., min_length=1, description="Plaintext password (verified server-side)."
+    )
     device_info: str | None = Field(
         default=None, max_length=500, description="Optional device/user-agent label."
     )
@@ -201,6 +203,12 @@ class SessionSchema(BaseSchema):
     is_current: bool = Field(
         default=False, description="True for the session bound to the calling access token."
     )
+
+    @field_validator("ip_address", mode="before")
+    @classmethod
+    def _stringify_ip(cls, value: object) -> str | None:
+        # The ``INET`` column deserialises to an ``ipaddress`` object under asyncpg.
+        return None if value is None else str(value)
 
 
 class SessionListResponse(PaginatedResponse[SessionSchema]):

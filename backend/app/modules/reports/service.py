@@ -103,6 +103,11 @@ from app.modules.reports.schemas import (
 from app.shared.base.service import BaseService
 from app.shared.utils.datetime import utcnow
 
+#: Strong references to in-flight export tasks. asyncio only holds a weak reference to
+#: a task, so a fire-and-forget ``create_task`` can be garbage-collected mid-run; each
+#: task removes itself here on completion.
+_EXPORT_TASKS: set[asyncio.Task[None]] = set()
+
 
 class ReportsService(BaseService):
     """Orchestrates database reads and export generation for Reports module."""
@@ -151,6 +156,40 @@ class ReportsService(BaseService):
             content += "ROW: " + ", ".join(str(x) if x is not None else "" for x in r) + "\n"
         content += "%%EOF\n"
         return content.encode("utf-8")
+
+    def _spawn_export(
+        self,
+        *,
+        job_id: str,
+        org_id: int,
+        report_name: str,
+        repo_method: str,
+        repo_kwargs: dict[str, Any],
+        format_type: str,
+    ) -> None:
+        """Launch the export on its own session and keep the task alive.
+
+        Two hazards this closes:
+
+        * **Session reuse** — the task opens a *fresh* ``AsyncSession`` from the factory
+          rather than borrowing the request-scoped one, which is closed by ``get_db`` as
+          soon as the handler returns.
+        * **Garbage collection** — ``asyncio`` holds only a weak reference to a task, so
+          a fire-and-forget ``create_task`` can be collected mid-flight. The handle is
+          kept in ``_EXPORT_TASKS`` until it completes.
+        """
+
+        async def _runner() -> None:
+            from app.core.database.session import get_session_factory
+
+            async with get_session_factory()() as session:
+                repo = ReportsRepository(session)
+                fetch = getattr(repo, repo_method)(org_id=org_id, **repo_kwargs)
+                await self._run_async_export(job_id, org_id, report_name, fetch, format_type)
+
+        task = asyncio.create_task(_runner())
+        _EXPORT_TASKS.add(task)
+        task.add_done_callback(_EXPORT_TASKS.discard)
 
     async def _run_async_export(
         self,
@@ -351,13 +390,19 @@ class ReportsService(BaseService):
                         ttl=3600,
                     )
 
-                    bg_fetch_coro = repo_func(
-                        org_id=org_id, page=1, page_size=total, **pass_args, **repo_kwargs
-                    )
-                    asyncio.create_task(
-                        self._run_async_export(
-                            job_id, org_id, report_name, bg_fetch_coro, query.format
-                        )
+                    # The export runs AFTER this handler returns, at which point
+                    # ``get_db`` has already committed and CLOSED the request-scoped
+                    # session. Binding the fetch to ``self.repo`` (and therefore to
+                    # that session) would query a closed session — an AsyncSession is
+                    # not reusable after close and is not concurrency-safe. Hand the
+                    # task the *arguments* and let it open its own session instead.
+                    self._spawn_export(
+                        job_id=job_id,
+                        org_id=org_id,
+                        report_name=report_name,
+                        repo_method=repo_func.__name__,
+                        repo_kwargs={"page": 1, "page_size": total, **pass_args, **repo_kwargs},
+                        format_type=query.format,
                     )
 
                     return ExportJobStatusResponse(

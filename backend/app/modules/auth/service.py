@@ -28,10 +28,18 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config.settings import settings
+from app.core.dependencies.rate_limit import (
+    hash_identifier,
+    safe_counter_incr,
+    safe_delete,
+    safe_flag_set,
+    safe_flag_ttl,
+)
 from app.core.exceptions.base import (
     AuthenticationException,
     AuthorizationException,
     NotFoundException,
+    RateLimitException,
 )
 from app.core.security.jwt import (
     ACCESS_TOKEN_TYPE,
@@ -60,6 +68,30 @@ from app.shared.utils.datetime import utcnow
 from app.shared.utils.ids import random_token
 
 _INVALID_CREDENTIALS = "Invalid email or password."
+
+#: ``activity_logs.performed_by_name`` is NOT NULL, but a throttled / locked-out
+#: caller has no authenticated principal — record the attempt under this label.
+_ANONYMOUS = "Unauthenticated"
+
+
+def _failure_key(org_id: int, email: str) -> str:
+    """Redis key holding the consecutive-failed-login count for one account."""
+    return f"auth:login:failures:{org_id}:{hash_identifier(email)}"
+
+
+def _lockout_key(org_id: int, email: str) -> str:
+    """Redis key holding the active lockout flag for one account."""
+    return f"auth:login:lockout:{org_id}:{hash_identifier(email)}"
+
+
+def _account_locked_error(retry_after: int) -> RateLimitException:
+    """Build the ``429 RATE_LIMITED`` raised while an account is locked out."""
+    exc = RateLimitException(
+        "This account is temporarily locked after repeated failed login attempts. "
+        f"Please try again in {retry_after} second(s)."
+    )
+    exc.headers = {"Retry-After": str(retry_after)}  # type: ignore[attr-defined]
+    return exc
 
 
 class AuthService(BaseService):
@@ -117,7 +149,20 @@ class AuthService(BaseService):
         ``org_id`` is the resolved tenant (the router supplies it from tenant
         context). Unknown user, wrong password, inactive, or soft-deleted accounts
         all fail with the same non-disclosing ``AUTH_INVALID_CREDENTIALS`` error.
+
+        Brute-force protection (distinct from, and in addition to, the per-IP request
+        throttle on the route): after ``LOGIN_MAX_FAILED_ATTEMPTS`` consecutive failed
+        attempts within ``LOGIN_FAILURE_WINDOW_SECONDS`` the account is locked for
+        ``LOGIN_LOCKOUT_SECONDS``. While locked, **even a correct password is
+        rejected** (``429 RATE_LIMITED``). A successful login clears the counter.
+        The lockout state lives in Redis because the approved ``users`` schema has no
+        ``failed_login_attempts`` / ``locked_until`` columns (contract §7, §9 Q7) —
+        no schema change is introduced here.
         """
+        locked_for = await safe_flag_ttl(_lockout_key(org_id, email))
+        if locked_for > 0:
+            raise _account_locked_error(locked_for)
+
         user = await self.users.get_by_email(org_id, email)
         if (
             user is None
@@ -125,7 +170,11 @@ class AuthService(BaseService):
             or not verify_password(password, user.password_hash)
             or not user.is_active
         ):
+            await self._register_failed_login(org_id=org_id, email=email, user=user)
             raise AuthenticationException(_INVALID_CREDENTIALS, code="AUTH_INVALID_CREDENTIALS")
+
+        # Successful authentication — the consecutive-failure streak is broken.
+        await safe_delete(_failure_key(org_id, email), _lockout_key(org_id, email))
 
         now = utcnow()
         refresh_token = random_token()
@@ -163,6 +212,93 @@ class AuthService(BaseService):
             expires_in=settings.access_token_ttl,
             user=AuthUserSchema.model_validate(user),
         )
+
+    # =====================================================================
+    # Brute-force protection (account lockout + security-event auditing)
+    # =====================================================================
+    async def _register_failed_login(
+        self, *, org_id: int, email: str, user: Any | None
+    ) -> None:
+        """Count one failed attempt for ``email``; lock the account at the threshold.
+
+        Unknown emails are counted too — otherwise the lockout would tell an attacker
+        which addresses exist. Every Redis call here fails open (see
+        :mod:`app.core.dependencies.rate_limit`): if the backend is down the counter
+        simply does not advance and the caller still gets ``AUTH_INVALID_CREDENTIALS``.
+        """
+        count, _ttl = await safe_counter_incr(
+            _failure_key(org_id, email),
+            window_seconds=settings.login_failure_window_seconds,
+        )
+        if count < settings.login_max_failed_attempts:
+            return
+
+        await safe_flag_set(
+            _lockout_key(org_id, email), ttl_seconds=settings.login_lockout_seconds
+        )
+        await safe_delete(_failure_key(org_id, email))
+        await self._audit_lockout(org_id=org_id, email=email, user=user, attempts=count)
+
+    async def _audit_lockout(
+        self, *, org_id: int, email: str, user: Any | None, attempts: int
+    ) -> None:
+        """Write the ``module="auth"`` audit row for an account lockout."""
+        description = (
+            f"Account '{email}' locked for {settings.login_lockout_seconds}s after "
+            f"{attempts} consecutive failed login attempts"
+        )
+        async with self.transaction():
+            if user is not None:
+                await self._audit(
+                    user=user,
+                    action_type=ActionType.UPDATE,
+                    sub_module="lockout",
+                    title="Account locked",
+                    description=description,
+                )
+            else:
+                # No such user — still record the attempt against the tenant so the
+                # security report sees credential-stuffing on unknown addresses.
+                await self.audit.record(
+                    org_id=org_id,
+                    module="auth",
+                    sub_module="lockout",
+                    action_type=ActionType.UPDATE,
+                    title="Account locked",
+                    description=f"{description} (no such user)",
+                    performed_by_user_id=None,
+                    performed_by_name=_ANONYMOUS,
+                )
+
+    async def record_rate_limit_event(
+        self,
+        *,
+        org_id: int,
+        scope: str,
+        ip_address: str | None = None,
+        identifier: str | None = None,
+    ) -> None:
+        """Audit a rate-limit trip on an auth endpoint (``429 RATE_LIMITED``).
+
+        Called from the route dependency, which has no authenticated principal — the
+        row is attributed to the tenant and the offending IP. Never contains the
+        submitted password or any token.
+        """
+        target = f" for '{identifier}'" if identifier else ""
+        async with self.transaction():
+            await self.audit.record(
+                org_id=org_id,
+                module="auth",
+                sub_module="rate_limit",
+                action_type=ActionType.INSERT,
+                title="Rate limit exceeded",
+                description=(
+                    f"Rate limit exceeded on '{scope}'{target} "
+                    f"from IP {ip_address or 'unknown'}"
+                ),
+                performed_by_user_id=None,
+                performed_by_name=_ANONYMOUS,
+            )
 
     # =====================================================================
     # Refresh

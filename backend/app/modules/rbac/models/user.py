@@ -75,6 +75,9 @@ class User(Base):
             name="uq_users_org_id_mobile_country_code_mobile_number",
         ),
         Index("ix_users_org_id_is_active_deleted_at", "org_id", "is_active", "deleted_at"),
+        # rbac/repository.py:93 (employee -> login lookup) and
+        # notifications/service.py:589 (WHERE employee_id IN (...)).
+        Index("ix_users_employee_id", "employee_id"),
     )
 
     sessions: Mapped[list["UserSession"]] = relationship(back_populates="user")

@@ -198,6 +198,10 @@ class EmployeeLeaveBalance(Base):
             "cycle_year",
             name="uq_employee_leave_balances_employee_id_leave_type_id_cycle_year",
         ),
+        # leave/repository.py:82 probes `WHERE leave_type_id = ?` alone (the
+        # leave-type in-use guard). The uq above leads with employee_id and so
+        # cannot serve a leave_type_id-only lookup.
+        Index("ix_employee_leave_balances_leave_type_id", "leave_type_id"),
     )
 
     leave_type: Mapped["LeaveType"] = relationship(back_populates="balances")

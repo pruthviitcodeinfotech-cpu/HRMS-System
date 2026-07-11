@@ -10,6 +10,7 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
+from app.core.dependencies.auth import assert_session_live
 from app.modules.notifications.dependencies import get_notification_service
 from app.modules.notifications.schemas import (
     MyNotificationListResponse,
@@ -34,6 +35,9 @@ def mock_notification_service() -> AsyncMock:
 @pytest_asyncio.fixture
 async def notification_client(app, mock_notification_service: AsyncMock):
     """An async HTTP client bound to the app with the notification service mocked."""
+    # The auth dependency re-validates the session against the DB on every request;
+    # router tests exercise the HTTP layer without a database, so stub that check.
+    app.dependency_overrides[assert_session_live] = lambda: None
     app.dependency_overrides[get_notification_service] = lambda: mock_notification_service
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as http_client:

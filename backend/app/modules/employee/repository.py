@@ -22,7 +22,7 @@ from typing import TypeVar
 
 from sqlalchemy import BigInteger, and_, cast, func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import joinedload, selectinload
 
 from app.core.constants.enums import SortOrder
 from app.core.database.base import Base
@@ -87,16 +87,22 @@ class EmployeeRepository(BaseRepository[Employee]):
                 Employee.is_deleted.is_(False),
             )
             .options(
-                selectinload(Employee.master_branch),
-                selectinload(Employee.department),
-                selectinload(Employee.designation),
+                # Many-to-one / one-to-one links are single rows: JOIN them into the
+                # parent SELECT instead of paying a round-trip each. `selectinload`
+                # would issue one extra statement per relationship — four wasted
+                # round-trips on the hottest read in the module.
+                joinedload(Employee.master_branch),
+                joinedload(Employee.department),
+                joinedload(Employee.designation),
+                joinedload(Employee.attendance_permission),
+                # The to-many collections stay on `selectinload`: joining them would
+                # multiply the parent row by the cartesian product of every satellite.
                 selectinload(Employee.bank_details),
                 selectinload(Employee.documents),
                 selectinload(Employee.emergency_contacts),
                 selectinload(Employee.references),
                 selectinload(Employee.biometrics),
                 selectinload(Employee.punch_branches),
-                selectinload(Employee.attendance_permission),
                 selectinload(Employee.tags),
                 selectinload(Employee.status_history),
             )

@@ -8,11 +8,11 @@ These are the shared building blocks every protected endpoint composes:
     * :func:`require_permission` — RBAC feature-permission guard factory.
     * :func:`require_role` — role/super-admin guard factory.
 
-The principal is built from access-token claims so the foundation stays decoupled
-from the ``users`` ORM model. The auth module issues tokens carrying ``org_id``,
-``is_super_admin``, ``is_active``, ``roles`` and the resolved ``permissions`` so
-these guards work without a per-request DB read. Modules may layer DB-backed
-revocation checks on top.
+The principal is built from access-token claims, but the claims alone are **not**
+trusted to decide whether the caller may still act: :func:`assert_session_live`
+re-validates the token's session (and the owning user) against the database on
+every request, so logout, force-logout, deactivation and deletion take effect
+immediately instead of at token expiry.
 """
 
 from __future__ import annotations
@@ -22,8 +22,11 @@ from typing import Annotated, Any
 from fastapi import Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants.enums import PermissionAction
+from app.core.dependencies.db import get_db
 from app.core.exceptions.base import AuthenticationException, AuthorizationException
 from app.core.middleware.request_context import (
     set_current_org_id,
@@ -31,6 +34,7 @@ from app.core.middleware.request_context import (
 )
 from app.core.security.jwt import ACCESS_TOKEN_TYPE, TokenError, verify_token
 from app.core.security.permissions import EffectivePermissions, build_effective_permissions
+from app.shared.utils.datetime import utcnow
 
 _bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -99,10 +103,60 @@ async def get_current_user(
     return user
 
 
+async def assert_session_live(
+    user: Annotated[CurrentUser, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> None:
+    """Re-validate the token's session and its owner against the database.
+
+    An access token is a bearer credential that stays cryptographically valid until it
+    expires. Trusting its claims alone would mean logout, admin force-logout, user
+    deactivation and user deletion do not take effect until expiry — a terminated
+    employee would keep API access for the remainder of the token's lifetime.
+
+    This runs on every authenticated request and **fails closed**: the session named by
+    the ``sid`` claim must still exist, be active, be unrevoked and unexpired, and the
+    owning user must still be active and not soft-deleted. It is a single primary-key
+    lookup joined to ``users``.
+
+    Tokens issued without a ``sid`` are rejected: an unrevocable token is not acceptable.
+    """
+    # Imported here: app.core must not import a business module at module scope.
+    from app.modules.rbac.models.user import User, UserSession
+
+    if user.session_id is None:
+        raise AuthenticationException("Access token is not bound to a session.")
+    try:
+        session_id = int(user.session_id)
+    except (TypeError, ValueError) as exc:
+        raise AuthenticationException("Access token carries a malformed session id.") from exc
+
+    stmt = (
+        select(UserSession.expires_at, User.is_active, User.deleted_at)
+        .join(User, User.id == UserSession.user_id)
+        .where(
+            UserSession.id == session_id,
+            UserSession.user_id == user.user_id,
+            UserSession.is_active.is_(True),
+            UserSession.revoked_at.is_(None),
+        )
+    )
+    row = (await db.execute(stmt.limit(1))).first()
+    if row is None:
+        raise AuthenticationException("This session has been revoked or has expired.")
+
+    expires_at, user_is_active, user_deleted_at = row
+    if expires_at is not None and expires_at <= utcnow():
+        raise AuthenticationException("This session has been revoked or has expired.")
+    if not user_is_active or user_deleted_at is not None:
+        raise AuthorizationException("This account is inactive.")
+
+
 async def get_current_active_user(
     user: Annotated[CurrentUser, Depends(get_current_user)],
+    _session_live: Annotated[None, Depends(assert_session_live)],
 ) -> CurrentUser:
-    """Require the principal to be active (rejects deactivated accounts)."""
+    """Require an active principal whose session is still live in the database."""
     if not user.is_active:
         raise AuthorizationException("This account is inactive.")
     return user

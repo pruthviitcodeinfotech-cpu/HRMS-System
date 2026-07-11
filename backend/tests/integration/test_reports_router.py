@@ -15,6 +15,7 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
+from app.core.dependencies.auth import assert_session_live
 from app.modules.reports.dependencies import get_reports_service
 from app.modules.reports.schemas import (
     AttendanceSummaryReportResponse,
@@ -63,6 +64,12 @@ async def rc(app, mock_svc: AsyncMock):
     already = any(getattr(r, "path", "").startswith(prefix) for r in app.routes)
     if not already:
         app.include_router(reports_router, prefix=API_PREFIX)
+
+    # The auth dependency re-validates the session against the DB on every request;
+
+    # router tests exercise the HTTP layer without a database, so stub that check.
+
+    app.dependency_overrides[assert_session_live] = lambda: None
 
     app.dependency_overrides[get_reports_service] = lambda: mock_svc
     # raise_app_exceptions=False: lets us inspect 202 / 4xx without exception

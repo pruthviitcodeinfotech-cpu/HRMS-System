@@ -69,6 +69,11 @@ class ShiftAssignment(Base):
             "effective_from",
             "effective_to",
         ),
+        # shift/repository.py: WHERE org_id = ? [AND employee_id = ?]. The leading
+        # org_id also supplies the missing FK index.
+        Index("ix_shift_assignments_org_id_employee_id", "org_id", "employee_id"),
+        # shift/repository.py:108,119: WHERE shift_id = ?
+        Index("ix_shift_assignments_shift_id", "shift_id"),
     )
 
     shift: Mapped["Shift"] = relationship(back_populates="assignments")  # noqa: F821
@@ -164,6 +169,8 @@ class Roster(Base):
     __table_args__ = (
         UniqueConstraint("employee_id", "roster_date", name="uq_roster_employee_id_roster_date"),
         Index("ix_roster_org_id_roster_date", "org_id", "roster_date"),
+        # Roster rows are looked up by the shift they were generated from.
+        Index("ix_roster_shift_id", "shift_id"),
     )
 
     shift: Mapped["Shift"] = relationship(back_populates="roster_entries")  # noqa: F821

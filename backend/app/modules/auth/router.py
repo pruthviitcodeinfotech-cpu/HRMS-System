@@ -21,6 +21,8 @@ from app.modules.auth.dependencies import (
     CurrentSessionIdDep,
     CurrentUserDep,
     OrgIdDep,
+    enforce_login_rate_limit,
+    enforce_refresh_rate_limit,
 )
 from app.modules.auth.schemas import (
     AccessTokenResponse,
@@ -47,7 +49,12 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
     response_model=SuccessResponse[LoginResponse],
     status_code=status.HTTP_200_OK,
     summary="Login",
-    description="Authenticate by email + password and issue access + refresh tokens.",
+    description=(
+        "Authenticate by email + password and issue access + refresh tokens. "
+        "Rate-limited per client IP and per email; repeated failures lock the account "
+        "temporarily (both return `429 RATE_LIMITED`)."
+    ),
+    dependencies=[Depends(enforce_login_rate_limit)],
 )
 async def login(
     payload: LoginRequest,
@@ -71,7 +78,11 @@ async def login(
     response_model=SuccessResponse[AccessTokenResponse],
     status_code=status.HTTP_200_OK,
     summary="Refresh Access Token",
-    description="Exchange a valid refresh token for a new short-lived access token.",
+    description=(
+        "Exchange a valid refresh token for a new short-lived access token. "
+        "Rate-limited per client IP (`429 RATE_LIMITED`)."
+    ),
+    dependencies=[Depends(enforce_refresh_rate_limit)],
 )
 async def refresh_token(payload: RefreshTokenRequest, service: AuthServiceDep) -> dict[str, Any]:
     """Issue a new access token from a valid refresh token."""
@@ -105,7 +116,9 @@ async def logout(
     response_model=SuccessResponse[CurrentUserSchema],
     status_code=status.HTTP_200_OK,
     summary="Get Current User",
-    description="Return the authenticated user's profile plus effective permissions and data scope.",
+    description=(
+        "Return the authenticated user's profile plus effective permissions and data scope."
+    ),
 )
 async def get_me(service: AuthServiceDep, current_user: CurrentUserDep) -> dict[str, Any]:
     """Return the ``/me`` payload for the authenticated principal."""

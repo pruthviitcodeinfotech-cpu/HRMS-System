@@ -135,6 +135,9 @@ class EmployeeHolidayAssignment(Base):
 
     __table_args__ = (
         UniqueConstraint("employee_id", name="uq_employee_holiday_assignments_employee_id"),
+        # "which employees are on this holiday template?" — the uq leads with
+        # employee_id and cannot serve a template_id lookup.
+        Index("ix_employee_holiday_assignments_template_id", "template_id"),
     )
 
     template: Mapped["HolidayTemplate"] = relationship(

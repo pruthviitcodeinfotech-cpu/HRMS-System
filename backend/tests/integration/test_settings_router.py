@@ -9,6 +9,7 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
+from app.core.dependencies.auth import assert_session_live
 from app.modules.settings.dependencies import get_settings_service
 from app.modules.settings.schemas import (
     ConfigurationViewResponse,
@@ -36,6 +37,9 @@ def mock_settings_service() -> AsyncMock:
 @pytest_asyncio.fixture
 async def settings_client(app, mock_settings_service: AsyncMock) -> AsyncClient:
     """HTTP client with SettingsService mocked."""
+    # The auth dependency re-validates the session against the DB on every request;
+    # router tests exercise the HTTP layer without a database, so stub that check.
+    app.dependency_overrides[assert_session_live] = lambda: None
     app.dependency_overrides[get_settings_service] = lambda: mock_settings_service
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:

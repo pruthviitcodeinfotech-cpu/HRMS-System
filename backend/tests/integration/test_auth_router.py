@@ -12,8 +12,9 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock
 
-from httpx import AsyncClient
+from httpx import ASGITransport, AsyncClient
 
+from app.core.config.settings import settings
 from app.modules.auth.schemas import (
     AccessTokenResponse,
     AuthUserSchema,
@@ -131,6 +132,86 @@ async def test_refresh_invalid_returns_401(
     resp = await client.post(f"{API_PREFIX}/auth/refresh", json={"refresh_token": "bad"})
     assert resp.status_code == 401
     assert resp.json()["error"]["code"] == "AUTH_REFRESH_INVALID"
+
+
+# --- Rate limiting (contract §7) -------------------------------------------
+async def _login(client: AsyncClient, mock_auth_service: AsyncMock, email: str):
+    mock_auth_service.login.return_value = LoginResponse(
+        access_token="access-abc",
+        refresh_token="refresh-xyz",
+        token_type="bearer",
+        expires_in=900,
+        user=_auth_user(),
+    )
+    return await client.post(
+        f"{API_PREFIX}/auth/login",
+        json={"email": email, "password": "Secret123"},
+        headers=ORG_HEADER,
+    )
+
+
+async def test_login_rate_limit_returns_429(
+    client: AsyncClient, mock_auth_service: AsyncMock
+) -> None:
+    """The (attempts + 1)-th login from the same IP is rejected with 429 RATE_LIMITED."""
+    limit = settings.login_rate_limit_attempts
+    for _ in range(limit):
+        assert (await _login(client, mock_auth_service, "user@example.com")).status_code == 200
+
+    resp = await _login(client, mock_auth_service, "user@example.com")
+    assert resp.status_code == 429
+    body = resp.json()
+    assert body["success"] is False
+    assert body["error"]["code"] == "RATE_LIMITED"
+    # Retry-After is advertised so clients back off for the rest of the window.
+    assert 0 < int(resp.headers["retry-after"]) <= settings.login_rate_limit_window_seconds
+
+
+async def test_login_rate_limit_trip_is_audited(
+    client: AsyncClient, mock_auth_service: AsyncMock
+) -> None:
+    """A throttled login writes one `module="auth"` security-event audit row."""
+    for _ in range(settings.login_rate_limit_attempts + 1):
+        await _login(client, mock_auth_service, "user@example.com")
+
+    mock_auth_service.record_rate_limit_event.assert_awaited_once()
+    kwargs = mock_auth_service.record_rate_limit_event.await_args.kwargs
+    assert kwargs["org_id"] == 1
+    assert kwargs["scope"] == "login"
+    assert kwargs["identifier"] == "user@example.com"
+    assert kwargs["ip_address"]
+
+
+async def test_login_rate_limit_does_not_lock_out_other_users(
+    app, client: AsyncClient, mock_auth_service: AsyncMock
+) -> None:
+    """One flooding IP+email must not exhaust another user's budget.
+
+    The two counters are independent, so a victim logging in from a different IP is
+    unaffected by an attacker who has burned through their own IP/email buckets.
+    """
+    for _ in range(settings.login_rate_limit_attempts + 1):
+        await _login(client, mock_auth_service, "attacker@example.com")
+
+    transport = ASGITransport(app=app, client=("10.0.0.9", 5555))
+    async with AsyncClient(transport=transport, base_url="http://test") as victim_client:
+        resp = await _login(victim_client, mock_auth_service, "victim@example.com")
+    assert resp.status_code == 200
+
+
+async def test_refresh_rate_limit_returns_429(
+    client: AsyncClient, mock_auth_service: AsyncMock
+) -> None:
+    mock_auth_service.refresh_token.return_value = AccessTokenResponse(
+        access_token="new-access", token_type="bearer", expires_in=900
+    )
+    for _ in range(settings.refresh_rate_limit_attempts):
+        resp = await client.post(f"{API_PREFIX}/auth/refresh", json={"refresh_token": "r"})
+        assert resp.status_code == 200
+
+    resp = await client.post(f"{API_PREFIX}/auth/refresh", json={"refresh_token": "r"})
+    assert resp.status_code == 429
+    assert resp.json()["error"]["code"] == "RATE_LIMITED"
 
 
 # --- Unauthorized access ---------------------------------------------------

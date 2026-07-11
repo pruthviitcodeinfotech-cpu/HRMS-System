@@ -16,6 +16,7 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
+from app.core.dependencies.auth import assert_session_live
 from app.main import create_app
 from app.modules.approvals.router import get_approval_service
 from app.modules.approvals.router import router as approvals_router
@@ -59,6 +60,9 @@ def approval_app():
 @pytest_asyncio.fixture
 async def approval_client(approval_app, mock_approval_service: AsyncMock):
     """An async HTTP client bound to the app, with ``ApprovalService`` mocked."""
+    # The auth dependency re-validates the session against the DB on every request;
+    # router tests exercise the HTTP layer without a database, so stub that check.
+    approval_app.dependency_overrides[assert_session_live] = lambda: None
     approval_app.dependency_overrides[get_approval_service] = lambda: mock_approval_service
     transport = ASGITransport(app=approval_app)
     async with AsyncClient(transport=transport, base_url="http://test") as http_client:

@@ -7,6 +7,8 @@ All database access is performed strictly via repositories and session queries.
 from __future__ import annotations
 
 import io
+from collections import defaultdict
+from dataclasses import dataclass, field
 from datetime import date, time
 from decimal import Decimal
 from typing import TYPE_CHECKING
@@ -95,6 +97,57 @@ from app.shared.utils.datetime import utcnow
 
 if TYPE_CHECKING:
     from app.modules.notifications.service import NotificationService
+
+
+# ``AttendanceAdjustmentRepository.search`` is called with ``page_size=100``; the bulk
+# prefetch reproduces that per-employee page bound exactly.
+_ADJUSTMENT_PAGE_SIZE = 100
+
+
+@dataclass(frozen=True)
+class EmployeePayrollInputs:
+    """Every already-fetched input the calculator needs for ONE employee.
+
+    Produced by :meth:`PayrollService._prefetch_batch_inputs`. Holding it lets
+    :meth:`PayrollService._calculate_employee_payroll` stay pure — it performs no
+    database access of its own.
+    """
+
+    assignment: EmployeePayrollGroupAssignment | None = None
+    attendance_days: list[AttendanceDay] = field(default_factory=list)
+    adjustments: list[AttendanceAdjustment] = field(default_factory=list)
+    leaves: list[LeaveRequest] = field(default_factory=list)
+    penalties: list[AttendanceAdjustmentPenalty] = field(default_factory=list)
+    extra_hours: list[AttendanceAdjustmentExtraHours] = field(default_factory=list)
+    loans: list[EmployeeLoanAdvance] = field(default_factory=list)
+    arrears: EmployeeArrears | None = None
+
+
+@dataclass(frozen=True)
+class PayrollBatchInputs:
+    """Bulk-loaded payroll inputs for a whole employee set, keyed by ``employee_id``."""
+
+    assignments: dict[int, EmployeePayrollGroupAssignment] = field(default_factory=dict)
+    attendance_days: dict[int, list[AttendanceDay]] = field(default_factory=dict)
+    adjustments: dict[int, list[AttendanceAdjustment]] = field(default_factory=dict)
+    leaves: dict[int, list[LeaveRequest]] = field(default_factory=dict)
+    penalties: dict[int, list[AttendanceAdjustmentPenalty]] = field(default_factory=dict)
+    extra_hours: dict[int, list[AttendanceAdjustmentExtraHours]] = field(default_factory=dict)
+    loans: dict[int, list[EmployeeLoanAdvance]] = field(default_factory=dict)
+    arrears: dict[int, EmployeeArrears] = field(default_factory=dict)
+
+    def for_employee(self, employee_id: int) -> EmployeePayrollInputs:
+        """Slice out the inputs belonging to a single employee."""
+        return EmployeePayrollInputs(
+            assignment=self.assignments.get(employee_id),
+            attendance_days=self.attendance_days.get(employee_id, []),
+            adjustments=self.adjustments.get(employee_id, []),
+            leaves=self.leaves.get(employee_id, []),
+            penalties=self.penalties.get(employee_id, []),
+            extra_hours=self.extra_hours.get(employee_id, []),
+            loans=self.loans.get(employee_id, []),
+            arrears=self.arrears.get(employee_id),
+        )
 
 
 class PayrollService(BaseService):
@@ -467,9 +520,15 @@ class PayrollService(BaseService):
     ) -> PaginatedResponse[PayrollSalaryCycle]:
         """List paginated cycles."""
         cycles = await self.cycles.search(
-            org_id, group_id=group_id, is_finalized=is_finalized, page=page, page_size=page_size
+            org_id,
+            payroll_group_id=group_id,
+            is_finalized=is_finalized,
+            page=page,
+            page_size=page_size,
         )
-        total = await self.cycles.search_count(org_id, group_id=group_id, is_finalized=is_finalized)
+        total = await self.cycles.search_count(
+            org_id, payroll_group_id=group_id, is_finalized=is_finalized
+        )
         return self.paginate(cycles, page=page, page_size=page_size, total_records=total)
 
     async def update_cycle(
@@ -502,18 +561,133 @@ class PayrollService(BaseService):
 
     # --- 6. Payroll Computation Engine ---------------------------------------
 
-    async def _calculate_employee_payroll(
+    async def _prefetch_batch_inputs(
         self,
         org_id: int,
+        employee_ids: list[int],
+        cycle_from: date,
+        cycle_to: date,
+    ) -> PayrollBatchInputs:
+        """Bulk-load every calculator input for the whole employee set.
+
+        Issues a fixed number of ``WHERE ... IN (:employee_ids)`` queries (independent of
+        the number of employees) and buckets the results by ``employee_id``, so the
+        per-employee compute loop can run entirely in memory.
+        """
+        if not employee_ids:
+            return PayrollBatchInputs()
+
+        # 1. Group assignments (``employee_id`` is unique on the table).
+        assignment_rows = await self.assignments.get_by_employees(employee_ids)
+        assignments = {a.employee_id: a for a in assignment_rows}
+
+        # 2. Attendance days for the cycle.
+        attendance_days: dict[int, list[AttendanceDay]] = defaultdict(list)
+        stmt_att = select(AttendanceDay).where(
+            AttendanceDay.org_id == org_id,
+            AttendanceDay.employee_id.in_(employee_ids),
+            AttendanceDay.attendance_date >= cycle_from,
+            AttendanceDay.attendance_date <= cycle_to,
+        )
+        for day in (await self.session.execute(stmt_att)).scalars().all():
+            attendance_days[day.employee_id].append(day)
+
+        # 3. Manual attendance adjustments. Bucketed newest-first and capped per employee,
+        #    reproducing the single-employee ``adjustments.search(..., page_size=100)`` page.
+        adjustments: dict[int, list[AttendanceAdjustment]] = defaultdict(list)
+        adjustment_rows = await self.adjustments.get_adjustments_for_employees(
+            org_id, employee_ids, cycle_from, cycle_to
+        )
+        for adj in adjustment_rows:
+            bucket = adjustments[adj.employee_id]
+            if len(bucket) < _ADJUSTMENT_PAGE_SIZE:
+                bucket.append(adj)
+
+        # 4. Approved leave requests overlapping the cycle.
+        leaves: dict[int, list[LeaveRequest]] = defaultdict(list)
+        stmt_leave = select(LeaveRequest).where(
+            LeaveRequest.employee_id.in_(employee_ids),
+            LeaveRequest.status == "approved",
+            LeaveRequest.start_date <= cycle_to,
+            LeaveRequest.end_date >= cycle_from,
+        )
+        for leave in (await self.session.execute(stmt_leave)).scalars().all():
+            leaves[leave.employee_id].append(leave)
+
+        # 5. Active manual penalties.
+        penalties: dict[int, list[AttendanceAdjustmentPenalty]] = defaultdict(list)
+        penalty_rows = await self.penalties.get_penalties_for_employees(
+            employee_ids, cycle_from, cycle_to
+        )
+        for pen in penalty_rows:
+            penalties[pen.employee_id].append(pen)
+
+        # 6. Extra hours logs.
+        extra_hours: dict[int, list[AttendanceAdjustmentExtraHours]] = defaultdict(list)
+        extra_hour_rows = await self.extra_hours.get_extra_hours_for_employees(
+            employee_ids, cycle_from, cycle_to
+        )
+        for record in extra_hour_rows:
+            extra_hours[record.employee_id].append(record)
+
+        # 7. Active loans / advances.
+        loans: dict[int, list[EmployeeLoanAdvance]] = defaultdict(list)
+        stmt_loans = select(EmployeeLoanAdvance).where(
+            EmployeeLoanAdvance.org_id == org_id,
+            EmployeeLoanAdvance.employee_id.in_(employee_ids),
+            EmployeeLoanAdvance.status == "active",
+        ).order_by(EmployeeLoanAdvance.id)
+        for loan in (await self.session.execute(stmt_loans)).scalars().all():
+            loans[loan.employee_id].append(loan)
+
+        # 8. Arrears (unique per org + employee).
+        stmt_arr = select(EmployeeArrears).where(
+            EmployeeArrears.org_id == org_id,
+            EmployeeArrears.employee_id.in_(employee_ids),
+        )
+        arrears = {
+            rec.employee_id: rec for rec in (await self.session.execute(stmt_arr)).scalars().all()
+        }
+
+        return PayrollBatchInputs(
+            assignments=assignments,
+            attendance_days=dict(attendance_days),
+            adjustments=dict(adjustments),
+            leaves=dict(leaves),
+            penalties=dict(penalties),
+            extra_hours=dict(extra_hours),
+            loans=dict(loans),
+            arrears=arrears,
+        )
+
+    async def _resolve_employees(
+        self, org_id: int, payload: PayrollProcessRequestSchema
+    ) -> list[Employee]:
+        """Resolve the employee set a processing request targets."""
+        stmt_emp = select(Employee).where(
+            Employee.org_id == org_id, Employee.is_deleted.is_(False)
+        )
+        if payload.employee_ids:
+            stmt_emp = stmt_emp.where(Employee.employee_id.in_(payload.employee_ids))
+        else:
+            stmt_emp = stmt_emp.where(Employee.payroll_group_id == payload.payroll_group_id)
+        return list((await self.session.execute(stmt_emp)).scalars().all())
+
+    def _calculate_employee_payroll(
+        self,
         employee: Employee,
         cycle_from: date,
         cycle_to: date,
         settings: PayrollSetting,
         user_id: int,
+        inputs: EmployeePayrollInputs,
     ) -> dict:
-        """Internal computation engine for an employee's salary and components."""
+        """Pure computation engine for an employee's salary and components.
+
+        Performs **no** database access: every input arrives pre-fetched in ``inputs``.
+        """
         # 1. Verify group assignment
-        assignment = await self.assignments.get_by_employee(employee.employee_id)
+        assignment = inputs.assignment
         if not assignment:
             raise ValidationException(f"Employee {employee.employee_id} not assigned to payroll "
                 "group.")
@@ -526,14 +700,8 @@ class PayrollService(BaseService):
         if total_days <= 0:
             raise ValidationException("Invalid cycle date range.")
 
-        # 3. Attendance Query
-        stmt_att = select(AttendanceDay).where(
-            AttendanceDay.org_id == org_id,
-            AttendanceDay.employee_id == employee.employee_id,
-            AttendanceDay.attendance_date >= cycle_from,
-            AttendanceDay.attendance_date <= cycle_to,
-        )
-        att_days = (await self.session.execute(stmt_att)).scalars().all()
+        # 3. Attendance days (pre-fetched)
+        att_days = inputs.attendance_days
 
         # Map counts
         fd_count = 0
@@ -554,14 +722,8 @@ class PayrollService(BaseService):
             elif day.status == "week_off":
                 wo_count += 1
 
-        # 4. Overwrite counts via manual adjustments
-        adjustments = await self.adjustments.search(
-            org_id,
-            employee_id=employee.employee_id,
-            date_from=cycle_from,
-            date_to=cycle_to,
-            page_size=100,
-        )
+        # 4. Overwrite counts via manual adjustments (pre-fetched)
+        adjustments = inputs.adjustments
         adj_map = {adj.attendance_date: adj for adj in adjustments}
 
         # Deduct adjusted dates from baseline before adding back adjusted
@@ -584,14 +746,8 @@ class PayrollService(BaseService):
             elif adj.adjusted_status == "WO":
                 wo_count += 1
 
-        # 5. Leave query
-        stmt_leave = select(LeaveRequest).where(
-            LeaveRequest.employee_id == employee.employee_id,
-            LeaveRequest.status == "approved",
-            LeaveRequest.start_date <= cycle_to,
-            LeaveRequest.end_date >= cycle_from,
-        )
-        leaves = (await self.session.execute(stmt_leave)).scalars().all()
+        # 5. Approved leaves overlapping the cycle (pre-fetched)
+        leaves = inputs.leaves
 
         paid_leave_count = Decimal("0.0")
         for leave in leaves:
@@ -655,10 +811,8 @@ class PayrollService(BaseService):
 
         # 10. Penalties Calculation
         penalties_amount = Decimal("0.00")
-        # Sum active (non-removed) manual penalties
-        penalties_list = await self.penalties.get_penalties(
-            employee.employee_id, cycle_from, cycle_to
-        )
+        # Sum active (non-removed) manual penalties (pre-fetched)
+        penalties_list = inputs.penalties
         for pen in penalties_list:
             penalties_amount += pen.penalty_amount
 
@@ -669,11 +823,9 @@ class PayrollService(BaseService):
 
         penalties_amount = penalties_amount.quantize(Decimal("0.01"))
 
-        # 11. Extra Hours Addition
+        # 11. Extra Hours Addition (pre-fetched)
         extras_amount = Decimal("0.00")
-        extra_hours_records = await self.extra_hours.get_extra_hours_range(
-            employee.employee_id, cycle_from, cycle_to
-        )
+        extra_hours_records = inputs.extra_hours
         if salary_type == "hourly":
             hourly_rate = monthly_salary
         else:
@@ -684,27 +836,17 @@ class PayrollService(BaseService):
 
         extras_amount = extras_amount.quantize(Decimal("0.01"))
 
-        # 12. Settlements - Loans/Advances installment deduction
+        # 12. Settlements - Loans/Advances installment deduction (pre-fetched)
         loan_advance_deduction = Decimal("0.00")
-        stmt_loans = select(EmployeeLoanAdvance).where(
-            EmployeeLoanAdvance.org_id == org_id,
-            EmployeeLoanAdvance.employee_id == employee.employee_id,
-            EmployeeLoanAdvance.status == "active",
-        )
-        loans = (await self.session.execute(stmt_loans)).scalars().all()
-        for loan in loans:
+        for loan in inputs.loans:
             deductible = min(loan.monthly_installment, loan.outstanding_amount)
             loan_advance_deduction += deductible
 
         loan_advance_deduction = loan_advance_deduction.quantize(Decimal("0.01"))
 
-        # 13. Settlements - Arrears addition
+        # 13. Settlements - Arrears addition (pre-fetched)
         arrears_amount = Decimal("0.00")
-        stmt_arr = select(EmployeeArrears).where(
-            EmployeeArrears.org_id == org_id,
-            EmployeeArrears.employee_id == employee.employee_id,
-        )
-        arrears_rec = (await self.session.execute(stmt_arr)).scalar_one_or_none()
+        arrears_rec = inputs.arrears
         if arrears_rec:
             arrears_amount = arrears_rec.outstanding_arrears
 
@@ -755,6 +897,80 @@ class PayrollService(BaseService):
 
     # --- 7. Payroll Processing Operations ------------------------------------
 
+    def _compute_batch(
+        self,
+        employees: list[Employee],
+        payload: PayrollProcessRequestSchema,
+        settings: PayrollSetting,
+        inputs: PayrollBatchInputs,
+        existing_rows: dict[int, PayrollComputedRow],
+        user_id: int,
+        *,
+        skip_finalized: bool,
+    ) -> tuple[list[PayrollProcessItemResultSchema], list[dict], list[dict]]:
+        """Compute the whole batch in memory, returning results plus insert/update payloads.
+
+        Performs no database access. ``skip_finalized`` reports an already-finalized
+        employee as a ``PAYROLL_ALREADY_FINALIZED`` failure instead of recomputing it.
+        """
+        results: list[PayrollProcessItemResultSchema] = []
+        to_insert: list[dict] = []
+        to_update: list[dict] = []
+
+        for emp in employees:
+            existing = existing_rows.get(emp.employee_id)
+            if skip_finalized and existing and existing.is_finalized:
+                results.append(
+                    PayrollProcessItemResultSchema(
+                        employee_id=emp.employee_id,
+                        success=False,
+                        error_code="PAYROLL_ALREADY_FINALIZED",
+                        error_message="Payroll already finalized for this employee in this "
+                            "period.",
+                    )
+                )
+                continue
+
+            try:
+                row_dict = self._calculate_employee_payroll(
+                    emp,
+                    payload.cycle_from,
+                    payload.cycle_to,
+                    settings,
+                    user_id,
+                    inputs.for_employee(emp.employee_id),
+                )
+            except Exception as e:
+                results.append(
+                    PayrollProcessItemResultSchema(
+                        employee_id=emp.employee_id,
+                        success=False,
+                        error_code="VALIDATION_ERROR",
+                        error_message=str(e),
+                    )
+                )
+                continue
+
+            if existing:
+                to_update.append({"id": existing.id, **row_dict})
+            else:
+                to_insert.append(row_dict)
+
+            results.append(
+                PayrollProcessItemResultSchema(employee_id=emp.employee_id, success=True)
+            )
+
+        return results, to_insert, to_update
+
+    async def _load_existing_rows(
+        self, payload: PayrollProcessRequestSchema, employee_ids: list[int]
+    ) -> dict[int, PayrollComputedRow]:
+        """Fetch the cycle's existing computed rows for the whole employee set, keyed by id."""
+        rows = await self.computed_rows.get_rows_for_cycle(
+            payload.payroll_group_id, employee_ids, payload.cycle_from, payload.cycle_to
+        )
+        return {row.employee_id: row for row in rows}
+
     async def preview_payroll(
         self, org_id: int, payload: PayrollProcessRequestSchema
     ) -> list[PayrollComputedRow]:
@@ -762,27 +978,28 @@ class PayrollService(BaseService):
         await self._validate_payroll_group(org_id, payload.payroll_group_id)
         settings = await self._get_or_create_settings(org_id)
 
-        # Resolve employee list
-        stmt_emp = select(Employee).where(
-            Employee.org_id == org_id, Employee.is_deleted.is_(False)
+        employees = await self._resolve_employees(org_id, payload)
+        employee_ids = [emp.employee_id for emp in employees]
+
+        # Bulk-prefetch every calculator input once, then compute purely in memory.
+        inputs = await self._prefetch_batch_inputs(
+            org_id, employee_ids, payload.cycle_from, payload.cycle_to
         )
-        if payload.employee_ids:
-            stmt_emp = stmt_emp.where(Employee.employee_id.in_(payload.employee_ids))
-        else:
-            stmt_emp = stmt_emp.where(Employee.payroll_group_id == payload.payroll_group_id)
 
-        employees = (await self.session.execute(stmt_emp)).scalars().all()
         preview_rows = []
-
         for emp in employees:
             try:
-                row_dict = await self._calculate_employee_payroll(
-                    org_id, emp, payload.cycle_from, payload.cycle_to, settings, 0
+                row_dict = self._calculate_employee_payroll(
+                    emp,
+                    payload.cycle_from,
+                    payload.cycle_to,
+                    settings,
+                    0,
+                    inputs.for_employee(emp.employee_id),
                 )
-                row = PayrollComputedRow(**row_dict)
-                preview_rows.append(row)
             except Exception:
                 continue
+            preview_rows.append(PayrollComputedRow(**row_dict))
         return preview_rows
 
     async def generate_payroll(
@@ -792,62 +1009,25 @@ class PayrollService(BaseService):
         await self._validate_payroll_group(org_id, payload.payroll_group_id)
         settings = await self._get_or_create_settings(org_id)
 
-        # Resolve employee list
-        stmt_emp = select(Employee).where(
-            Employee.org_id == org_id, Employee.is_deleted.is_(False)
+        employees = await self._resolve_employees(org_id, payload)
+        employee_ids = [emp.employee_id for emp in employees]
+
+        # --- Read phase: bulk-prefetch outside the transaction, so no row locks are held
+        #     while we compute.
+        inputs = await self._prefetch_batch_inputs(
+            org_id, employee_ids, payload.cycle_from, payload.cycle_to
         )
-        if payload.employee_ids:
-            stmt_emp = stmt_emp.where(Employee.employee_id.in_(payload.employee_ids))
-        else:
-            stmt_emp = stmt_emp.where(Employee.payroll_group_id == payload.payroll_group_id)
+        existing_rows = await self._load_existing_rows(payload, employee_ids)
 
-        employees = (await self.session.execute(stmt_emp)).scalars().all()
-        results = []
+        # --- Compute phase: pure, in memory, zero queries.
+        results, to_insert, to_update = self._compute_batch(
+            employees, payload, settings, inputs, existing_rows, user_id, skip_finalized=True
+        )
 
+        # --- Write phase: two bulk statements instead of one per employee.
         async with self.transaction():
-            for emp in employees:
-                try:
-                    # Check if already finalized
-                    existing = await self.computed_rows.get_row(
-                        payload.payroll_group_id,
-                        emp.employee_id,
-                        payload.cycle_from,
-                        payload.cycle_to,
-                    )
-                    if existing and existing.is_finalized:
-                        results.append(
-                            PayrollProcessItemResultSchema(
-                                employee_id=emp.employee_id,
-                                success=False,
-                                error_code="PAYROLL_ALREADY_FINALIZED",
-                                error_message="Payroll already finalized for this employee in this "
-                                    "period.",
-                            )
-                        )
-                        continue
-
-                    # Compute
-                    row_dict = await self._calculate_employee_payroll(
-                        org_id, emp, payload.cycle_from, payload.cycle_to, settings, user_id
-                    )
-
-                    if existing:
-                        await self.computed_rows.update(existing, row_dict)
-                    else:
-                        await self.computed_rows.create(row_dict)
-
-                    results.append(
-                        PayrollProcessItemResultSchema(employee_id=emp.employee_id, success=True)
-                    )
-                except Exception as e:
-                    results.append(
-                        PayrollProcessItemResultSchema(
-                            employee_id=emp.employee_id,
-                            success=False,
-                            error_code="VALIDATION_ERROR",
-                            error_message=str(e),
-                        )
-                    )
+            await self.computed_rows.bulk_insert_rows(to_insert)
+            await self.computed_rows.bulk_update_rows(to_update)
 
             await self.audit.record(
                 org_id=org_id,
@@ -869,57 +1049,28 @@ class PayrollService(BaseService):
         await self._validate_payroll_group(org_id, payload.payroll_group_id)
         settings = await self._get_or_create_settings(org_id)
 
-        # Resolve employee list
-        stmt_emp = select(Employee).where(
-            Employee.org_id == org_id, Employee.is_deleted.is_(False)
+        employees = await self._resolve_employees(org_id, payload)
+        employee_ids = [emp.employee_id for emp in employees]
+
+        # --- Read phase. The existing rows are fetched ONCE and reused by both the
+        #     finalized guard and the compute loop.
+        inputs = await self._prefetch_batch_inputs(
+            org_id, employee_ids, payload.cycle_from, payload.cycle_to
         )
-        if payload.employee_ids:
-            stmt_emp = stmt_emp.where(Employee.employee_id.in_(payload.employee_ids))
-        else:
-            stmt_emp = stmt_emp.where(Employee.payroll_group_id == payload.payroll_group_id)
+        existing_rows = await self._load_existing_rows(payload, employee_ids)
 
-        employees = (await self.session.execute(stmt_emp)).scalars().all()
-        results = []
+        if any(row.is_finalized for row in existing_rows.values()):
+            raise PayrollAlreadyFinalizedException()
 
+        # --- Compute phase: pure, in memory, zero queries.
+        results, to_insert, to_update = self._compute_batch(
+            employees, payload, settings, inputs, existing_rows, user_id, skip_finalized=False
+        )
+
+        # --- Write phase.
         async with self.transaction():
-            # Check if any row in target range is finalized
-            for emp in employees:
-                existing = await self.computed_rows.get_row(
-                    payload.payroll_group_id, emp.employee_id, payload.cycle_from, payload.cycle_to
-                )
-                if existing and existing.is_finalized:
-                    raise PayrollAlreadyFinalizedException()
-
-            # Recalculate
-            for emp in employees:
-                try:
-                    existing = await self.computed_rows.get_row(
-                        payload.payroll_group_id,
-                        emp.employee_id,
-                        payload.cycle_from,
-                        payload.cycle_to,
-                    )
-                    row_dict = await self._calculate_employee_payroll(
-                        org_id, emp, payload.cycle_from, payload.cycle_to, settings, user_id
-                    )
-
-                    if existing:
-                        await self.computed_rows.update(existing, row_dict)
-                    else:
-                        await self.computed_rows.create(row_dict)
-
-                    results.append(
-                        PayrollProcessItemResultSchema(employee_id=emp.employee_id, success=True)
-                    )
-                except Exception as e:
-                    results.append(
-                        PayrollProcessItemResultSchema(
-                            employee_id=emp.employee_id,
-                            success=False,
-                            error_code="VALIDATION_ERROR",
-                            error_message=str(e),
-                        )
-                    )
+            await self.computed_rows.bulk_insert_rows(to_insert)
+            await self.computed_rows.bulk_update_rows(to_update)
 
             await self.audit.record(
                 org_id=org_id,
@@ -1228,7 +1379,7 @@ class PayrollService(BaseService):
         """List paginated finalized lock runs."""
         runs = await self.runs.search(
             org_id,
-            group_id=group_id,
+            payroll_group_id=group_id,
             cycle_from=cycle_from,
             cycle_to=cycle_to,
             payment_status=payment_status,
@@ -1237,7 +1388,7 @@ class PayrollService(BaseService):
         )
         total = await self.runs.search_count(
             org_id,
-            group_id=group_id,
+            payroll_group_id=group_id,
             cycle_from=cycle_from,
             cycle_to=cycle_to,
             payment_status=payment_status,
@@ -1269,7 +1420,7 @@ class PayrollService(BaseService):
         """List paginated computed payroll records (supports branch/dept scoping)."""
         rows = await self.computed_rows.search(
             org_id,
-            group_id=group_id,
+            payroll_group_id=group_id,
             cycle_from=cycle_from,
             cycle_to=cycle_to,
             employee_id=employee_id,
@@ -1281,7 +1432,7 @@ class PayrollService(BaseService):
         )
         total = await self.computed_rows.search_count(
             org_id,
-            group_id=group_id,
+            payroll_group_id=group_id,
             cycle_from=cycle_from,
             cycle_to=cycle_to,
             employee_id=employee_id,
