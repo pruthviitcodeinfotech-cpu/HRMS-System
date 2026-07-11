@@ -13,12 +13,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants.enums import SortOrder
+from app.core.exceptions.base import ValidationException
 from app.modules.audit.constants import ActionType
 from app.modules.audit.service import AuditService
 from app.modules.employee.models.employee import Employee
 from app.modules.leave.constants import AdjustmentType, LeaveRequestStatus
 from app.modules.leave.exceptions import (
-    BalanceNotFoundException,
     EmployeeNotFoundException,
     HolidayItemNotFoundException,
     HolidayTemplateNameExistsException,
@@ -47,14 +47,13 @@ from app.modules.leave.repository import (
     EmployeeHolidayAssignmentRepository,
     EmployeeLeaveAllocationRepository,
     EmployeeLeaveBalanceRepository,
+    HolidayTemplateItemRepository,
+    HolidayTemplateRepository,
     LeaveBalanceAdjustmentRepository,
     LeaveRequestRepository,
     LeaveSettingRepository,
     LeaveTypeRepository,
-    HolidayTemplateRepository,
-    HolidayTemplateItemRepository,
 )
-from app.shared.base.repository import BaseRepository
 from app.shared.base.service import BaseService
 from app.shared.schemas.pagination import PaginatedResponse
 
@@ -183,7 +182,10 @@ class LeaveService(BaseService):
         encashment_enabled = data.get("encashment_enabled", leave_type.encashment_enabled)
         encashment_limit = data.get("encashment_limit", leave_type.encashment_limit)
         if encashment_enabled and encashment_limit is None:
-            raise ValueError("encashment_limit is required when encashment is enabled")
+            raise ValidationException(
+                "encashment_limit is required when encashment is enabled.",
+                code="ENCASHMENT_LIMIT_REQUIRED",
+            )
 
         async with self.transaction():
             updated = await self.leave_types.update(leave_type, {**data, "updated_by": user_id})
@@ -519,8 +521,13 @@ class LeaveService(BaseService):
         """Submit a new leave request (creates pending entry)."""
         employee_id = data.get("employee_id")
         if not employee_id:
-            # Default to caller self-service resolution
-            raise ValueError("employee_id must be provided")
+            # The router resolves the caller's own employee for self-service applications.
+            # Reaching here means the caller's user has no linked employee record; surface
+            # that as a 422 rather than letting a bare ValueError become a 500.
+            raise ValidationException(
+                "employee_id is required and could not be resolved from the caller.",
+                code="EMPLOYEE_ID_REQUIRED",
+            )
 
         emp = await self._validate_employee(org_id, employee_id)
         leave_type_id = data["leave_type_id"]

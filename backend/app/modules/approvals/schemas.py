@@ -6,7 +6,7 @@ sub-record details, action payloads, timelines, and aggregates.
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import datetime
 from typing import Any
 
 from pydantic import Field, model_validator
@@ -21,15 +21,23 @@ class ApprovalRequestSchema(BaseSchema):
 
     id: int = Field(..., description="Unique approval request ID.")
     org_id: int = Field(..., description="Organization ID.")
-    request_type: RequestType = Field(..., description="Type of request: attendance, leave, login_reset.")
-    request_subtype: str | None = Field(default=None, description="Optional subtype categorization.")
+    request_type: RequestType = Field(..., description="Type of request: attendance, leave, "
+        "login_reset.")
+    request_subtype: str | None = Field(
+        default=None, description="Optional subtype categorization."
+    )
     reference_id: int = Field(..., description="Polymorphic reference ID of the source request.")
     employee_id: int = Field(..., description="Subject employee ID.")
-    status: ApprovalStatus = Field(..., description="Current workflow status: pending, approved, rejected.")
+    status: ApprovalStatus = Field(..., description="Current workflow status: pending, approved, "
+        "rejected.")
     requested_at: datetime = Field(..., description="Timestamp when request was raised.")
-    reviewed_at: datetime | None = Field(default=None, description="Timestamp when decision was applied.")
+    reviewed_at: datetime | None = Field(
+        default=None, description="Timestamp when decision was applied."
+    )
     reviewed_by: int | None = Field(default=None, description="User ID of reviewer.")
-    reject_remarks: str | None = Field(default=None, description="Remarks for rejection / approval.")
+    reject_remarks: str | None = Field(
+        default=None, description="Remarks for rejection / approval."
+    )
     created_at: datetime = Field(..., description="Record creation timestamp.")
 
 
@@ -57,7 +65,8 @@ class ApprovalDetailsSchema(BaseSchema):
     """Details schema enclosing the envelope and resolved polymorphic source details."""
 
     approval: ApprovalRequestSchema = Field(..., description="The approval envelope record.")
-    source: dict[str, Any] | None = Field(default=None, description="Resolved polymorphic source record fields.")
+    source: dict[str, Any] | None = Field(default=None, description="Resolved polymorphic source "
+        "record fields.")
 
 
 class ApprovalStatusSchema(BaseSchema):
@@ -82,19 +91,23 @@ class ApprovalPendingCountSchema(BaseSchema):
     """Pending counts aggregation response schema."""
 
     pending_count: int = Field(..., description="Total count of pending requests.")
-    by_request_type: dict[str, int] = Field(..., description="Counts breakdown grouped by request type.")
+    by_request_type: dict[str, int] = Field(..., description="Counts breakdown grouped by request "
+        "type.")
 
 
 class ApproveRequestInput(BaseSchema):
     """Payload for approving a pending request."""
 
-    remarks: str | None = Field(default=None, max_length=500, description="Optional reviewer remarks.")
+    remarks: str | None = Field(
+        default=None, max_length=500, description="Optional reviewer remarks."
+    )
 
 
 class RejectRequestInput(BaseSchema):
     """Payload for rejecting a pending request."""
 
-    reject_remarks: str = Field(..., max_length=500, description="Mandatory remarks explaining rejection.")
+    reject_remarks: str = Field(..., max_length=500, description="Mandatory remarks explaining "
+        "rejection.")
 
     @model_validator(mode="after")
     def validate_non_empty(self) -> RejectRequestInput:
@@ -107,7 +120,9 @@ class BulkApproveRequestInput(BaseSchema):
     """Payload for approving multiple requests in bulk."""
 
     approval_ids: list[int] = Field(..., description="IDs of approvals to approve.")
-    remarks: str | None = Field(default=None, max_length=500, description="Optional remarks for approval.")
+    remarks: str | None = Field(
+        default=None, max_length=500, description="Optional remarks for approval."
+    )
 
     @model_validator(mode="after")
     def validate_ids(self) -> BulkApproveRequestInput:
@@ -149,7 +164,9 @@ class BulkActionItemResultSchema(BaseSchema):
 class BulkActionResponseSchema(BaseSchema):
     """Overall outcome of a bulk approval/rejection request."""
 
-    results: list[BulkActionItemResultSchema] = Field(..., description="Outcomes of each requested action.")
+    results: list[
+        BulkActionItemResultSchema
+    ] = Field(..., description="Outcomes of each requested action.")
 
 
 __all__ = [

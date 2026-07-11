@@ -18,19 +18,32 @@ can validate it — no schema is invented or modified here.
 
 from __future__ import annotations
 
-from sqlalchemy import BigInteger, and_, cast, func, or_, select, text
+from typing import TypeVar
+
+from sqlalchemy import BigInteger, and_, cast, func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.constants.enums import SortOrder
+from app.core.database.base import Base
 from app.modules.employee.models import (
     Branch,
     Department,
     Designation,
     Employee,
 )
+from app.modules.employee.models.satellites import (
+    EmployeeBankDetail,
+    EmployeeDocument,
+    EmployeeEmergencyContact,
+    EmployeeReference,
+    EmployeeStatusHistory,
+    EmployeeTag,
+)
 from app.shared.base.repository import BaseRepository
 from app.shared.utils.query import apply_sorting
+
+SatelliteModel = TypeVar("SatelliteModel", bound=Base)
 
 _EMPLOYEE_SORTS = {
     "employee_code",
@@ -373,9 +386,149 @@ class DesignationRepository(BaseRepository[Designation]):
         return (await self.session.execute(stmt.limit(1))).first() is not None
 
 
+class EmployeeSatelliteRepository(BaseRepository[SatelliteModel]):
+    """Org-scoped data access for one employee satellite (child) table.
+
+    Every lookup joins through the parent ``employees`` row and filters by its
+    ``org_id``, so a record belonging to another organisation can never be
+    returned. Subclasses declare the primary-key attribute name, whether the
+    table carries an ``is_deleted`` flag (``employee_tags`` and
+    ``employee_status_history`` do not), and the default list ordering.
+    """
+
+    pk_attr: str
+    has_soft_delete: bool = True
+    order_attrs: tuple[str, ...] = ()
+
+    def _scoped(self, org_id: int, employee_id: int) -> list:
+        """WHERE conditions confining rows to one employee within ``org_id``."""
+        conds: list = [
+            self.model.employee_id == employee_id,
+            Employee.org_id == org_id,
+            Employee.is_deleted.is_(False),
+        ]
+        if self.has_soft_delete:
+            conds.append(self.model.is_deleted.is_(False))
+        return conds
+
+    async def list_for_employee(self, org_id: int, employee_id: int) -> list[SatelliteModel]:
+        """Return the employee's non-deleted satellite rows (org-scoped, ordered)."""
+        stmt = (
+            select(self.model)
+            .join(Employee, Employee.employee_id == self.model.employee_id)
+            .where(and_(*self._scoped(org_id, employee_id)))
+        )
+        order_attrs = self.order_attrs or (self.pk_attr,)
+        stmt = stmt.order_by(*(getattr(self.model, name).asc() for name in order_attrs))
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def get_by_id_in_org(
+        self, org_id: int, employee_id: int, record_id: int
+    ) -> SatelliteModel | None:
+        """Return one non-deleted satellite row by id, scoped to the employee's org."""
+        stmt = (
+            select(self.model)
+            .join(Employee, Employee.employee_id == self.model.employee_id)
+            .where(
+                and_(
+                    *self._scoped(org_id, employee_id),
+                    getattr(self.model, self.pk_attr) == record_id,
+                )
+            )
+            .limit(1)
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+
+class EmployeeBankDetailRepository(EmployeeSatelliteRepository[EmployeeBankDetail]):
+    """Org-scoped CRUD for ``employee_bank_details`` (soft-deleted)."""
+
+    pk_attr = "bank_detail_id"
+
+    def __init__(self, session: AsyncSession) -> None:
+        super().__init__(session, EmployeeBankDetail)
+
+    async def unset_primary(self, employee_id: int, *, exclude_id: int | None = None) -> None:
+        """Clear ``is_primary`` on the employee's other non-deleted bank rows.
+
+        Enforces the "at most one primary account per employee" rule (contract
+        §9) ahead of inserting/updating a primary row. Flushed, not committed.
+        """
+        stmt = (
+            update(EmployeeBankDetail)
+            .where(
+                EmployeeBankDetail.employee_id == employee_id,
+                EmployeeBankDetail.is_deleted.is_(False),
+                EmployeeBankDetail.is_primary.is_(True),
+            )
+            .values(is_primary=False)
+            .execution_options(synchronize_session="fetch")
+        )
+        if exclude_id is not None:
+            stmt = stmt.where(EmployeeBankDetail.bank_detail_id != exclude_id)
+        await self.session.execute(stmt)
+
+
+class EmployeeDocumentRepository(EmployeeSatelliteRepository[EmployeeDocument]):
+    """Org-scoped CRUD for ``employee_documents`` (soft-deleted)."""
+
+    pk_attr = "document_id"
+
+    def __init__(self, session: AsyncSession) -> None:
+        super().__init__(session, EmployeeDocument)
+
+
+class EmployeeEmergencyContactRepository(EmployeeSatelliteRepository[EmployeeEmergencyContact]):
+    """Org-scoped CRUD for ``employee_emergency_contacts`` (soft-deleted)."""
+
+    pk_attr = "emergency_contact_id"
+
+    def __init__(self, session: AsyncSession) -> None:
+        super().__init__(session, EmployeeEmergencyContact)
+
+
+class EmployeeReferenceRepository(EmployeeSatelliteRepository[EmployeeReference]):
+    """Org-scoped CRUD for ``employee_references`` (soft-deleted, sort_order first)."""
+
+    pk_attr = "reference_id"
+    order_attrs = ("sort_order", "reference_id")
+
+    def __init__(self, session: AsyncSession) -> None:
+        super().__init__(session, EmployeeReference)
+
+
+class EmployeeTagRepository(EmployeeSatelliteRepository[EmployeeTag]):
+    """Org-scoped CRUD for ``employee_tags`` (no ``is_deleted`` — hard delete)."""
+
+    pk_attr = "tag_id"
+    has_soft_delete = False
+
+    def __init__(self, session: AsyncSession) -> None:
+        super().__init__(session, EmployeeTag)
+
+
+class EmployeeStatusHistoryRepository(EmployeeSatelliteRepository[EmployeeStatusHistory]):
+    """Org-scoped reads for the append-only ``employee_status_history``."""
+
+    pk_attr = "status_history_id"
+    has_soft_delete = False
+    # Chronological (contract §8.5): oldest transition first.
+    order_attrs = ("created_at", "status_history_id")
+
+    def __init__(self, session: AsyncSession) -> None:
+        super().__init__(session, EmployeeStatusHistory)
+
+
 __all__ = [
     "EmployeeRepository",
     "BranchRepository",
     "DepartmentRepository",
     "DesignationRepository",
+    "EmployeeSatelliteRepository",
+    "EmployeeBankDetailRepository",
+    "EmployeeDocumentRepository",
+    "EmployeeEmergencyContactRepository",
+    "EmployeeReferenceRepository",
+    "EmployeeTagRepository",
+    "EmployeeStatusHistoryRepository",
 ]

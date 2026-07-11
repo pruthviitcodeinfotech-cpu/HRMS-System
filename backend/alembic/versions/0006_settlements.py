@@ -96,7 +96,7 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id", name="pk_loan_advance_transactions"),
         sa.ForeignKeyConstraint(
             ["loan_advance_id"], ["employee_loans_advances.id"],
-            name="fk_loan_advance_transactions_loan_advance_id_employee_loans_advances",
+            name="fk_loan_adv_txns_loan_advance_id_employee_loans_advances",
             ondelete="RESTRICT",
         ),
         sa.CheckConstraint(

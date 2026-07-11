@@ -22,7 +22,7 @@ No source table references users/user_branch_access/user_department_access, so
 no circular FK dependency is introduced. All four constraint names are new (no
 existing constraint is recreated).
 
-Revision ID: 0016_resolve_remaining_deferred_fks
+Revision ID: 0016_resolve_remaining_fks
 Revises: 0015_attendance_core
 Create Date: 2026-07-08
 """
@@ -33,7 +33,7 @@ from typing import Union
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "0016_resolve_remaining_deferred_fks"
+revision: str = "0016_resolve_remaining_fks"
 down_revision: Union[str, None] = "0015_attendance_core"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None

@@ -40,6 +40,8 @@ from app.core.security.jwt import (
     verify_token,
 )
 from app.core.security.password import verify_password
+from app.modules.audit.constants import ActionType
+from app.modules.audit.service import AuditService
 from app.modules.auth.repository import AuthUserRepository, UserSessionRepository
 from app.modules.auth.schemas import (
     AccessTokenResponse,
@@ -67,6 +69,36 @@ class AuthService(BaseService):
         super().__init__(session)
         self.users = AuthUserRepository(session)
         self.sessions = UserSessionRepository(session)
+        self.audit = AuditService(session)
+
+    # =====================================================================
+    # Audit helper
+    # =====================================================================
+    async def _audit(
+        self,
+        *,
+        user: Any,
+        action_type: ActionType,
+        title: str,
+        description: str,
+        sub_module: str | None = None,
+    ) -> None:
+        """Write one ``module="auth"`` audit row inside the active transaction.
+
+        The security/access report (``reports.repository`` security-events query)
+        selects on ``module="auth"``, so these rows surface there. Descriptions never
+        contain passwords, tokens, or session tokens.
+        """
+        await self.audit.record(
+            org_id=user.org_id,
+            module="auth",
+            sub_module=sub_module,
+            action_type=action_type,
+            title=title,
+            description=description,
+            performed_by_user_id=user.id,
+            performed_by_name=user.name,
+        )
 
     # =====================================================================
     # Login
@@ -108,6 +140,13 @@ class AuthService(BaseService):
                 ip_address=ip_address,
             )
             await self.users.update_last_login(user, now)
+            await self._audit(
+                user=user,
+                action_type=ActionType.INSERT,
+                sub_module="session",
+                title="User logged in",
+                description=f"User '{user.name}' logged in (session #{session_row.id})",
+            )
 
         merged, branch_ids, department_ids = await self._resolve_authz(user.id)
         access_token = self._issue_access_token(
@@ -197,8 +236,17 @@ class AuthService(BaseService):
             # No session reference on the token and no token supplied — nothing to do.
             return
 
+        user = await self.users.get_active_by_id(user_id)
         async with self.transaction():
             await self.sessions.revoke(session_row, when=now)
+            if user is not None:
+                await self._audit(
+                    user=user,
+                    action_type=ActionType.DELETE,
+                    sub_module="session",
+                    title="User logged out",
+                    description=f"User '{user.name}' logged out (session #{session_row.id})",
+                )
 
     # =====================================================================
     # Current user (/me)
@@ -253,17 +301,37 @@ class AuthService(BaseService):
         session_row = await self.sessions.get_for_user(session_id, user_id)
         if session_row is None:
             raise NotFoundException("Session not found.", code="AUTH_SESSION_NOT_FOUND")
+        user = await self.users.get_active_by_id(user_id)
         async with self.transaction():
             await self.sessions.revoke(session_row, when=utcnow())
+            if user is not None:
+                await self._audit(
+                    user=user,
+                    action_type=ActionType.DELETE,
+                    sub_module="session",
+                    title="Session revoked",
+                    description=f"User '{user.name}' revoked session #{session_id}",
+                )
 
     async def revoke_all_other_sessions(
         self, *, user_id: int, current_session_id: int | None
     ) -> RevokeAllSessionsResponse:
         """Revoke all of the caller's sessions except the current one."""
+        user = await self.users.get_active_by_id(user_id)
         async with self.transaction():
             revoked = await self.sessions.revoke_all_for_user(
                 user_id, when=utcnow(), exclude_session_id=current_session_id
             )
+            if user is not None:
+                await self._audit(
+                    user=user,
+                    action_type=ActionType.DELETE,
+                    sub_module="session",
+                    title="All other sessions revoked",
+                    description=(
+                        f"User '{user.name}' revoked {revoked} other session(s)"
+                    ),
+                )
         return RevokeAllSessionsResponse(revoked_count=revoked)
 
     # =====================================================================

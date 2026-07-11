@@ -12,7 +12,7 @@ overrides its service dependency, reusing the shared token/header fixtures from
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from unittest.mock import AsyncMock
 
 import pytest
@@ -23,8 +23,11 @@ from app.main import create_app
 from app.modules.shift.router import get_shift_service
 from app.modules.shift.router import router as shift_router
 from app.modules.shift.schemas import (
+    RosterEntrySchema,
+    RosterUpsertResult,
     ShiftAssignmentListResponse,
     ShiftAssignmentSchema,
+    ShiftDayTimingSchema,
     ShiftDetailSchema,
     ShiftListResponse,
     ShiftResolveResponse,
@@ -35,7 +38,7 @@ from app.modules.shift.schemas import (
 )
 from tests.conftest import API_PREFIX
 
-_NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
+_NOW = datetime(2026, 1, 1, tzinfo=UTC)
 
 
 # ---------------------------------------------------------------------------
@@ -170,7 +173,7 @@ async def test_update_shift_200(
     shift_client: AsyncClient, mock_shift_service: AsyncMock, super_admin_headers
 ) -> None:
     mock_shift_service.update_shift.return_value = _shift_detail()
-    resp = await shift_client.put(
+    resp = await shift_client.patch(
         f"{API_PREFIX}/shifts/1", json={"shift_name": "Evening"}, headers=super_admin_headers
     )
     assert resp.status_code == 200
@@ -187,14 +190,105 @@ async def test_delete_shift_204(
 async def test_assign_shift_201(
     shift_client: AsyncClient, mock_shift_service: AsyncMock, super_admin_headers
 ) -> None:
+    """Contract #14: POST /shift-assignments with shift_id in the body."""
     mock_shift_service.assign_shift.return_value = _assignment()
     resp = await shift_client.post(
-        f"{API_PREFIX}/shifts/1/assign",
-        json={"employee_id": 5, "effective_from": "2026-02-01"},
+        f"{API_PREFIX}/shift-assignments",
+        json={"employee_id": 5, "shift_id": 1, "effective_from": "2026-02-01"},
         headers=super_admin_headers,
     )
     assert resp.status_code == 201
     assert resp.json()["data"]["assignment_id"] == 1
+    assert mock_shift_service.assign_shift.await_args.kwargs["shift_id"] == 1
+
+
+async def test_delete_assignment_204(
+    shift_client: AsyncClient, mock_shift_service: AsyncMock, super_admin_headers
+) -> None:
+    """Contract #18: DELETE /shift-assignments/{assignment_id} hard-deletes."""
+    mock_shift_service.delete_assignment.return_value = None
+    resp = await shift_client.delete(
+        f"{API_PREFIX}/shift-assignments/1", headers=super_admin_headers
+    )
+    assert resp.status_code == 204
+    assert resp.content == b""
+    kwargs = mock_shift_service.delete_assignment.await_args.kwargs
+    assert kwargs["assignment_id"] == 1
+
+
+async def test_restore_shift_200(
+    shift_client: AsyncClient, mock_shift_service: AsyncMock, super_admin_headers
+) -> None:
+    """Contract #6: POST /shifts/{shift_id}/restore un-soft-deletes."""
+    mock_shift_service.restore_shift.return_value = _shift_detail()
+    resp = await shift_client.post(
+        f"{API_PREFIX}/shifts/1/restore", headers=super_admin_headers
+    )
+    assert resp.status_code == 200
+    assert resp.json()["data"]["shift_id"] == 1
+    mock_shift_service.restore_shift.assert_awaited_once()
+
+
+async def test_replace_shift_timings_200(
+    shift_client: AsyncClient, mock_shift_service: AsyncMock, super_admin_headers
+) -> None:
+    """Contract #8: PUT /shifts/{shift_id}/timings replaces the full set."""
+    mock_shift_service.replace_timings.return_value = [
+        ShiftDayTimingSchema(timing_id=1, day_of_week=None, is_working_day=True)
+    ]
+    resp = await shift_client.put(
+        f"{API_PREFIX}/shifts/1/timings",
+        json={"timings": [{"start_time": "09:00", "end_time": "18:00"}]},
+        headers=super_admin_headers,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["data"][0]["timing_id"] == 1
+    mock_shift_service.replace_timings.assert_awaited_once()
+
+
+async def test_upsert_roster_entry_200(
+    shift_client: AsyncClient, mock_shift_service: AsyncMock, super_admin_headers
+) -> None:
+    """Contract #22: PUT /roster upserts on (employee_id, roster_date)."""
+    mock_shift_service.upsert_roster_entry.return_value = RosterUpsertResult(
+        created=False,
+        entry=RosterEntrySchema(
+            roster_id=1,
+            org_id=1,
+            employee_id=5,
+            roster_date=date(2026, 2, 1),
+            shift_id=1,
+            created_at=_NOW,
+            updated_at=_NOW,
+        ),
+    )
+    resp = await shift_client.put(
+        f"{API_PREFIX}/roster",
+        json={"employee_id": 5, "roster_date": "2026-02-01", "shift_id": 1},
+        headers=super_admin_headers,
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["data"]["created"] is False
+    assert body["data"]["entry"]["roster_id"] == 1
+    assert body["message"] == "Roster entry updated."
+
+
+async def test_upsert_roster_weekoff_with_shift_422(
+    shift_client: AsyncClient, super_admin_headers
+) -> None:
+    """A week-off roster entry must not carry a shift (contract §8)."""
+    resp = await shift_client.put(
+        f"{API_PREFIX}/roster",
+        json={
+            "employee_id": 5,
+            "roster_date": "2026-02-01",
+            "shift_id": 1,
+            "is_week_off": True,
+        },
+        headers=super_admin_headers,
+    )
+    assert resp.status_code == 422
 
 
 async def test_list_shift_assignments_200(
@@ -234,25 +328,51 @@ async def test_generate_rotation_202(
 async def test_get_weekly_offs_200(
     shift_client: AsyncClient, mock_shift_service: AsyncMock, super_admin_headers
 ) -> None:
-    mock_shift_service.get_weekly_offs.return_value = WeeklyOffListResponse.build(
+    """Contract #11: GET /employees/{employee_id}/weekoffs."""
+    mock_shift_service.list_weekoffs.return_value = WeeklyOffListResponse.build(
         items=[_weekoff()], page=1, page_size=25, total_records=1
     )
     resp = await shift_client.get(
-        f"{API_PREFIX}/weekly-offs?employee_id=5", headers=super_admin_headers
+        f"{API_PREFIX}/employees/5/weekoffs", headers=super_admin_headers
     )
     assert resp.status_code == 200
+    assert resp.json()["data"]["items"][0]["weekoff_id"] == 1
+    kwargs = mock_shift_service.list_weekoffs.await_args.kwargs
+    assert kwargs["employee_id"] == 5
+    assert kwargs["include_history"] is False
 
 
 async def test_set_weekly_off_200(
     shift_client: AsyncClient, mock_shift_service: AsyncMock, super_admin_headers
 ) -> None:
-    mock_shift_service.set_weekly_off.return_value = _weekoff()
+    """Contract #12: PUT /employees/{employee_id}/weekoffs with a bulk body."""
+    mock_shift_service.configure_weekoffs.return_value = WeeklyOffListResponse.build(
+        items=[_weekoff()], page=1, page_size=1, total_records=1
+    )
     resp = await shift_client.put(
-        f"{API_PREFIX}/weekly-offs",
-        json={"employee_id": 5, "day_of_week": 0, "weekoff_type": "week_off"},
+        f"{API_PREFIX}/employees/5/weekoffs",
+        json={"weekoffs": [{"day_of_week": 0, "weekoff_type": "week_off"}]},
         headers=super_admin_headers,
     )
     assert resp.status_code == 200
+    assert resp.json()["data"]["items"][0]["weekoff_type"] == "week_off"
+    assert mock_shift_service.configure_weekoffs.await_args.kwargs["employee_id"] == 5
+
+
+async def test_patch_weekly_off_200(
+    shift_client: AsyncClient, mock_shift_service: AsyncMock, super_admin_headers
+) -> None:
+    """Contract #13: PATCH /employees/{employee_id}/weekoffs/{weekoff_id}."""
+    mock_shift_service.update_weekoff.return_value = _weekoff()
+    resp = await shift_client.patch(
+        f"{API_PREFIX}/employees/5/weekoffs/1",
+        json={"weekoff_type": "working"},
+        headers=super_admin_headers,
+    )
+    assert resp.status_code == 200
+    kwargs = mock_shift_service.update_weekoff.await_args.kwargs
+    assert kwargs["employee_id"] == 5
+    assert kwargs["weekoff_id"] == 1
 
 
 # ===========================================================================
@@ -309,32 +429,43 @@ async def test_assign_shift_missing_employee_422(
     shift_client: AsyncClient, super_admin_headers
 ) -> None:
     resp = await shift_client.post(
-        f"{API_PREFIX}/shifts/1/assign",
-        json={"effective_from": "2026-02-01"},
+        f"{API_PREFIX}/shift-assignments",
+        json={"shift_id": 1, "effective_from": "2026-02-01"},
         headers=super_admin_headers,
     )
     assert resp.status_code == 422
 
 
-async def test_set_weekly_off_both_targets_422(
+async def test_set_weekly_off_invalid_day_422(
     shift_client: AsyncClient, super_admin_headers
 ) -> None:
+    """day_of_week outside 0-6 is rejected by the item schema (contract §6)."""
     resp = await shift_client.put(
-        f"{API_PREFIX}/weekly-offs",
-        json={"employee_id": 5, "department_id": 3, "day_of_week": 0},
+        f"{API_PREFIX}/employees/5/weekoffs",
+        json={"weekoffs": [{"day_of_week": 9, "weekoff_type": "week_off"}]},
         headers=super_admin_headers,
     )
     assert resp.status_code == 422
     assert resp.json()["error"]["code"] == "VALIDATION_ERROR"
 
 
-async def test_get_weekly_offs_both_targets_422(
+async def test_get_roster_conflicting_range_forms_422(
     shift_client: AsyncClient, super_admin_headers
 ) -> None:
-    """The query-DTO exactly-one validator surfaces as 422."""
+    """The roster query-DTO month-XOR-range validator surfaces as 422 (contract #20)."""
     resp = await shift_client.get(
-        f"{API_PREFIX}/weekly-offs?employee_id=5&department_id=3", headers=super_admin_headers
+        f"{API_PREFIX}/roster?month=2026-02&date_from=2026-02-01&date_to=2026-02-28",
+        headers=super_admin_headers,
     )
+    assert resp.status_code == 422
+    assert resp.json()["error"]["code"] == "VALIDATION_ERROR"
+
+
+async def test_get_roster_missing_range_422(
+    shift_client: AsyncClient, super_admin_headers
+) -> None:
+    """One range form (month or date_from+date_to) is required (contract #20)."""
+    resp = await shift_client.get(f"{API_PREFIX}/roster", headers=super_admin_headers)
     assert resp.status_code == 422
     assert resp.json()["error"]["code"] == "VALIDATION_ERROR"
 

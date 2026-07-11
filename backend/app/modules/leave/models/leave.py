@@ -153,7 +153,7 @@ class EmployeeLeaveAllocation(Base):
             "leave_type_id",
             "cycle_year",
             "cycle_period",
-            name="uq_employee_leave_allocations_employee_id_leave_type_id_cycle_year_cycle_period",
+            name="uq_emp_leave_alloc_employee_type_cycle_year_period",
         ),
     )
 

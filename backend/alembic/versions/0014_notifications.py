@@ -73,7 +73,7 @@ def upgrade() -> None:
         ["org_id", "created_at"],
     )
     op.create_index(
-        "ix_notifications_org_id_source_module_source_entity_type_source_entity_id",
+        "ix_notifications_org_source_module_entity_type_entity_id",
         "notifications",
         ["org_id", "source_module", "source_entity_type", "source_entity_id"],
     )
@@ -151,7 +151,7 @@ def downgrade() -> None:
     )
     op.drop_table("notification_recipients")
     op.drop_index(
-        "ix_notifications_org_id_source_module_source_entity_type_source_entity_id",
+        "ix_notifications_org_source_module_entity_type_entity_id",
         table_name="notifications",
     )
     op.drop_index("ix_notifications_org_id_created_at", table_name="notifications")

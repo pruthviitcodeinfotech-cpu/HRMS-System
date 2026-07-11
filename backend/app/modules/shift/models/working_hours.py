@@ -48,8 +48,12 @@ class WorkingHoursConfig(Base):
     )
     full_day_hours: Mapped[time | None] = mapped_column(Time, server_default=text("'08:00'"))
     half_day_hours: Mapped[time | None] = mapped_column(Time, server_default=text("'04:00'"))
-    full_day_buffer_period: Mapped[time | None] = mapped_column(Time, server_default=text("'00:00'"))
-    half_day_buffer_period: Mapped[time | None] = mapped_column(Time, server_default=text("'00:00'"))
+    full_day_buffer_period: Mapped[time | None] = mapped_column(
+        Time, server_default=text("'00:00'")
+    )
+    half_day_buffer_period: Mapped[time | None] = mapped_column(
+        Time, server_default=text("'00:00'")
+    )
     attendance_mode: Mapped[str] = mapped_column(
         String(40), nullable=False, server_default=text("'consider_all_punch'")
     )
@@ -61,7 +65,9 @@ class WorkingHoursConfig(Base):
     )
 
     __table_args__ = (
-        CheckConstraint(_WORKING_HOURS_MODE_CHECK, name="ck_working_hours_config_working_hours_mode"),
+        CheckConstraint(
+            _WORKING_HOURS_MODE_CHECK, name="ck_working_hours_config_working_hours_mode"
+        ),
         CheckConstraint(_ATTENDANCE_MODE_CHECK, name="ck_working_hours_config_attendance_mode"),
     )
 

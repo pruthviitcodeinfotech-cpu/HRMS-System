@@ -8,7 +8,7 @@ and format responses into the standard success envelope.
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query, status
@@ -21,7 +21,7 @@ from app.core.dependencies.auth import (
 )
 from app.core.dependencies.db import get_db
 from app.core.dependencies.pagination import PaginationParams, pagination_params
-from app.core.exceptions.base import AppException, AuthorizationException
+from app.core.exceptions.base import AppException
 from app.core.middleware.request_context import get_request_id
 from app.modules.approvals.constants import ApprovalStatus, RequestType
 from app.modules.approvals.exceptions import (
@@ -86,7 +86,8 @@ async def check_approval_data_scope(
     approval_id: int,
     current_user: CurrentUser,
 ) -> None:
-    """Raise ApprovalForbiddenScopeException if user is not super admin and lacks access to the approval request's scope."""
+    """Raise ApprovalForbiddenScopeException if user is not super admin and lacks access to the
+    approval request's scope."""
     if current_user.is_super_admin:
         return
 
@@ -110,7 +111,8 @@ def resolve_read_data_scope(
     branch_id: int | None,
     dept_id: int | None,
 ) -> tuple[int | None, int | None]:
-    """Validate requested scope filters against current user permissions and return applicable filters."""
+    """Validate requested scope filters against current user permissions and return applicable
+    filters."""
     if current_user.is_super_admin:
         return branch_id, dept_id
 
@@ -149,8 +151,12 @@ async def list_approvals(
     service: ServiceDep,
     org_id: OrgIdDep,
     current_user: CurrentUserDep,
-    status_val: Annotated[ApprovalStatus | None, Query(alias="status", description="Filter by status.")] = None,
-    request_type: Annotated[RequestType | None, Query(description="Filter by request type.")] = None,
+    status_val: Annotated[
+        ApprovalStatus | None, Query(alias="status", description="Filter by status.")
+    ] = None,
+    request_type: Annotated[
+        RequestType | None, Query(description="Filter by request type.")
+    ] = None,
     request_subtype: Annotated[str | None, Query(description="Filter by request subtype.")] = None,
     employee_id: Annotated[int | None, Query(description="Filter by employee ID.")] = None,
     date_from: Annotated[date | None, Query(description="Filter by start requested date.")] = None,
@@ -159,7 +165,8 @@ async def list_approvals(
     dept_id: Annotated[int | None, Query(description="Filter by department.")] = None,
     pagination: Annotated[PaginationParams, Depends(pagination_params)] = None,
 ) -> dict[str, Any]:
-    """Search and filter approval requests. Applies tenant isolation and branch/department scope checks."""
+    """Search and filter approval requests. Applies tenant isolation and branch/department scope
+    checks."""
     p_branch, p_dept = resolve_read_data_scope(current_user, branch_id, dept_id)
     page = pagination.page if pagination else 1
     page_size = pagination.page_size if pagination else 25
@@ -232,7 +239,9 @@ async def get_approval_history(
     service: ServiceDep,
     org_id: OrgIdDep,
     current_user: CurrentUserDep,
-    request_type: Annotated[RequestType | None, Query(description="Filter by request type.")] = None,
+    request_type: Annotated[
+        RequestType | None, Query(description="Filter by request type.")
+    ] = None,
     employee_id: Annotated[int | None, Query(description="Filter by employee ID.")] = None,
     date_from: Annotated[date | None, Query(description="Filter start date.")] = None,
     date_to: Annotated[date | None, Query(description="Filter end date.")] = None,
@@ -298,8 +307,11 @@ async def get_recent_decisions(
     service: ServiceDep,
     org_id: OrgIdDep,
     current_user: CurrentUserDep,
-    decision: Annotated[ApprovalStatus, Query(description="Target decision filter: approved or rejected.")],
-    request_type: Annotated[RequestType | None, Query(description="Filter by request type.")] = None,
+    decision: Annotated[ApprovalStatus, Query(description="Target decision filter: approved or "
+        "rejected.")],
+    request_type: Annotated[
+        RequestType | None, Query(description="Filter by request type.")
+    ] = None,
     branch_id: Annotated[int | None, Query(description="Filter by branch.")] = None,
     dept_id: Annotated[int | None, Query(description="Filter by department.")] = None,
     limit: Annotated[int, Query(ge=1, le=100, description="Number of records to return.")] = 10,

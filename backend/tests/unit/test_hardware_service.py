@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, time as dt_time, timezone
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -75,7 +75,7 @@ def hardware_service() -> BiometricDeviceService:
     svc = BiometricDeviceService(session)
 
     # Inject mock repositories
-    for repo_name in ("devices", "branches", "users", "audit"):
+    for repo_name in ("devices", "branches", "users", "audit", "org_settings"):
         setattr(svc, repo_name, AsyncMock())
 
     # Set mock method defaults
@@ -92,6 +92,8 @@ def hardware_service() -> BiometricDeviceService:
     
     svc.branches.exists_active.return_value = True
     svc.users.get_active_by_id.return_value = SimpleNamespace(name="Test User")
+    # Org without a settings row by default -> schema defaults apply.
+    svc.org_settings.get_by_org_id.return_value = None
 
     return svc
 
@@ -240,6 +242,30 @@ async def test_delete_device_in_use(hardware_service: BiometricDeviceService) ->
 async def test_get_device_configuration(hardware_service: BiometricDeviceService) -> None:
     result = await hardware_service.get_device_configuration(org_id=10, device_id=1)
     assert result.communication_key_set is False
+    # No org_settings row -> schema defaults (mirror the column defaults).
+    assert result.device_sync_time == dt_time(16, 51)
+    assert result.sync_code_set is False
+    assert result.pass_code_set is False
+
+
+@pytest.mark.asyncio
+async def test_get_device_configuration_merges_org_settings(
+    hardware_service: BiometricDeviceService,
+) -> None:
+    """org_settings supplies device_sync_time and code booleans (raw codes never exposed)."""
+    hardware_service.org_settings.get_by_org_id.return_value = SimpleNamespace(
+        device_sync_time=dt_time(4, 30),
+        sync_code="SYNC-123",
+        pass_code="PASS-9",
+    )
+
+    result = await hardware_service.get_device_configuration(org_id=10, device_id=1)
+
+    assert result.device_sync_time == dt_time(4, 30)
+    assert result.sync_code_set is True
+    assert result.pass_code_set is True
+    assert not hasattr(result, "sync_code")
+    assert not hasattr(result, "pass_code")
 
 
 @pytest.mark.asyncio

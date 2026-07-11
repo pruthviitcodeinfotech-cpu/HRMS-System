@@ -10,7 +10,7 @@ service refuses to finalize unless the employee has exited and a finalized payro
 covers their last working day.
 
 Revision ID: 0017_employee_settlement_state
-Revises: 0016_resolve_remaining_deferred_fks
+Revises: 0016_resolve_remaining_fks
 """
 
 from typing import Sequence, Union
@@ -19,7 +19,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "0017_employee_settlement_state"
-down_revision: Union[str, None] = "0016_resolve_remaining_deferred_fks"
+down_revision: Union[str, None] = "0016_resolve_remaining_fks"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

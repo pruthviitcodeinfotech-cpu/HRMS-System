@@ -92,7 +92,9 @@ class RightsTemplatePermission(Base):
     __table_args__ = (
         # Unique already provides the (template_id, feature_key) lookup index.
         UniqueConstraint(
-            "template_id", "feature_key", name="uq_rights_template_permissions_template_id_feature_key"
+            "template_id",
+            "feature_key",
+            name="uq_rights_template_permissions_template_id_feature_key",
         ),
     )
 
@@ -105,7 +107,9 @@ class UserTemplateAssignment(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     user_id: Mapped[int] = mapped_column(
         BigInteger,
-        ForeignKey("users.id", name="fk_user_template_assignments_user_id_users", ondelete="CASCADE"),
+        ForeignKey(
+            "users.id", name="fk_user_template_assignments_user_id_users", ondelete="CASCADE"
+        ),
         nullable=False,
     )
     template_id: Mapped[int] = mapped_column(

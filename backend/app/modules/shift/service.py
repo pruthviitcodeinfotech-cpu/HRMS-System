@@ -37,6 +37,7 @@ Schema-reconciliation notes (the models are the source of truth):
 
 from __future__ import annotations
 
+import calendar
 from datetime import date, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -54,7 +55,21 @@ from app.modules.employee.repository import (
     EmployeeRepository,
 )
 from app.modules.rbac.repository import UserRepository
+from app.modules.settings.repository import OrgSettingsRepository
 from app.modules.shift.constants import WeekoffType
+from app.modules.shift.exceptions import (
+    AssignmentNotFoundException,
+    AssignmentOverlapException,
+    EmployeeNotFoundException,
+    RosterNotFoundException,
+    ShiftNameExistsException,
+    ShiftNotDeletedException,
+    ShiftNotFoundException,
+    TimingDayDuplicateException,
+    TimingNotFoundException,
+    WeekoffDayExistsException,
+    WeekoffNotFoundException,
+)
 from app.modules.shift.repository import (
     RosterRepository,
     ShiftAssignmentRepository,
@@ -63,13 +78,28 @@ from app.modules.shift.repository import (
     WeeklyOffRepository,
 )
 from app.modules.shift.schemas import (
+    RosterBulkItemResult,
+    RosterBulkRequest,
+    RosterBulkResponse,
     RosterEntrySchema,
+    RosterListResponse,
+    RosterQuery,
+    RosterRangeQuery,
+    RosterUpdateRequest,
+    RosterUpsertRequest,
+    RosterUpsertResult,
+    ShiftAssignmentBulkItemResult,
+    ShiftAssignmentBulkRequest,
+    ShiftAssignmentBulkResponse,
     ShiftAssignmentListResponse,
     ShiftAssignmentQuery,
     ShiftAssignmentSchema,
+    ShiftAssignmentUpdateRequest,
     ShiftAssignRequest,
     ShiftCreateRequest,
     ShiftDayTimingInput,
+    ShiftDayTimingSchema,
+    ShiftDayTimingUpdateRequest,
     ShiftDetailSchema,
     ShiftListResponse,
     ShiftResolveQuery,
@@ -78,11 +108,15 @@ from app.modules.shift.schemas import (
     ShiftRotationResponse,
     ShiftSchema,
     ShiftSummarySchema,
+    ShiftTimingsReplaceRequest,
     ShiftUpdateRequest,
     WeeklyOffListResponse,
     WeeklyOffQuery,
     WeeklyOffSchema,
     WeeklyOffUpdateRequest,
+    WeekoffConfigureRequest,
+    WeekoffItemInput,
+    WeekoffPatchRequest,
 )
 from app.shared.base.service import BaseService
 from app.shared.utils.datetime import utcnow
@@ -108,6 +142,8 @@ class ShiftService(BaseService):
         # Actor name for the audit snapshot (User Management / RBAC).
         self.users = UserRepository(session)
         self.audit = AuditService(session)
+        # Org-wide toggles owned by the Settings module.
+        self.org_settings = OrgSettingsRepository(session)
 
     # =====================================================================
     # Shifts — CRUD
@@ -214,11 +250,16 @@ class ShiftService(BaseService):
         )
 
     async def delete_shift(self, *, org_id: int, actor_id: int, shift_id: int) -> None:
-        """Deactivate (soft-delete) a shift; blocked when active assignments reference it."""
+        """Deactivate (soft-delete) a shift; blocked while assignments/roster reference it."""
         shift = await self._get_active_shift(org_id, shift_id)
         if await self.shifts.has_open_assignments(shift_id):
             raise ConflictException(
                 "Shift has active assignments and cannot be deleted.",
+                code="shift_in_use",
+            )
+        if await self.rosters.exists_for_shift_on_or_after(shift_id, utcnow().date()):
+            raise ConflictException(
+                "Shift is referenced by upcoming roster entries and cannot be deleted.",
                 code="shift_in_use",
             )
         async with self.transaction():
@@ -229,6 +270,135 @@ class ShiftService(BaseService):
                 action_type=ActionType.DELETE,
                 title="Shift deleted",
                 description=f"Deactivated shift '{shift.shift_name}'.",
+            )
+
+    async def restore_shift(
+        self, *, org_id: int, actor_id: int, shift_id: int
+    ) -> ShiftDetailSchema:
+        """Restore a soft-deleted shift (contract #6).
+
+        409 ``SHIFT_NOT_DELETED`` when the shift is not deleted; 409
+        ``SHIFT_NAME_EXISTS`` when a newer non-deleted shift meanwhile took the name
+        (the partial unique index would otherwise reject the restore at the DB).
+        """
+        shift = await self.shifts.get_any_by_id(shift_id, org_id)
+        if shift is None:
+            raise ShiftNotFoundException()
+        if not shift.is_deleted:
+            raise ShiftNotDeletedException()
+        if await self.shifts.name_exists(org_id, shift.shift_name, exclude_shift_id=shift_id):
+            raise ShiftNameExistsException(
+                "Another active shift already uses this name; rename it before restoring."
+            )
+        async with self.transaction():
+            await self.shifts.update(shift, {"is_deleted": False})
+            await self._audit(
+                org_id=org_id,
+                actor_id=actor_id,
+                action_type=ActionType.UPDATE,
+                title="Shift restored",
+                description=f"Restored shift '{shift.shift_name}'.",
+            )
+        return await self._load_shift_detail(org_id, shift_id)
+
+    # =====================================================================
+    # Shift day timings (contract §5)
+    # =====================================================================
+    async def list_timings(self, *, org_id: int, shift_id: int) -> list[ShiftDayTimingSchema]:
+        """Return a shift's timing rows (contract #7)."""
+        await self._require_shift(org_id, shift_id)
+        rows = await self.day_timings.list_for_shift(shift_id)
+        return [ShiftDayTimingSchema.model_validate(row) for row in rows]
+
+    async def replace_timings(
+        self, *, org_id: int, actor_id: int, shift_id: int, data: ShiftTimingsReplaceRequest
+    ) -> list[ShiftDayTimingSchema]:
+        """Atomically replace a shift's full timing set (contract #8)."""
+        shift = await self._require_shift(org_id, shift_id)
+        self._validate_timing_set(shift, data.timings)
+        async with self.transaction():
+            await self.day_timings.delete_all_for_shift(shift_id)
+            await self._create_day_timings(shift_id, data.timings)
+            await self._audit(
+                org_id=org_id,
+                actor_id=actor_id,
+                action_type=ActionType.UPDATE,
+                title="Shift timings replaced",
+                description=(
+                    f"Replaced timings of shift '{shift.shift_name}' "
+                    f"({len(data.timings)} rows)."
+                ),
+            )
+        rows = await self.day_timings.list_for_shift(shift_id)
+        return [ShiftDayTimingSchema.model_validate(row) for row in rows]
+
+    async def update_timing(
+        self,
+        *,
+        org_id: int,
+        actor_id: int,
+        shift_id: int,
+        timing_id: int,
+        data: ShiftDayTimingUpdateRequest,
+    ) -> ShiftDayTimingSchema:
+        """Partially update one timing row (contract #9)."""
+        shift = await self._require_shift(org_id, shift_id)
+        timing = await self.day_timings.get_for_shift(timing_id, shift_id)
+        if timing is None:
+            raise TimingNotFoundException()
+
+        updates = data.model_dump(exclude_unset=True, exclude={"crosses_midnight"})
+        if "day_of_week" in updates:
+            new_day = updates["day_of_week"]
+            updates["day_of_week"] = int(new_day) if new_day is not None else None
+            if updates[
+                "day_of_week"
+            ] != timing.day_of_week:
+                if await self.day_timings.exists_for_day(
+                    shift_id, updates["day_of_week"], exclude_timing_id=timing_id
+                ):
+                    raise TimingDayDuplicateException()
+
+        new_start = updates.get("start_time", timing.start_time)
+        new_end = updates.get("end_time", timing.end_time)
+        if (
+            new_start is not None
+            and new_end is not None
+            and new_end <= new_start
+            and not data.crosses_midnight
+        ):
+            raise ValidationException(
+                "end_time must be after start_time unless crosses_midnight is true."
+            )
+
+        async with self.transaction():
+            if updates:
+                await self.day_timings.update(timing, updates)
+            await self._audit(
+                org_id=org_id,
+                actor_id=actor_id,
+                action_type=ActionType.UPDATE,
+                title="Shift timing updated",
+                description=f"Updated a timing of shift '{shift.shift_name}'.",
+            )
+        return ShiftDayTimingSchema.model_validate(timing)
+
+    async def delete_timing(
+        self, *, org_id: int, actor_id: int, shift_id: int, timing_id: int
+    ) -> None:
+        """Delete one timing row (contract #10)."""
+        shift = await self._require_shift(org_id, shift_id)
+        timing = await self.day_timings.get_for_shift(timing_id, shift_id)
+        if timing is None:
+            raise TimingNotFoundException()
+        async with self.transaction():
+            await self.day_timings.delete(timing)
+            await self._audit(
+                org_id=org_id,
+                actor_id=actor_id,
+                action_type=ActionType.DELETE,
+                title="Shift timing deleted",
+                description=f"Deleted a timing of shift '{shift.shift_name}'.",
             )
 
     # =====================================================================
@@ -263,6 +433,10 @@ class ShiftService(BaseService):
                 await self.assignments.update(
                     prior, {"effective_to": data.effective_from - timedelta(days=1)}
                 )
+            elif prior is not None:
+                # The open assignment starts on/after the new range — it cannot be
+                # auto-closed, so the ranges would overlap (contract §9 guard).
+                raise AssignmentOverlapException()
             assignment = await self.assignments.create(
                 {
                     "org_id": org_id,
@@ -290,13 +464,17 @@ class ShiftService(BaseService):
     async def list_assignments(
         self, *, org_id: int, query: ShiftAssignmentQuery
     ) -> ShiftAssignmentListResponse:
-        """Return an employee's assignment timeline, or the single shift resolved for a date."""
-        if query.employee_id is None:
-            raise ValidationException(
-                "employee_id is required.", code="validation_error"
-            )
+        """Filtered, paginated org assignment list (contract #16).
 
+        ``date`` (``on_date``) resolves the *single* assignment effective on a date
+        for one employee (and therefore requires ``employee_id``); ``active_on``
+        is the contract's range filter (assignments whose range covers the date).
+        """
         if query.on_date is not None:
+            if query.employee_id is None:
+                raise ValidationException(
+                    "employee_id is required.", code="validation_error"
+                )
             resolved = await self.assignments.resolve_for_date(
                 org_id, query.employee_id, query.on_date
             )
@@ -305,13 +483,188 @@ class ShiftService(BaseService):
                 items=items, page=1, page_size=max(len(items), 1), total_records=len(items)
             )
 
-        rows = await self.assignments.list_for_employee(
-            org_id, query.employee_id, page=query.page, page_size=query.page_size
+        rows = await self.assignments.search(
+            org_id,
+            employee_id=query.employee_id,
+            shift_id=query.shift_id,
+            active_on=query.active_on,
+            page=query.page,
+            page_size=query.page_size,
         )
-        total = await self.assignments.count_for_employee(org_id, query.employee_id)
+        total = await self.assignments.search_count(
+            org_id,
+            employee_id=query.employee_id,
+            shift_id=query.shift_id,
+            active_on=query.active_on,
+        )
         items = [ShiftAssignmentSchema.model_validate(row) for row in rows]
         return ShiftAssignmentListResponse.build(
             items=items, page=query.page, page_size=query.page_size, total_records=total
+        )
+
+    async def bulk_assign_shift(
+        self, *, org_id: int, actor_id: int, data: ShiftAssignmentBulkRequest
+    ) -> ShiftAssignmentBulkResponse:
+        """Assign one shift to many employees with per-item results (contract #15).
+
+        The shift is validated once; each employee is validated independently and
+        failures are reported as ``skipped`` items instead of aborting the batch.
+        """
+        shift = await self._require_shift(org_id, data.shift_id)
+
+        results: list[ShiftAssignmentBulkItemResult] = []
+        created = 0
+        async with self.transaction():
+            for employee_id in dict.fromkeys(data.employee_ids):
+                item = await self._assign_one(org_id, actor_id, shift, employee_id, data)
+                if item.status == "created":
+                    created += 1
+                results.append(item)
+            await self._audit(
+                org_id=org_id,
+                actor_id=actor_id,
+                action_type=ActionType.BULK_ASSIGN,
+                title="Shift bulk assigned",
+                description=(
+                    f"Bulk assigned shift '{shift.shift_name}' to {created} of "
+                    f"{len(results)} employees from {data.effective_from.isoformat()}."
+                ),
+            )
+        return ShiftAssignmentBulkResponse(
+            created_count=created, skipped_count=len(results) - created, results=results
+        )
+
+    async def _assign_one(
+        self,
+        org_id: int,
+        actor_id: int,
+        shift,
+        employee_id: int,
+        data: ShiftAssignmentBulkRequest,
+    ) -> ShiftAssignmentBulkItemResult:
+        """Validate + create one bulk-assignment item (never raises; reports a reason)."""
+
+        def _skip(reason: str) -> ShiftAssignmentBulkItemResult:
+            return ShiftAssignmentBulkItemResult(
+                employee_id=employee_id, status="skipped", reason=reason
+            )
+
+        employee = await self.employees.get_active_by_id(employee_id, org_id)
+        if employee is None:
+            return _skip("Employee not found.")
+        if (
+            employee.date_of_joining is not None
+            and data.effective_from < employee.date_of_joining
+        ):
+            return _skip("Assignment starts before the employee's joining date.")
+        if await self.assignments.exists_on_effective_from(employee_id, data.effective_from):
+            return _skip("An assignment already starts on this date.")
+
+        prior = await self.assignments.get_open_for_employee(org_id, employee_id)
+        if prior is not None and prior.effective_from < data.effective_from:
+            await self.assignments.update(
+                prior, {"effective_to": data.effective_from - timedelta(days=1)}
+            )
+        elif prior is not None:
+            return _skip("The assignment period overlaps an existing assignment.")
+
+        assignment = await self.assignments.create(
+            {
+                "org_id": org_id,
+                "employee_id": employee_id,
+                "shift_id": shift.shift_id,
+                "effective_from": data.effective_from,
+                "effective_to": data.effective_to,
+                "assigned_by": actor_id,
+            }
+        )
+        return ShiftAssignmentBulkItemResult(
+            employee_id=employee_id, status="created", assignment_id=assignment.assignment_id
+        )
+
+    async def update_assignment(
+        self,
+        *,
+        org_id: int,
+        actor_id: int,
+        assignment_id: int,
+        data: ShiftAssignmentUpdateRequest,
+    ) -> ShiftAssignmentSchema:
+        """Patch an assignment's shift/effective range (contract #17)."""
+        assignment = await self.assignments.get_by_id_in_org(assignment_id, org_id)
+        if assignment is None:
+            raise AssignmentNotFoundException()
+
+        updates = data.model_dump(exclude_unset=True)
+        if updates.get("shift_id") is not None:
+            await self._require_shift(org_id, updates["shift_id"])
+
+        new_from = updates.get("effective_from", assignment.effective_from)
+        new_to = updates.get("effective_to", assignment.effective_to)
+        if new_to is not None and new_to < new_from:
+            raise ValidationException("effective_to must be on or after effective_from.")
+        if await self.assignments.overlap_exists(
+            assignment.employee_id, new_from, new_to, exclude_assignment_id=assignment_id
+        ):
+            raise AssignmentOverlapException()
+
+        async with self.transaction():
+            if updates:
+                await self.assignments.update(assignment, updates)
+            await self._audit(
+                org_id=org_id,
+                actor_id=actor_id,
+                action_type=ActionType.UPDATE,
+                title="Shift assignment updated",
+                description=f"Updated assignment #{assignment_id}.",
+                employee_id=assignment.employee_id,
+            )
+        return ShiftAssignmentSchema.model_validate(assignment)
+
+    async def delete_assignment(
+        self, *, org_id: int, actor_id: int, assignment_id: int
+    ) -> None:
+        """Hard-delete an assignment (contract #18 — no soft-delete on this table)."""
+        assignment = await self.assignments.get_by_id_in_org(assignment_id, org_id)
+        if assignment is None:
+            raise AssignmentNotFoundException()
+        async with self.transaction():
+            await self.assignments.delete(assignment)
+            await self._audit(
+                org_id=org_id,
+                actor_id=actor_id,
+                action_type=ActionType.DELETE,
+                title="Shift assignment removed",
+                description=f"Removed assignment #{assignment_id}.",
+                employee_id=assignment.employee_id,
+            )
+
+    async def list_employee_assignments(
+        self,
+        *,
+        org_id: int,
+        employee_id: int,
+        current: bool = False,
+        page: int = 1,
+        page_size: int = 25,
+    ) -> ShiftAssignmentListResponse:
+        """An employee's assignment history, or only the current one (contract #19)."""
+        await self._require_employee(org_id, employee_id)
+        if current:
+            resolved = await self.assignments.resolve_for_date(
+                org_id, employee_id, utcnow().date()
+            )
+            items = [ShiftAssignmentSchema.model_validate(resolved)] if resolved else []
+            return ShiftAssignmentListResponse.build(
+                items=items, page=1, page_size=max(len(items), 1), total_records=len(items)
+            )
+        rows = await self.assignments.list_for_employee(
+            org_id, employee_id, page=page, page_size=page_size
+        )
+        total = await self.assignments.count_for_employee(org_id, employee_id)
+        items = [ShiftAssignmentSchema.model_validate(row) for row in rows]
+        return ShiftAssignmentListResponse.build(
+            items=items, page=page, page_size=page_size, total_records=total
         )
 
     async def resolve_shift(
@@ -353,6 +706,20 @@ class ShiftService(BaseService):
     # =====================================================================
     # Shift rotations (roster generation)
     # =====================================================================
+    async def _require_advance_shift_enabled(self, org_id: int) -> None:
+        """Reject rotation generation when Settings has advance shift turned off.
+
+        ``org_settings.advance_shift_enabled`` is the organization-wide toggle owned
+        by the Settings module. An org with no settings row has never enabled it, so
+        the schema default (``false``) applies and rotations stay off.
+        """
+        settings = await self.org_settings.get_by_org_id(org_id)
+        if settings is None or not settings.advance_shift_enabled:
+            raise ConflictException(
+                "Advance shift management is disabled for this organization.",
+                code="ADVANCE_SHIFT_DISABLED",
+            )
+
     async def generate_rotation(
         self, *, org_id: int, actor_id: int, data: ShiftRotationRequest
     ) -> ShiftRotationResponse:
@@ -372,6 +739,8 @@ class ShiftService(BaseService):
         method returning a job handle. That method is deliberately isolated so a worker
         can call it unchanged; no job dependency is introduced now.
         """
+        await self._require_advance_shift_enabled(org_id)
+
         for shift_id in data.shift_sequence:
             if not await self.shifts.exists_in_org(org_id, shift_id):
                 raise ValidationException(
@@ -444,6 +813,221 @@ class ShiftService(BaseService):
         return generated
 
     # =====================================================================
+    # Roster / shift calendar (contract §8)
+    # =====================================================================
+    async def get_roster(self, *, org_id: int, query: RosterQuery) -> RosterListResponse:
+        """Org shift calendar over a date range or month (contract #20)."""
+        date_from, date_to = self._resolve_range(query)
+
+        employee_ids: list[int] | None = None
+        if query.branch_id is not None or query.department_id is not None:
+            # Resolve branch/department scope to employee ids via the Employee
+            # module's repository (module boundary: roster does not join employees).
+            scoped = await self._all_employees_by_filter(
+                org_id, branch_id=query.branch_id, department_id=query.department_id
+            )
+            employee_ids = [employee.employee_id for employee in scoped]
+            if not employee_ids:
+                return RosterListResponse.build(
+                    items=[], page=query.page, page_size=query.page_size, total_records=0
+                )
+
+        rows = await self.rosters.search_range(
+            org_id,
+            date_from,
+            date_to,
+            employee_id=query.employee_id,
+            shift_id=query.shift_id,
+            employee_ids=employee_ids,
+            page=query.page,
+            page_size=query.page_size,
+        )
+        total = await self.rosters.search_range_count(
+            org_id,
+            date_from,
+            date_to,
+            employee_id=query.employee_id,
+            shift_id=query.shift_id,
+            employee_ids=employee_ids,
+        )
+        items = [RosterEntrySchema.model_validate(row) for row in rows]
+        return RosterListResponse.build(
+            items=items, page=query.page, page_size=query.page_size, total_records=total
+        )
+
+    async def get_employee_roster(
+        self, *, org_id: int, employee_id: int, query: RosterRangeQuery
+    ) -> RosterListResponse:
+        """One employee's shift calendar over a date range or month (contract #21)."""
+        await self._require_employee(org_id, employee_id)
+        date_from, date_to = self._resolve_range(query)
+        rows = await self.rosters.list_for_employee_range(
+            org_id, employee_id, date_from, date_to
+        )
+        items = [RosterEntrySchema.model_validate(row) for row in rows]
+        return RosterListResponse.build(
+            items=items, page=1, page_size=max(len(items), 1), total_records=len(items)
+        )
+
+    async def upsert_roster_entry(
+        self, *, org_id: int, actor_id: int, data: RosterUpsertRequest
+    ) -> RosterUpsertResult:
+        """Upsert one roster entry on ``(employee_id, roster_date)`` (contract #22)."""
+        await self._require_employee(org_id, data.employee_id)
+        if data.shift_id is not None:
+            await self._require_shift(org_id, data.shift_id)
+
+        async with self.transaction():
+            row, created = await self._write_roster_entry(org_id, actor_id, data)
+            await self._audit(
+                org_id=org_id,
+                actor_id=actor_id,
+                action_type=ActionType.INSERT if created else ActionType.UPDATE,
+                title="Roster entry set",
+                description=(
+                    f"{'Created' if created else 'Updated'} roster entry for "
+                    f"{data.roster_date.isoformat()}."
+                ),
+                employee_id=data.employee_id,
+            )
+        return RosterUpsertResult(created=created, entry=RosterEntrySchema.model_validate(row))
+
+    async def bulk_set_roster(
+        self, *, org_id: int, actor_id: int, data: RosterBulkRequest
+    ) -> RosterBulkResponse:
+        """Upsert many roster entries with per-item results (contract #23)."""
+        results: list[RosterBulkItemResult] = []
+        created_count = updated_count = 0
+        async with self.transaction():
+            for entry in data.entries:
+                employee = await self.employees.get_active_by_id(entry.employee_id, org_id)
+                if employee is None:
+                    results.append(
+                        RosterBulkItemResult(
+                            employee_id=entry.employee_id,
+                            roster_date=entry.roster_date,
+                            status="skipped",
+                            reason="Employee not found.",
+                        )
+                    )
+                    continue
+                if entry.shift_id is not None and not await self.shifts.exists_in_org(
+                    org_id, entry.shift_id
+                ):
+                    results.append(
+                        RosterBulkItemResult(
+                            employee_id=entry.employee_id,
+                            roster_date=entry.roster_date,
+                            status="skipped",
+                            reason="Shift not found.",
+                        )
+                    )
+                    continue
+                row, created = await self._write_roster_entry(org_id, actor_id, entry)
+                created_count += int(created)
+                updated_count += int(not created)
+                results.append(
+                    RosterBulkItemResult(
+                        employee_id=entry.employee_id,
+                        roster_date=entry.roster_date,
+                        status="created" if created else "updated",
+                        roster_id=row.roster_id,
+                    )
+                )
+            await self._audit(
+                org_id=org_id,
+                actor_id=actor_id,
+                action_type=ActionType.BULK_ASSIGN,
+                title="Roster bulk set",
+                description=(
+                    f"Bulk roster set: {created_count} created, {updated_count} updated, "
+                    f"{len(results) - created_count - updated_count} skipped."
+                ),
+            )
+        return RosterBulkResponse(
+            created_count=created_count,
+            updated_count=updated_count,
+            skipped_count=len(results) - created_count - updated_count,
+            results=results,
+        )
+
+    async def _write_roster_entry(
+        self, org_id: int, actor_id: int, data: RosterUpsertRequest
+    ):
+        """Insert-or-update the ``(employee_id, roster_date)`` roster row (validated caller)."""
+        existing = await self.rosters.get_for_employee_date(data.employee_id, data.roster_date)
+        if existing is not None:
+            row = await self.rosters.update(
+                existing,
+                {
+                    "shift_id": data.shift_id,
+                    "is_week_off": data.is_week_off,
+                    "updated_by": actor_id,
+                },
+            )
+            return row, False
+        row = await self.rosters.create(
+            {
+                "org_id": org_id,
+                "employee_id": data.employee_id,
+                "roster_date": data.roster_date,
+                "shift_id": data.shift_id,
+                "is_week_off": data.is_week_off,
+                "created_by": actor_id,
+                "updated_by": actor_id,
+            }
+        )
+        return row, True
+
+    async def update_roster_entry(
+        self, *, org_id: int, actor_id: int, roster_id: int, data: RosterUpdateRequest
+    ) -> RosterEntrySchema:
+        """Patch a roster entry's ``shift_id`` / ``is_week_off`` (contract #24)."""
+        row = await self.rosters.get_by_id_in_org(roster_id, org_id)
+        if row is None:
+            raise RosterNotFoundException()
+
+        updates = data.model_dump(exclude_unset=True)
+        new_shift = updates.get("shift_id", row.shift_id)
+        new_off = updates.get("is_week_off", row.is_week_off)
+        if new_off and updates.get("shift_id") is not None:
+            raise ValidationException("A week-off roster entry cannot carry a shift.")
+        if new_off:
+            updates["shift_id"] = None  # week-off entry excludes a shift (contract §8)
+        elif new_shift is not None and new_shift != row.shift_id:
+            await self._require_shift(org_id, new_shift)
+
+        async with self.transaction():
+            await self.rosters.update(row, {**updates, "updated_by": actor_id})
+            await self._audit(
+                org_id=org_id,
+                actor_id=actor_id,
+                action_type=ActionType.UPDATE,
+                title="Roster entry updated",
+                description=f"Updated roster entry #{roster_id}.",
+                employee_id=row.employee_id,
+            )
+        return RosterEntrySchema.model_validate(row)
+
+    async def delete_roster_entry(
+        self, *, org_id: int, actor_id: int, roster_id: int
+    ) -> None:
+        """Hard-delete a roster entry (contract #25 — no soft-delete on this table)."""
+        row = await self.rosters.get_by_id_in_org(roster_id, org_id)
+        if row is None:
+            raise RosterNotFoundException()
+        async with self.transaction():
+            await self.rosters.delete(row)
+            await self._audit(
+                org_id=org_id,
+                actor_id=actor_id,
+                action_type=ActionType.DELETE,
+                title="Roster entry deleted",
+                description=f"Deleted roster entry #{roster_id}.",
+                employee_id=row.employee_id,
+            )
+
+    # =====================================================================
     # Weekly offs
     # =====================================================================
     async def get_weekly_offs(
@@ -486,7 +1070,9 @@ class ShiftService(BaseService):
                     actor_id=actor_id,
                     action_type=ActionType.ASSIGN,
                     title="Weekly-off updated",
-                    description=f"Set weekday {int(data.day_of_week)} to {data.weekoff_type.value}.",
+                    description=(
+                        f"Set weekday {int(data.day_of_week)} to {data.weekoff_type.value}."
+                    ),
                     employee_id=data.employee_id,
                 )
                 return WeeklyOffSchema.model_validate(row)
@@ -526,8 +1112,201 @@ class ShiftService(BaseService):
             return WeeklyOffSchema.model_validate(created[0])
 
     # =====================================================================
+    # Weekly offs — contract paths (§6: /employees/{employee_id}/weekoffs)
+    # =====================================================================
+    async def list_weekoffs(
+        self, *, org_id: int, employee_id: int, include_history: bool = False
+    ) -> WeeklyOffListResponse:
+        """An employee's current weekly-off config; optionally superseded rows too (#11)."""
+        await self._require_employee(org_id, employee_id)
+        rows = await self.weekoffs.list_for_employee(
+            employee_id, active_only=not include_history
+        )
+        items = [WeeklyOffSchema.model_validate(row) for row in rows]
+        return WeeklyOffListResponse.build(
+            items=items, page=1, page_size=max(len(items), 1), total_records=len(items)
+        )
+
+    async def configure_weekoffs(
+        self, *, org_id: int, actor_id: int, employee_id: int, data: WeekoffConfigureRequest
+    ) -> WeeklyOffListResponse:
+        """Set/replace the employee's current weekly-off configuration (contract #12).
+
+        Prior *current* rows (``effective_to IS NULL``) are superseded by closing
+        their ``effective_to`` — for a re-specified weekday the day before the new
+        row's ``effective_from``, and for weekdays dropped from the config the day
+        before today — preserving the partial-unique current-row invariant.
+        """
+        employee = await self._require_employee(org_id, employee_id)
+
+        seen: set[int] = set()
+        for item in data.weekoffs:
+            day = int(item.day_of_week)
+            if day in seen:
+                raise WeekoffDayExistsException(
+                    "The request repeats a day_of_week; supply each weekday at most once."
+                )
+            seen.add(day)
+
+        default_effective = utcnow().date()
+        current = await self.weekoffs.list_for_employee(employee_id, active_only=True)
+        current_by_day = {row.day_of_week: row for row in current}
+
+        created: list = []
+        async with self.transaction():
+            for item in data.weekoffs:
+                effective_from = item.effective_from or default_effective
+                existing = current_by_day.pop(int(item.day_of_week), None)
+                if existing is not None:
+                    await self.weekoffs.update(
+                        existing, {"effective_to": effective_from - timedelta(days=1)}
+                    )
+                created.append(
+                    await self.weekoffs.create(
+                        self._weekoff_item_payload(actor_id, employee_id, item, effective_from)
+                    )
+                )
+            # Full replace: close current rows for weekdays not re-specified.
+            await self.weekoffs.close_by_ids(
+                [row.weekoff_id for row in current_by_day.values()],
+                default_effective - timedelta(days=1),
+            )
+            await self._audit(
+                org_id=org_id,
+                actor_id=actor_id,
+                action_type=ActionType.UPDATE,
+                title="Weekly-off configured",
+                description=(
+                    f"Configured {len(created)} weekday rule(s) for "
+                    f"'{employee.employee_name}'."
+                ),
+                employee_id=employee_id,
+                employee_name=employee.employee_name,
+            )
+        items = [WeeklyOffSchema.model_validate(row) for row in created]
+        return WeeklyOffListResponse.build(
+            items=items, page=1, page_size=max(len(items), 1), total_records=len(items)
+        )
+
+    async def update_weekoff(
+        self,
+        *,
+        org_id: int,
+        actor_id: int,
+        employee_id: int,
+        weekoff_id: int,
+        data: WeekoffPatchRequest,
+    ) -> WeeklyOffSchema:
+        """Patch one weekly-off row's type / occurrence flags / ``effective_to`` (#13)."""
+        await self._require_employee(org_id, employee_id)
+        row = await self.weekoffs.get_by_id_for_employee(weekoff_id, employee_id)
+        if row is None:
+            raise WeekoffNotFoundException()
+
+        updates = data.model_dump(exclude_unset=True)
+        if updates.get("weekoff_type") is not None:
+            updates["weekoff_type"] = WeekoffType(updates["weekoff_type"]).value
+
+        if "effective_to" in updates:
+            new_to = updates["effective_to"]
+            if (
+                new_to is not None
+                and row.effective_from is not None
+                and new_to < row.effective_from
+            ):
+                raise ValidationException("effective_to must be on or after effective_from.")
+            if new_to is None and row.effective_to is not None:
+                # Re-opening this row must not violate the one-current-row-per-weekday
+                # partial unique invariant.
+                if await self.weekoffs.exists_active_for_day(
+                    employee_id, row.day_of_week, exclude_weekoff_id=weekoff_id
+                ):
+                    raise WeekoffDayExistsException()
+
+        async with self.transaction():
+            if updates:
+                await self.weekoffs.update(row, {**updates, "updated_by": actor_id})
+            await self._audit(
+                org_id=org_id,
+                actor_id=actor_id,
+                action_type=ActionType.UPDATE,
+                title="Weekly-off updated",
+                description=f"Updated weekly-off #{weekoff_id} (weekday {row.day_of_week}).",
+                employee_id=employee_id,
+            )
+        return WeeklyOffSchema.model_validate(row)
+
+    @staticmethod
+    def _weekoff_item_payload(
+        actor_id: int, employee_id: int, item: WeekoffItemInput, effective_from: date
+    ) -> dict:
+        """Build an ``employee_weekoffs`` insert payload from a configure item (#12)."""
+        return {
+            "employee_id": employee_id,
+            "day_of_week": int(item.day_of_week),
+            "weekoff_type": item.weekoff_type.value,
+            "occurrence_1st": item.occurrence_1st,
+            "occurrence_2nd": item.occurrence_2nd,
+            "occurrence_3rd": item.occurrence_3rd,
+            "occurrence_4th": item.occurrence_4th,
+            "occurrence_5th": item.occurrence_5th,
+            "effective_from": effective_from,
+            "effective_to": item.effective_to,
+            "updated_by": actor_id,
+        }
+
+    # =====================================================================
     # Internal helpers
     # =====================================================================
+    async def _require_shift(self, org_id: int, shift_id: int):
+        """Return the active shift or raise ``SHIFT_NOT_FOUND`` (contract code)."""
+        shift = await self.shifts.get_active_by_id(shift_id, org_id)
+        if shift is None:
+            raise ShiftNotFoundException()
+        return shift
+
+    async def _require_employee(self, org_id: int, employee_id: int):
+        """Cross-module: return the active employee or raise ``EMPLOYEE_NOT_FOUND``."""
+        employee = await self.employees.get_active_by_id(employee_id, org_id)
+        if employee is None:
+            raise EmployeeNotFoundException()
+        return employee
+
+    @staticmethod
+    def _validate_timing_set(shift, timings: list[ShiftDayTimingInput]) -> None:
+        """Enforce the contract §5 timing-set rules for a wholesale replace.
+
+        Uniform shift ⇒ exactly one timing with ``day_of_week`` null; per-day shift
+        ⇒ every timing names a weekday, each at most once (409 on a duplicate).
+        """
+        days = [timing.day_of_week for timing in timings]
+        if shift.is_uniform_time:
+            if len(timings) != 1 or days[0] is not None:
+                raise ValidationException(
+                    "A uniform-time shift requires exactly one timing with day_of_week null."
+                )
+            return
+        seen: set[int] = set()
+        for day in days:
+            if day is None:
+                raise ValidationException(
+                    "A per-day shift requires day_of_week on every timing."
+                )
+            if int(day) in seen:
+                raise TimingDayDuplicateException()
+            seen.add(int(day))
+
+    @staticmethod
+    def _resolve_range(query: RosterRangeQuery) -> tuple[date, date]:
+        """Resolve the validated range form to concrete ``(date_from, date_to)`` dates."""
+        if query.month is not None:
+            year, month = (int(part) for part in query.month.split("-"))
+            return date(year, month, 1), date(
+                year, month, calendar.monthrange(year, month)[1]
+            )
+        assert query.date_from is not None and query.date_to is not None  # schema-validated
+        return query.date_from, query.date_to
+
     async def _get_active_shift(self, org_id: int, shift_id: int):
         """Return the active shift or raise :class:`NotFoundException`."""
         shift = await self.shifts.get_active_by_id(shift_id, org_id)

@@ -48,7 +48,6 @@ from app.modules.shift.constants import (
 from app.shared.base.schema import BaseSchema
 from app.shared.schemas.pagination import PaginatedResponse, PaginationRequest
 
-
 # ===========================================================================
 # Shift day timings (nested in shift create / detail)
 # ===========================================================================
@@ -75,7 +74,7 @@ class ShiftDayTimingInput(BaseSchema):
     )
 
     @model_validator(mode="after")
-    def _validate_times(self) -> "ShiftDayTimingInput":
+    def _validate_times(self) -> ShiftDayTimingInput:
         """Enforce the contract's shift-time rules (422 on violation)."""
         if self.start_time is not None and self.end_time is not None:
             if self.end_time <= self.start_time and not self.crosses_midnight:
@@ -102,6 +101,47 @@ class ShiftDayTimingSchema(BaseSchema):
     break_end_time: time | None = None
     duration_minutes: int | None = None
     is_working_day: bool = True
+
+
+class ShiftTimingsReplaceRequest(BaseSchema):
+    """Body for ``PUT /shifts/{shift_id}/timings`` — replaces the full timing set."""
+
+    timings: list[ShiftDayTimingInput] = Field(..., min_length=1)
+
+
+class ShiftDayTimingUpdateRequest(BaseSchema):
+    """Body for ``PATCH /shifts/{shift_id}/timings/{timing_id}`` (partial update).
+
+    ``crosses_midnight`` is transport-only (no column): it permits an ``end_time``
+    at/earlier than ``start_time`` when both are supplied in the same patch.
+    """
+
+    day_of_week: DayOfWeek | None = None
+    start_time: time | None = None
+    end_time: time | None = None
+    break_start_time: time | None = None
+    break_end_time: time | None = None
+    duration_minutes: int | None = Field(default=None, ge=0)
+    is_working_day: bool | None = None
+    crosses_midnight: bool = Field(
+        default=False, description="Transport-only: allow end_time ≤ start_time (overnight shift)."
+    )
+
+    @model_validator(mode="after")
+    def _validate_times(self) -> ShiftDayTimingUpdateRequest:
+        """Enforce the contract's shift-time rules when both ends are patched together."""
+        if self.start_time is not None and self.end_time is not None:
+            if self.end_time <= self.start_time and not self.crosses_midnight:
+                raise ValueError(
+                    "end_time must be after start_time unless crosses_midnight is true"
+                )
+        if (
+            self.break_start_time is not None
+            and self.break_end_time is not None
+            and self.break_end_time <= self.break_start_time
+        ):
+            raise ValueError("break_end_time must be after break_start_time")
+        return self
 
 
 # ===========================================================================
@@ -209,7 +249,7 @@ class ShiftAssignRequest(BaseSchema):
     effective_to: date | None = None
 
     @model_validator(mode="after")
-    def _validate_range(self) -> "ShiftAssignRequest":
+    def _validate_range(self) -> ShiftAssignRequest:
         """``effective_to`` (when given) must not precede ``effective_from``."""
         if self.effective_to is not None and self.effective_to < self.effective_from:
             raise ValueError("effective_to must be on or after effective_from")
@@ -231,12 +271,63 @@ class ShiftAssignmentSchema(BaseSchema):
 
 
 class ShiftAssignmentQuery(PaginationRequest):
-    """Query parameters for ``GET /shift-assignments``."""
+    """Query parameters for ``GET /shift-assignments`` (contract §7 #16)."""
 
     employee_id: int | None = Field(default=None, description="Filter by employee.")
+    shift_id: int | None = Field(default=None, description="Filter by shift.")
+    active_on: date | None = Field(
+        default=None, description="Return assignments whose effective range covers this date."
+    )
     on_date: date | None = Field(
         default=None, alias="date", description="Resolve the assignment effective on this date."
     )
+
+
+class ShiftAssignmentCreateRequest(ShiftAssignRequest):
+    """Body for ``POST /shift-assignments`` (contract #14 — ``shift_id`` in the body)."""
+
+    shift_id: int
+
+
+class ShiftAssignmentBulkRequest(BaseSchema):
+    """Body for ``POST /shift-assignments/bulk`` (contract #15)."""
+
+    employee_ids: list[int] = Field(..., min_length=1)
+    shift_id: int
+    effective_from: date
+    effective_to: date | None = None
+
+    @model_validator(mode="after")
+    def _validate_range(self) -> ShiftAssignmentBulkRequest:
+        """``effective_to`` (when given) must not precede ``effective_from``."""
+        if self.effective_to is not None and self.effective_to < self.effective_from:
+            raise ValueError("effective_to must be on or after effective_from")
+        return self
+
+
+class ShiftAssignmentUpdateRequest(BaseSchema):
+    """Body for ``PATCH /shift-assignments/{assignment_id}`` (contract #17)."""
+
+    shift_id: int | None = None
+    effective_from: date | None = None
+    effective_to: date | None = None
+
+
+class ShiftAssignmentBulkItemResult(BaseSchema):
+    """Per-employee outcome of a bulk assignment (contract #15)."""
+
+    employee_id: int
+    status: str = Field(..., description="'created' or 'skipped'.")
+    reason: str | None = None
+    assignment_id: int | None = None
+
+
+class ShiftAssignmentBulkResponse(BaseSchema):
+    """Response for ``POST /shift-assignments/bulk`` — per-item results."""
+
+    created_count: int = 0
+    skipped_count: int = 0
+    results: list[ShiftAssignmentBulkItemResult] = Field(default_factory=list)
 
 
 # ===========================================================================
@@ -279,6 +370,97 @@ class RosterEntrySchema(BaseSchema):
     updated_by: int | None = None
     created_at: datetime
     updated_at: datetime
+
+
+class RosterRangeQuery(PaginationRequest):
+    """Date-range selector shared by the roster calendar reads (contract #20/#21).
+
+    Exactly one range form is required: ``month`` (``YYYY-MM``) **or** the
+    ``date_from`` + ``date_to`` pair.
+    """
+
+    date_from: date | None = None
+    date_to: date | None = None
+    month: str | None = Field(
+        default=None, pattern=r"^\d{4}-(0[1-9]|1[0-2])$", description="Calendar month (YYYY-MM)."
+    )
+
+    @model_validator(mode="after")
+    def _one_range_form(self) -> RosterRangeQuery:
+        """Require ``month`` XOR (``date_from`` + ``date_to``), with a valid order."""
+        has_pair = self.date_from is not None and self.date_to is not None
+        has_partial_pair = (self.date_from is None) != (self.date_to is None)
+        if self.month is not None and (self.date_from is not None or self.date_to is not None):
+            raise ValueError("supply either month or date_from/date_to, not both")
+        if self.month is None and (has_partial_pair or not has_pair):
+            raise ValueError("supply month (YYYY-MM) or both date_from and date_to")
+        if has_pair and self.date_to < self.date_from:
+            raise ValueError("date_to must be on or after date_from")
+        return self
+
+
+class RosterQuery(RosterRangeQuery):
+    """Query parameters for ``GET /roster`` (org shift calendar, contract #20)."""
+
+    branch_id: int | None = None
+    department_id: int | None = None
+    employee_id: int | None = None
+    shift_id: int | None = None
+
+
+class RosterUpsertRequest(BaseSchema):
+    """Body for ``PUT /roster`` (contract #22) and each item of ``POST /roster/bulk``."""
+
+    employee_id: int
+    roster_date: date
+    shift_id: int | None = None
+    is_week_off: bool = False
+
+    @model_validator(mode="after")
+    def _weekoff_excludes_shift(self) -> RosterUpsertRequest:
+        """A week-off entry must not also carry a shift (contract §8)."""
+        if self.is_week_off and self.shift_id is not None:
+            raise ValueError("a week-off roster entry cannot carry a shift_id")
+        return self
+
+
+class RosterBulkRequest(BaseSchema):
+    """Body for ``POST /roster/bulk`` (contract #23)."""
+
+    entries: list[RosterUpsertRequest] = Field(..., min_length=1)
+
+
+class RosterUpdateRequest(BaseSchema):
+    """Body for ``PATCH /roster/{roster_id}`` (contract #24)."""
+
+    shift_id: int | None = None
+    is_week_off: bool | None = None
+
+
+class RosterUpsertResult(BaseSchema):
+    """Result of a roster upsert: the entry plus whether it was created or updated."""
+
+    created: bool
+    entry: RosterEntrySchema
+
+
+class RosterBulkItemResult(BaseSchema):
+    """Per-entry outcome of ``POST /roster/bulk``."""
+
+    employee_id: int
+    roster_date: date
+    status: str = Field(..., description="'created', 'updated' or 'skipped'.")
+    reason: str | None = None
+    roster_id: int | None = None
+
+
+class RosterBulkResponse(BaseSchema):
+    """Response for ``POST /roster/bulk`` — per-item results."""
+
+    created_count: int = 0
+    updated_count: int = 0
+    skipped_count: int = 0
+    results: list[RosterBulkItemResult] = Field(default_factory=list)
 
 
 class ShiftRotationScope(BaseSchema):
@@ -350,7 +532,7 @@ class WeeklyOffUpdateRequest(BaseSchema):
     effective_to: date | None = None
 
     @model_validator(mode="after")
-    def _exactly_one_target(self) -> "WeeklyOffUpdateRequest":
+    def _exactly_one_target(self) -> WeeklyOffUpdateRequest:
         """Require exactly one of ``employee_id`` / ``department_id``."""
         if (self.employee_id is None) == (self.department_id is None):
             raise ValueError("exactly one of employee_id or department_id is required")
@@ -364,11 +546,57 @@ class WeeklyOffQuery(BaseSchema):
     department_id: int | None = None
 
     @model_validator(mode="after")
-    def _exactly_one_target(self) -> "WeeklyOffQuery":
+    def _exactly_one_target(self) -> WeeklyOffQuery:
         """Require exactly one of ``employee_id`` / ``department_id``."""
         if (self.employee_id is None) == (self.department_id is None):
             raise ValueError("exactly one of employee_id or department_id is required")
         return self
+
+
+class WeekoffItemInput(BaseSchema):
+    """One weekday's configuration inside ``PUT /employees/{id}/weekoffs`` (contract #12)."""
+
+    day_of_week: DayOfWeek = Field(..., description="0=Sunday … 6=Saturday.")
+    weekoff_type: WeekoffType = WeekoffType.WORKING
+    occurrence_1st: bool = True
+    occurrence_2nd: bool = True
+    occurrence_3rd: bool = True
+    occurrence_4th: bool = True
+    occurrence_5th: bool = True
+    effective_from: date | None = None
+    effective_to: date | None = None
+
+    @model_validator(mode="after")
+    def _validate_range(self) -> WeekoffItemInput:
+        """``effective_to`` (when given) must not precede ``effective_from``."""
+        if (
+            self.effective_from is not None
+            and self.effective_to is not None
+            and self.effective_to < self.effective_from
+        ):
+            raise ValueError("effective_to must be on or after effective_from")
+        return self
+
+
+class WeekoffConfigureRequest(BaseSchema):
+    """Body for ``PUT /employees/{employee_id}/weekoffs`` (contract #12 — bulk replace)."""
+
+    weekoffs: list[WeekoffItemInput] = Field(..., min_length=1)
+
+
+class WeekoffPatchRequest(BaseSchema):
+    """Body for ``PATCH /employees/{employee_id}/weekoffs/{weekoff_id}`` (contract #13).
+
+    Patches a single weekday's ``weekoff_type`` / occurrence flags / ``effective_to``.
+    """
+
+    weekoff_type: WeekoffType | None = None
+    occurrence_1st: bool | None = None
+    occurrence_2nd: bool | None = None
+    occurrence_3rd: bool | None = None
+    occurrence_4th: bool | None = None
+    occurrence_5th: bool | None = None
+    effective_to: date | None = None
 
 
 class WeeklyOffSchema(BaseSchema):
@@ -404,13 +632,19 @@ class ShiftAssignmentListResponse(PaginatedResponse[ShiftAssignmentSchema]):
 
 
 class WeeklyOffListResponse(PaginatedResponse[WeeklyOffSchema]):
-    """Paginated ``GET /weekly-offs`` result."""
+    """Paginated weekly-off configuration result (``GET /employees/{id}/weekoffs``)."""
+
+
+class RosterListResponse(PaginatedResponse[RosterEntrySchema]):
+    """Paginated roster calendar result (``GET /roster``, ``GET /employees/{id}/roster``)."""
 
 
 __all__ = [
     # day timings
     "ShiftDayTimingInput",
     "ShiftDayTimingSchema",
+    "ShiftTimingsReplaceRequest",
+    "ShiftDayTimingUpdateRequest",
     # shift requests
     "ShiftCreateRequest",
     "ShiftUpdateRequest",
@@ -420,6 +654,11 @@ __all__ = [
     "ShiftDetailSchema",
     # assignment
     "ShiftAssignRequest",
+    "ShiftAssignmentCreateRequest",
+    "ShiftAssignmentBulkRequest",
+    "ShiftAssignmentUpdateRequest",
+    "ShiftAssignmentBulkItemResult",
+    "ShiftAssignmentBulkResponse",
     "ShiftAssignmentSchema",
     "ShiftAssignmentQuery",
     # resolve
@@ -427,10 +666,21 @@ __all__ = [
     "ShiftResolveResponse",
     # roster / rotation
     "RosterEntrySchema",
+    "RosterRangeQuery",
+    "RosterQuery",
+    "RosterUpsertRequest",
+    "RosterBulkRequest",
+    "RosterUpdateRequest",
+    "RosterUpsertResult",
+    "RosterBulkItemResult",
+    "RosterBulkResponse",
     "ShiftRotationScope",
     "ShiftRotationRequest",
     "ShiftRotationResponse",
     # weekly offs
+    "WeekoffItemInput",
+    "WeekoffConfigureRequest",
+    "WeekoffPatchRequest",
     "WeeklyOffUpdateRequest",
     "WeeklyOffQuery",
     "WeeklyOffSchema",
@@ -438,4 +688,5 @@ __all__ = [
     "ShiftListResponse",
     "ShiftAssignmentListResponse",
     "WeeklyOffListResponse",
+    "RosterListResponse",
 ]

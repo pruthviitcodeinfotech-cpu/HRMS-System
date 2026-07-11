@@ -22,12 +22,18 @@ from app.core.exceptions.base import (
     ValidationException,
 )
 from app.modules.employee.schemas import (
+    EmployeeBankDetailCreateRequest,
+    EmployeeBankDetailUpdateRequest,
     EmployeeCreateRequest,
     EmployeeDocumentCreateRequest,
     EmployeeExitRequest,
     EmployeeListQuery,
     EmployeePhotoUploadRequest,
+    EmployeePromoteRequest,
     EmployeeRehireRequest,
+    EmployeeTagCreateRequest,
+    EmployeeTerminateRequest,
+    EmployeeTransferRequest,
     EmployeeUpdateRequest,
 )
 
@@ -111,6 +117,10 @@ def employee_service():
         "users",
         "status_history",
         "documents",
+        "bank_details",
+        "emergency_contacts",
+        "references",
+        "tags",
         "audit",
     ):
         setattr(svc, attr, AsyncMock())
@@ -522,3 +532,257 @@ async def test_exit_invalid_dates_service_guard(employee_service) -> None:
     with pytest.raises(ValidationException) as exc:
         await employee_service.exit_employee(org_id=1, actor_id=9, employee_id=1, data=data)
     assert exc.value.code == "invalid_exit_dates"
+
+
+# ===========================================================================
+# Status lifecycle — terminate (#31) and the terminal-status rule (§9)
+# ===========================================================================
+async def test_activate_terminated_employee_conflict_409(employee_service) -> None:
+    """`terminated` is terminal: terminated → active via activate is a 409."""
+    employee_service.employees.get_active_by_id.return_value = _employee(
+        employment_status="terminated"
+    )
+    with pytest.raises(ConflictException) as exc:
+        await employee_service.activate_employee(org_id=1, actor_id=9, employee_id=1)
+    assert exc.value.code == "EMPLOYEE_ALREADY_TERMINATED"
+    assert exc.value.status_code == 409
+    employee_service.employees.update.assert_not_awaited()
+    employee_service.status_history.create.assert_not_awaited()
+
+
+async def test_deactivate_terminated_employee_conflict_409(employee_service) -> None:
+    """`terminated` is terminal: terminated → inactive is also rejected."""
+    employee_service.employees.get_active_by_id.return_value = _employee(
+        employment_status="terminated"
+    )
+    with pytest.raises(ConflictException) as exc:
+        await employee_service.deactivate_employee(org_id=1, actor_id=9, employee_id=1)
+    assert exc.value.code == "EMPLOYEE_ALREADY_TERMINATED"
+
+
+async def test_activate_records_effective_date_in_history(employee_service) -> None:
+    """Activate forwards the requested effective date into the history row."""
+    employee_service.employees.get_active_by_id.return_value = _employee(
+        employment_status="inactive"
+    )
+    await employee_service.activate_employee(
+        org_id=1, actor_id=9, employee_id=1, effective_date=date(2026, 4, 1), reason="rejoined"
+    )
+    history = employee_service.status_history.create.await_args.args[0]
+    assert history["effective_date"] == date(2026, 4, 1)
+    assert history["previous_status"] == "inactive"
+    assert history["new_status"] == "active"
+    assert history["reason"] == "rejoined"
+
+
+async def test_terminate_employee_success(employee_service) -> None:
+    """Terminate sets status + date_of_leaving and appends the history row."""
+    data = EmployeeTerminateRequest(
+        effective_date=date(2026, 5, 1), date_of_leaving=date(2026, 5, 15), reason="misconduct"
+    )
+    await employee_service.terminate_employee(org_id=1, actor_id=9, employee_id=1, data=data)
+    updates = employee_service.employees.update.await_args.args[1]
+    assert updates["employment_status"] == "terminated"
+    assert updates["date_of_leaving"] == date(2026, 5, 15)
+    history = employee_service.status_history.create.await_args.args[0]
+    assert history["previous_status"] == "active"
+    assert history["new_status"] == "terminated"
+    assert history["effective_date"] == date(2026, 5, 1)
+    employee_service.audit.record.assert_awaited_once()
+
+
+async def test_terminate_defaults_date_of_leaving_to_effective_date(employee_service) -> None:
+    data = EmployeeTerminateRequest(effective_date=date(2026, 5, 1))
+    await employee_service.terminate_employee(org_id=1, actor_id=9, employee_id=1, data=data)
+    updates = employee_service.employees.update.await_args.args[1]
+    assert updates["date_of_leaving"] == date(2026, 5, 1)
+
+
+async def test_terminate_already_terminated_conflict_409(employee_service) -> None:
+    employee_service.employees.get_active_by_id.return_value = _employee(
+        employment_status="terminated"
+    )
+    data = EmployeeTerminateRequest(effective_date=date(2026, 5, 1))
+    with pytest.raises(ConflictException) as exc:
+        await employee_service.terminate_employee(org_id=1, actor_id=9, employee_id=1, data=data)
+    assert exc.value.code == "EMPLOYEE_ALREADY_TERMINATED"
+    assert exc.value.status_code == 409
+
+
+# ===========================================================================
+# Transfer (#32) / Promote (#33)
+# ===========================================================================
+async def test_transfer_employee_updates_fks_and_audits(employee_service) -> None:
+    data = EmployeeTransferRequest(
+        master_branch_id=5, dept_id=7, effective_date=date(2026, 4, 1), reason="restructure"
+    )
+    await employee_service.transfer_employee(org_id=1, actor_id=9, employee_id=1, data=data)
+    updates = employee_service.employees.update.await_args.args[1]
+    assert updates == {"master_branch_id": 5, "dept_id": 7}
+    # Context (reason / effective date) is captured in the Activity Log only (§9).
+    description = employee_service.audit.record.await_args.kwargs["description"]
+    assert "2026-04-01" in description
+    assert "restructure" in description
+    employee_service.status_history.create.assert_not_awaited()
+
+
+async def test_transfer_employee_unknown_branch_404(employee_service) -> None:
+    employee_service.branches.exists_active.return_value = False
+    data = EmployeeTransferRequest(master_branch_id=99)
+    with pytest.raises(NotFoundException) as exc:
+        await employee_service.transfer_employee(org_id=1, actor_id=9, employee_id=1, data=data)
+    assert exc.value.code == "BRANCH_NOT_FOUND"
+
+
+async def test_transfer_employee_unknown_department_404(employee_service) -> None:
+    employee_service.departments.exists_active.return_value = False
+    data = EmployeeTransferRequest(dept_id=99)
+    with pytest.raises(NotFoundException) as exc:
+        await employee_service.transfer_employee(org_id=1, actor_id=9, employee_id=1, data=data)
+    assert exc.value.code == "DEPARTMENT_NOT_FOUND"
+
+
+def test_transfer_request_requires_a_target() -> None:
+    with pytest.raises(ValueError):
+        EmployeeTransferRequest(reason="no targets")
+
+
+async def test_promote_employee_success(employee_service) -> None:
+    data = EmployeePromoteRequest(designation_id=3, monthly_salary=Decimal("60000"))
+    await employee_service.promote_employee(org_id=1, actor_id=9, employee_id=1, data=data)
+    updates = employee_service.employees.update.await_args.args[1]
+    assert updates == {"designation_id": 3, "monthly_salary": Decimal("60000")}
+    employee_service.audit.record.assert_awaited_once()
+
+
+async def test_promote_employee_salary_gated_out(employee_service) -> None:
+    """Without the salary permission the designation changes but pay does not."""
+    data = EmployeePromoteRequest(designation_id=3, monthly_salary=Decimal("60000"))
+    await employee_service.promote_employee(
+        org_id=1, actor_id=9, employee_id=1, data=data, can_set_salary=False
+    )
+    updates = employee_service.employees.update.await_args.args[1]
+    assert updates == {"designation_id": 3}
+
+
+async def test_promote_employee_unknown_designation_404(employee_service) -> None:
+    employee_service.designations.exists_active.return_value = False
+    data = EmployeePromoteRequest(designation_id=99)
+    with pytest.raises(NotFoundException) as exc:
+        await employee_service.promote_employee(org_id=1, actor_id=9, employee_id=1, data=data)
+    assert exc.value.code == "DESIGNATION_NOT_FOUND"
+
+
+# ===========================================================================
+# Bank details (§8.1)
+# ===========================================================================
+def _bank_row(**overrides: object) -> SimpleNamespace:
+    base: dict[str, object] = {
+        "bank_detail_id": 3,
+        "employee_id": 1,
+        "bank_name": "HDFC",
+        "bank_branch_name": "MG Road",
+        "account_number": "1234567890",
+        "ifsc_code": "HDFC0001234",
+        "is_primary": True,
+        "is_deleted": False,
+        "created_at": _NOW,
+        "updated_at": _NOW,
+    }
+    base.update(overrides)
+    return SimpleNamespace(**base)
+
+
+async def test_add_bank_detail_primary_demotes_existing(employee_service) -> None:
+    employee_service.bank_details.create.return_value = _bank_row()
+    data = EmployeeBankDetailCreateRequest(
+        bank_name="HDFC", account_number="1234567890", ifsc_code="HDFC0001234", is_primary=True
+    )
+    result = await employee_service.add_bank_detail(
+        org_id=1, actor_id=9, employee_id=1, data=data
+    )
+    assert result.bank_detail_id == 3
+    employee_service.bank_details.unset_primary.assert_awaited_once_with(1)
+    payload = employee_service.bank_details.create.await_args.args[0]
+    assert payload["employee_id"] == 1
+    assert payload["is_primary"] is True
+    employee_service.audit.record.assert_awaited_once()
+
+
+async def test_add_bank_detail_non_primary_keeps_existing_primary(employee_service) -> None:
+    employee_service.bank_details.create.return_value = _bank_row(is_primary=False)
+    data = EmployeeBankDetailCreateRequest(bank_name="HDFC", is_primary=False)
+    await employee_service.add_bank_detail(org_id=1, actor_id=9, employee_id=1, data=data)
+    employee_service.bank_details.unset_primary.assert_not_awaited()
+
+
+async def test_update_bank_detail_not_found_404(employee_service) -> None:
+    employee_service.bank_details.get_by_id_in_org.return_value = None
+    with pytest.raises(NotFoundException) as exc:
+        await employee_service.update_bank_detail(
+            org_id=1,
+            actor_id=9,
+            employee_id=1,
+            bank_detail_id=404,
+            data=EmployeeBankDetailUpdateRequest(bank_name="ICICI"),
+        )
+    assert exc.value.code == "BANK_DETAIL_NOT_FOUND"
+
+
+async def test_delete_bank_detail_is_soft(employee_service) -> None:
+    """Delete sets is_deleted=true (soft) rather than removing the row."""
+    row = _bank_row()
+    employee_service.bank_details.get_by_id_in_org.return_value = row
+    await employee_service.delete_bank_detail(
+        org_id=1, actor_id=9, employee_id=1, bank_detail_id=3
+    )
+    updates = employee_service.bank_details.update.await_args.args[1]
+    assert updates == {"is_deleted": True}
+    employee_service.bank_details.delete.assert_not_awaited()
+    employee_service.audit.record.assert_awaited_once()
+
+
+# ===========================================================================
+# Tags (§8.4 — hard delete) and status history (§8.5)
+# ===========================================================================
+async def test_delete_tag_is_hard(employee_service) -> None:
+    row = SimpleNamespace(tag_id=4, tag_label="Star", is_status_tag=False)
+    employee_service.tags.get_by_id_in_org.return_value = row
+    await employee_service.delete_tag(org_id=1, actor_id=9, employee_id=1, tag_id=4)
+    employee_service.tags.delete.assert_awaited_once_with(row)
+    employee_service.tags.update.assert_not_awaited()
+
+
+async def test_add_tag_stamps_creator(employee_service) -> None:
+    employee_service.tags.create.return_value = SimpleNamespace(
+        tag_id=4,
+        tag_label="Star",
+        tag_color="#ff0000",
+        is_status_tag=False,
+        created_by=9,
+        created_at=_NOW,
+        updated_at=_NOW,
+    )
+    data = EmployeeTagCreateRequest(tag_label="Star", tag_color="#ff0000")
+    result = await employee_service.add_tag(org_id=1, actor_id=9, employee_id=1, data=data)
+    assert result.created_by == 9
+    payload = employee_service.tags.create.await_args.args[0]
+    assert payload["created_by"] == 9
+
+
+async def test_list_status_history_scoped_to_employee(employee_service) -> None:
+    employee_service.status_history.list_for_employee.return_value = [
+        SimpleNamespace(
+            status_history_id=1,
+            previous_status=None,
+            new_status="active",
+            changed_by=9,
+            reason=None,
+            effective_date=date(2026, 1, 1),
+            created_at=_NOW,
+        )
+    ]
+    result = await employee_service.list_status_history(org_id=1, employee_id=1)
+    assert len(result) == 1
+    assert result[0].new_status == "active"
+    employee_service.status_history.list_for_employee.assert_awaited_once_with(1, 1)

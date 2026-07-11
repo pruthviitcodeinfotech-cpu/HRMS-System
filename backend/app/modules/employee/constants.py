@@ -8,10 +8,10 @@ architecture models these as VARCHAR columns with CHECK constraints, and that
 is preserved.
 """
 
-from enum import Enum
+from enum import StrEnum
 
 
-class EmploymentStatus(str, Enum):
+class EmploymentStatus(StrEnum):
     """employees.employment_status / employee_status_history.new_status."""
 
     ACTIVE = "active"
@@ -19,7 +19,7 @@ class EmploymentStatus(str, Enum):
     TERMINATED = "terminated"
 
 
-class Gender(str, Enum):
+class Gender(StrEnum):
     """employees.gender."""
 
     MALE = "Male"
@@ -27,7 +27,7 @@ class Gender(str, Enum):
     OTHER = "Other"
 
 
-class SalaryType(str, Enum):
+class SalaryType(StrEnum):
     """employees.salary_type."""
 
     MONTHLY = "Monthly"
@@ -35,7 +35,7 @@ class SalaryType(str, Enum):
     COMPLIANCE = "Compliance"
 
 
-class DocumentType(str, Enum):
+class DocumentType(StrEnum):
     """employee_documents.document_type."""
 
     AADHAR_CARD = "aadhar_card"
@@ -45,7 +45,7 @@ class DocumentType(str, Enum):
     OTHER = "other"
 
 
-class AttendanceMethod(str, Enum):
+class AttendanceMethod(StrEnum):
     """employee_attendance_permissions.attendance_method."""
 
     HARDWARE_DEVICE = "hardware_device"
@@ -53,14 +53,14 @@ class AttendanceMethod(str, Enum):
     BOTH = "both"
 
 
-class ImportType(str, Enum):
+class ImportType(StrEnum):
     """employee_import_logs.import_type."""
 
     CREATE = "create"
     UPDATE = "update"
 
 
-class ImportStatus(str, Enum):
+class ImportStatus(StrEnum):
     """employee_import_logs.status."""
 
     PENDING = "pending"
@@ -69,7 +69,7 @@ class ImportStatus(str, Enum):
     FAILED = "failed"
 
 
-class BiometricType(str, Enum):
+class BiometricType(StrEnum):
     """employee_biometrics.biometric_type.
 
     NOTE: the approved architecture lists these values but defines NO CHECK

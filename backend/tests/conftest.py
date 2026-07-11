@@ -19,7 +19,7 @@ router is included at the API prefix only for the test app instance.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Callable
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -117,7 +117,7 @@ def expired_token() -> str:
     """A correctly-signed but already-expired access token."""
     from jose import jwt
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     payload = {
         "sub": "1",
         "type": "access",
@@ -160,6 +160,7 @@ def service() -> object:
     svc = AuthService(AsyncMock())
     svc.users = AsyncMock()
     svc.sessions = AsyncMock()
+    svc.audit = AsyncMock()
     svc.users.get_template_permissions.return_value = []
     svc.users.get_custom_permissions.return_value = []
     svc.users.get_branch_ids.return_value = []
@@ -191,8 +192,10 @@ def rbac_service() -> object:
         "custom_perms",
         "branch_access",
         "dept_access",
+        "sessions",
     ):
         setattr(svc, attr, AsyncMock())
+    svc.audit = AsyncMock()
     svc.roles.permission_count.return_value = 0
     svc.roles.assigned_user_count.return_value = 0
     return svc
@@ -203,7 +206,7 @@ def make_user() -> Callable[..., SimpleNamespace]:
     """Factory for a stand-in ``users`` ORM row (all fields the schemas read)."""
 
     def _make(**overrides: object) -> SimpleNamespace:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         base = {
             "id": 1,
             "org_id": 1,
@@ -231,7 +234,7 @@ def make_role() -> Callable[..., SimpleNamespace]:
     """Factory for a stand-in ``rights_templates`` ORM row."""
 
     def _make(**overrides: object) -> SimpleNamespace:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         base = {
             "id": 1,
             "org_id": 1,

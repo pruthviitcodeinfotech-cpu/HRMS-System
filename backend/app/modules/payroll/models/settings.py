@@ -156,7 +156,7 @@ class EmployeePayrollGroupAssignment(Base):
         BigInteger,
         ForeignKey(
             "payroll_groups.id",
-            name="fk_employee_payroll_group_assignments_payroll_group_id_payroll_groups",
+            name="fk_emp_payroll_grp_assign_payroll_group_id_payroll_groups",
         ),
         nullable=False,
     )
@@ -172,7 +172,7 @@ class EmployeePayrollGroupAssignment(Base):
         BigInteger,
         ForeignKey(
             "payroll_groups.id",
-            name="fk_employee_payroll_group_assignments_previous_group_id_payroll_groups",
+            name="fk_emp_payroll_grp_assign_previous_group_id_payroll_groups",
         ),
     )
     created_at: Mapped[datetime] = mapped_column(

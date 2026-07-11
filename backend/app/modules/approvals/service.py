@@ -7,13 +7,12 @@ All database access is performed strictly via repositories.
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.constants.enums import SortOrder
-from app.core.exceptions.base import ConflictException, NotFoundException, AppException
+from app.core.exceptions.base import AppException, ConflictException, NotFoundException
 from app.modules.approvals.constants import ApprovalStatus, RequestType
 from app.modules.approvals.exceptions import (
     ApprovalAlreadyDecidedException,
@@ -24,8 +23,6 @@ from app.modules.approvals.exceptions import (
 )
 from app.modules.approvals.models import (
     ApprovalRequest,
-    AttendanceRegularizationRequest,
-    LoginResetRequest,
 )
 from app.modules.approvals.repository import (
     ApprovalRequestRepository,
@@ -42,10 +39,14 @@ from app.modules.leave.repository import (
     LeaveRequestRepository,
     LeaveSettingRepository,
 )
+from app.modules.notifications.constants import NotificationType
 from app.modules.rbac.repository import UserRepository
 from app.shared.base.service import BaseService
 from app.shared.schemas.pagination import PaginatedResponse
 from app.shared.utils.datetime import utcnow
+
+if TYPE_CHECKING:
+    from app.modules.notifications.service import NotificationService
 
 
 class ApprovalService(BaseService):
@@ -68,7 +69,47 @@ class ApprovalService(BaseService):
         # Audit Logger
         self.audit = AuditService(session)
 
+        # Cross-module notifier (constructed lazily — see _get_notifier).
+        self.notifications: NotificationService | None = None
+
     # --- Helpers & Validations -----------------------------------------------
+
+    def _get_notifier(self) -> NotificationService:
+        """Return the notifications service, importing lazily to avoid module-level coupling."""
+        if self.notifications is None:
+            from app.modules.notifications.service import NotificationService
+
+            self.notifications = NotificationService(self.session)
+        return self.notifications
+
+    async def _notify_requester_decision(
+        self, org_id: int, approval: ApprovalRequest, reviewer_id: int, decision: str
+    ) -> None:
+        """Notify the subject employee's linked user about the decision on their request.
+
+        Runs inside the caller's transaction so the notification commits atomically
+        with the decision. Employees without a linked user account are skipped
+        silently — a missing recipient must never block the approval itself.
+        """
+        notifier = self._get_notifier()
+        recipient_ids = await notifier.resolve_user_ids_for_employees(
+            org_id, [approval.employee_id]
+        )
+        if not recipient_ids:
+            return
+
+        request_label = str(approval.request_type).replace("_", " ")
+        await notifier.emit_system_notification(
+            org_id,
+            recipient_user_ids=recipient_ids,
+            title=f"Request {decision.capitalize()}",
+            message=f"Your {request_label} request was {decision}.",
+            notification_type=NotificationType.APPROVAL.value,
+            source_module="approvals",
+            source_entity_type="approval_request",
+            source_entity_id=approval.id,
+            created_by=reviewer_id,
+        )
 
     async def _validate_employee(self, org_id: int, employee_id: int) -> Employee:
         """Validate employee existence and active status in organization context."""
@@ -78,7 +119,7 @@ class ApprovalService(BaseService):
         return employee
 
     async def _check_self_approval(self, approval_employee_id: int, reviewer_id: int) -> None:
-        """Raise SelfApprovalNotAllowedException if reviewer is trying to approve their own request."""
+        """Raise SelfApprovalNotAllowedException on a reviewer deciding their own request."""
         reviewer_user = await self.users.get_by_id(reviewer_id)
         if reviewer_user and reviewer_user.employee_id == approval_employee_id:
             raise SelfApprovalNotAllowedException()
@@ -165,14 +206,17 @@ class ApprovalService(BaseService):
         if not approval:
             raise ApprovalNotFoundException()
 
-        source_record = await self.approvals.get_source_record(approval.request_type, approval.reference_id)
+        source_record = await self.approvals.get_source_record(
+            approval.request_type, approval.reference_id
+        )
         return {
             "approval": approval,
             "source": source_record,
         }
 
     async def get_approval_status(self, org_id: int, approval_id: int) -> dict[str, Any]:
-        """Retrieve the current approval status details (status, reviewed_by, reviewed_at, reject_remarks)."""
+        """Retrieve the current approval status details (status, reviewed_by, reviewed_at,
+        reject_remarks)."""
         approval = await self.approvals.get_by_id_in_org(org_id, approval_id)
         if not approval:
             raise ApprovalNotFoundException()
@@ -219,7 +263,9 @@ class ApprovalService(BaseService):
         dept_id: int | None = None,
     ) -> dict[str, Any]:
         """Get total pending counts and type-specific breakdown scoped by permissions."""
-        counts = await self.approvals.get_pending_counts_by_type(org_id, branch_id=branch_id, dept_id=dept_id)
+        counts = await self.approvals.get_pending_counts_by_type(
+            org_id, branch_id=branch_id, dept_id=dept_id
+        )
         total_pending = sum(counts.values())
         return {
             "pending_count": total_pending,
@@ -236,7 +282,9 @@ class ApprovalService(BaseService):
         page_size: int = 25,
     ) -> PaginatedResponse[ApprovalRequest]:
         """Helper to get pending requests permitted to the caller (scope based)."""
-        return await self.list_pending_approvals(org_id, branch_id=branch_id, dept_id=dept_id, page=page, page_size=page_size)
+        return await self.list_pending_approvals(
+            org_id, branch_id=branch_id, dept_id=dept_id, page=page, page_size=page_size
+        )
 
     async def get_recent_decisions(
         self,
@@ -290,8 +338,8 @@ class ApprovalService(BaseService):
         async with self.transaction():
             if approval.request_type == RequestType.ATTENDANCE.value:
                 # Orchestrate Attendance regularization correction in attendance module
-                from app.modules.attendance.service import AttendanceService
                 from app.modules.attendance.schemas import AttendanceCorrectionApproveRequest
+                from app.modules.attendance.service import AttendanceService
                 
                 attendance_service = AttendanceService(self.session)
                 await attendance_service.approve_correction(
@@ -380,6 +428,11 @@ class ApprovalService(BaseService):
                     },
                 )
 
+            # Notify the subject employee's linked user (skipped when unlinked)
+            await self._notify_requester_decision(
+                org_id, approval, reviewer_id, ApprovalStatus.APPROVED.value
+            )
+
             # Record audit logs
             await self.audit.record(
                 org_id=org_id,
@@ -387,7 +440,8 @@ class ApprovalService(BaseService):
                 sub_module=approval.request_type,
                 action_type=ActionType.UPDATE,
                 title="Approve Request",
-                description=f"Approved {approval.request_type} request {approval_id} for employee {approval.employee_id}",
+                description=f"Approved {approval.request_type} request {approval_id} for employee "
+                    f"{approval.employee_id}",
                 performed_by_user_id=reviewer_id,
                 performed_by_name=f"User {reviewer_id}",
                 employee_id=approval.employee_id,
@@ -428,8 +482,8 @@ class ApprovalService(BaseService):
         async with self.transaction():
             if approval.request_type == RequestType.ATTENDANCE.value:
                 # Orchestrate Attendance regularization correction in attendance module
-                from app.modules.attendance.service import AttendanceService
                 from app.modules.attendance.schemas import AttendanceCorrectionApproveRequest
+                from app.modules.attendance.service import AttendanceService
                 
                 attendance_service = AttendanceService(session=self.session)
                 await attendance_service.approve_correction(
@@ -494,6 +548,11 @@ class ApprovalService(BaseService):
                     },
                 )
 
+            # Notify the subject employee's linked user (skipped when unlinked)
+            await self._notify_requester_decision(
+                org_id, approval, reviewer_id, ApprovalStatus.REJECTED.value
+            )
+
             # Record audit logs
             await self.audit.record(
                 org_id=org_id,
@@ -501,7 +560,8 @@ class ApprovalService(BaseService):
                 sub_module=approval.request_type,
                 action_type=ActionType.UPDATE,
                 title="Reject Request",
-                description=f"Rejected {approval.request_type} request {approval_id} for employee {approval.employee_id}",
+                description=f"Rejected {approval.request_type} request {approval_id} for employee "
+                    f"{approval.employee_id}",
                 performed_by_user_id=reviewer_id,
                 performed_by_name=f"User {reviewer_id}",
                 employee_id=approval.employee_id,
@@ -593,7 +653,8 @@ class ApprovalService(BaseService):
     # --- Cancellation & Submissions ------------------------------------------
 
     async def cancel_approval_request(self, org_id: int, approval_id: int, user_id: int) -> None:
-        """Cancel a pending approval request (hard-deletes the approval envelope and source records)."""
+        """Cancel a pending approval request (hard-deletes the approval envelope and source
+        records)."""
         approval = await self.approvals.get_by_id_in_org(org_id, approval_id)
         if not approval:
             raise ApprovalNotFoundException()
@@ -624,7 +685,8 @@ class ApprovalService(BaseService):
                 sub_module=approval.request_type,
                 action_type=ActionType.DELETE,
                 title="Cancel Approval Request",
-                description=f"Cancelled pending {approval.request_type} request {approval_id} for employee {approval.employee_id}",
+                description=f"Cancelled pending {approval.request_type} request {approval_id} for "
+                    f"employee {approval.employee_id}",
                 performed_by_user_id=user_id,
                 performed_by_name=f"User {user_id}",
                 employee_id=approval.employee_id,
@@ -648,7 +710,8 @@ class ApprovalService(BaseService):
         # Verify target source record exists
         source_record = await self.approvals.get_source_record(type_val, reference_id)
         if not source_record:
-            raise NotFoundException(f"Polymorphic source record not found for type {type_val} and ID {reference_id}.")
+            raise NotFoundException(f"Polymorphic source record not found for type {type_val} and "
+                f"ID {reference_id}.")
 
         async with self.transaction():
             approval = await self.approvals.create({
@@ -667,7 +730,8 @@ class ApprovalService(BaseService):
                 sub_module=type_val,
                 action_type=ActionType.INSERT,
                 title="Approval Requested",
-                description=f"Submitted approval envelope for request type {type_val} and ID {reference_id}",
+                description=f"Submitted approval envelope for request type {type_val} and ID "
+                    f"{reference_id}",
                 performed_by_user_id=created_by,
                 performed_by_name=f"User {created_by}",
                 employee_id=employee_id,
@@ -687,12 +751,15 @@ class ApprovalService(BaseService):
     ) -> ApprovalRequest:
         """Submit a new attendance regularization correction and create the approval envelope."""
         # 1. Validate employee
-        employee = await self._validate_employee(org_id, employee_id)
+        await self._validate_employee(org_id, employee_id)
 
         # 2. Check for duplicate pending request
-        exists = await self.attendance_regularizations.has_pending_request(employee_id, attendance_date)
+        exists = await self.attendance_regularizations.has_pending_request(
+            employee_id, attendance_date
+        )
         if exists:
-            raise ConflictException("A pending regularization request already exists for this date.")
+            raise ConflictException("A pending regularization request already exists for this "
+                "date.")
 
         # Build original punch time format representation from existing punches if any
         from app.modules.attendance.models import AttendanceDay
@@ -705,7 +772,10 @@ class ApprovalService(BaseService):
         
         old_time_str = "None"
         if day and day.first_punch_in and day.last_punch_out:
-            old_time_str = f"{day.first_punch_in.strftime('%H:%M')} - {day.last_punch_out.strftime('%H:%M')}"
+            old_time_str = (
+                f"{day.first_punch_in.strftime('%H:%M')} - "
+                f"{day.last_punch_out.strftime('%H:%M')}"
+            )
 
         new_time_str = f"{requested_in.strftime('%H:%M')} - {requested_out.strftime('%H:%M')}"
 
@@ -754,7 +824,7 @@ class ApprovalService(BaseService):
     ) -> ApprovalRequest:
         """Submit a new login credentials reset request and create the approval envelope."""
         # 1. Validate employee
-        employee = await self._validate_employee(org_id, employee_id)
+        await self._validate_employee(org_id, employee_id)
 
         # 2. Check for duplicate pending request
         exists = await self.login_resets.has_pending_request(employee_id)

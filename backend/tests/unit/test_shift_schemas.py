@@ -95,7 +95,11 @@ def test_weekly_off_query_exactly_one() -> None:
 def test_rotation_empty_sequence_rejected() -> None:
     with pytest.raises(ValidationError):
         ShiftRotationRequest(
-            name="R", cadence="daily", shift_sequence=[], start_date=date(2026, 1, 1), horizon_days=7
+            name="R",
+            cadence="daily",
+            shift_sequence=[],
+            start_date=date(2026, 1, 1),
+            horizon_days=7,
         )
 
 

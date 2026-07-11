@@ -26,6 +26,7 @@ from __future__ import annotations
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query, status
+from fastapi.responses import Response
 
 from app.core.constants.enums import PermissionAction as A
 from app.core.dependencies.auth import (
@@ -39,16 +40,32 @@ from app.core.exceptions.base import AppException
 from app.core.middleware.request_context import get_request_id
 from app.modules.employee.constants import EmploymentStatus
 from app.modules.employee.schemas import (
+    EmployeeBankDetailCreateRequest,
+    EmployeeBankDetailSchema,
+    EmployeeBankDetailUpdateRequest,
     EmployeeCreateRequest,
     EmployeeCreateResponse,
     EmployeeDetailSchema,
     EmployeeDocumentCreateRequest,
     EmployeeDocumentSchema,
+    EmployeeEmergencyContactCreateRequest,
+    EmployeeEmergencyContactSchema,
+    EmployeeEmergencyContactUpdateRequest,
     EmployeeExitRequest,
     EmployeeListQuery,
     EmployeeListResponse,
     EmployeePhotoUploadRequest,
+    EmployeePromoteRequest,
+    EmployeeReferenceCreateRequest,
+    EmployeeReferenceSchema,
+    EmployeeReferenceUpdateRequest,
     EmployeeRehireRequest,
+    EmployeeStatusChangeRequest,
+    EmployeeStatusHistorySchema,
+    EmployeeTagCreateRequest,
+    EmployeeTagSchema,
+    EmployeeTerminateRequest,
+    EmployeeTransferRequest,
     EmployeeUpdateRequest,
 )
 from app.modules.employee.service import EmployeeService
@@ -188,7 +205,7 @@ async def get_employee(
     return _ok(result)
 
 
-@router.put(
+@router.patch(
     "/employees/{employee_id}",
     response_model=SuccessResponse[EmployeeDetailSchema],
     summary="Update Employee",
@@ -212,11 +229,137 @@ async def update_employee(
     return _ok(result, "Employee updated.")
 
 
+# ===========================================================================
+# Status lifecycle (#29–#31) and org moves (#32–#33)
+# ===========================================================================
+
+
+@router.post(
+    "/employees/{employee_id}/activate",
+    response_model=SuccessResponse[EmployeeDetailSchema],
+    summary="Activate Employee",
+    dependencies=[Depends(require_permission(_EMPLOYEE, A.EDIT))],
+)
+async def activate_employee(
+    employee_id: int,
+    service: ServiceDep,
+    current_user: CurrentUserDep,
+    org_id: OrgIdDep,
+    payload: EmployeeStatusChangeRequest | None = None,
+) -> dict[str, Any]:
+    """Set employment status to ``active`` and append the status-history row."""
+    data = payload or EmployeeStatusChangeRequest()
+    result = await service.activate_employee(
+        org_id=org_id,
+        actor_id=current_user.user_id,
+        employee_id=employee_id,
+        reason=data.reason,
+        effective_date=data.effective_date,
+    )
+    return _ok(result, "Employee activated.")
+
+
+@router.post(
+    "/employees/{employee_id}/deactivate",
+    response_model=SuccessResponse[EmployeeDetailSchema],
+    summary="Deactivate Employee",
+    dependencies=[Depends(require_permission(_EMPLOYEE, A.EDIT))],
+)
+async def deactivate_employee(
+    employee_id: int,
+    service: ServiceDep,
+    current_user: CurrentUserDep,
+    org_id: OrgIdDep,
+    payload: EmployeeStatusChangeRequest | None = None,
+) -> dict[str, Any]:
+    """Set employment status to ``inactive`` and append the status-history row."""
+    data = payload or EmployeeStatusChangeRequest()
+    result = await service.deactivate_employee(
+        org_id=org_id,
+        actor_id=current_user.user_id,
+        employee_id=employee_id,
+        reason=data.reason,
+        effective_date=data.effective_date,
+    )
+    return _ok(result, "Employee deactivated.")
+
+
+@router.post(
+    "/employees/{employee_id}/terminate",
+    response_model=SuccessResponse[EmployeeDetailSchema],
+    summary="Terminate Employee",
+    dependencies=[Depends(require_permission(_EMPLOYEE, A.EDIT))],
+)
+async def terminate_employee(
+    employee_id: int,
+    payload: EmployeeTerminateRequest,
+    service: ServiceDep,
+    current_user: CurrentUserDep,
+    org_id: OrgIdDep,
+) -> dict[str, Any]:
+    """Terminate an employee (terminal): sets ``date_of_leaving`` and appends history."""
+    result = await service.terminate_employee(
+        org_id=org_id,
+        actor_id=current_user.user_id,
+        employee_id=employee_id,
+        data=payload,
+    )
+    return _ok(result, "Employee terminated.")
+
+
+@router.post(
+    "/employees/{employee_id}/transfer",
+    response_model=SuccessResponse[EmployeeDetailSchema],
+    summary="Transfer Employee",
+    dependencies=[Depends(require_permission(_EMPLOYEE, A.EDIT))],
+)
+async def transfer_employee(
+    employee_id: int,
+    payload: EmployeeTransferRequest,
+    service: ServiceDep,
+    current_user: CurrentUserDep,
+    org_id: OrgIdDep,
+) -> dict[str, Any]:
+    """Move an employee to another branch and/or department (context audited only)."""
+    result = await service.transfer_employee(
+        org_id=org_id,
+        actor_id=current_user.user_id,
+        employee_id=employee_id,
+        data=payload,
+    )
+    return _ok(result, "Employee transferred.")
+
+
+@router.post(
+    "/employees/{employee_id}/promote",
+    response_model=SuccessResponse[EmployeeDetailSchema],
+    summary="Promote Employee",
+    dependencies=[Depends(require_permission(_EMPLOYEE, A.EDIT))],
+)
+async def promote_employee(
+    employee_id: int,
+    payload: EmployeePromoteRequest,
+    service: ServiceDep,
+    current_user: CurrentUserDep,
+    org_id: OrgIdDep,
+) -> dict[str, Any]:
+    """Change the designation (salary revision gated by ``employee_salary`` read)."""
+    result = await service.promote_employee(
+        org_id=org_id,
+        actor_id=current_user.user_id,
+        employee_id=employee_id,
+        data=payload,
+        can_set_salary=_can_view_salary(current_user),
+    )
+    return _ok(result, "Employee promoted.")
+
+
 @router.post(
     "/employees/{employee_id}/exit",
     response_model=SuccessResponse[EmployeeDetailSchema],
-    summary="Exit Employee",
+    summary="Exit Employee (deprecated — use /terminate)",
     dependencies=[Depends(require_permission(_EMPLOYEE, A.DELETE))],
+    deprecated=True,
 )
 async def exit_employee(
     employee_id: int,
@@ -282,6 +425,64 @@ async def add_employee_document(
     return _ok(result, "Document uploaded.")
 
 
+@router.get(
+    "/employees/{employee_id}/documents",
+    response_model=SuccessResponse[list[EmployeeDocumentSchema]],
+    summary="List Employee Documents",
+    dependencies=[Depends(require_permission(_EMPLOYEE, A.READ))],
+)
+async def list_employee_documents(
+    employee_id: int,
+    service: ServiceDep,
+    org_id: OrgIdDep,
+) -> dict[str, Any]:
+    """Return the employee's non-deleted document metadata."""
+    result = await service.list_documents(org_id=org_id, employee_id=employee_id)
+    return _ok(result)
+
+
+@router.get(
+    "/employees/{employee_id}/documents/{document_id}",
+    response_model=SuccessResponse[EmployeeDocumentSchema],
+    summary="Download Employee Document",
+    dependencies=[Depends(require_permission(_EMPLOYEE, A.READ))],
+)
+async def get_employee_document(
+    employee_id: int,
+    document_id: int,
+    service: ServiceDep,
+    org_id: OrgIdDep,
+) -> dict[str, Any]:
+    """Return one document's stored URL + metadata (storage backend is URL-based)."""
+    result = await service.get_document(
+        org_id=org_id, employee_id=employee_id, document_id=document_id
+    )
+    return _ok(result)
+
+
+@router.delete(
+    "/employees/{employee_id}/documents/{document_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete Employee Document",
+    dependencies=[Depends(require_permission(_EMPLOYEE, A.EDIT))],
+)
+async def delete_employee_document(
+    employee_id: int,
+    document_id: int,
+    service: ServiceDep,
+    current_user: CurrentUserDep,
+    org_id: OrgIdDep,
+) -> Response:
+    """Soft-delete a document (``is_deleted=true``)."""
+    await service.delete_document(
+        org_id=org_id,
+        actor_id=current_user.user_id,
+        employee_id=employee_id,
+        document_id=document_id,
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.post(
     "/employees/{employee_id}/photo",
     response_model=SuccessResponse[EmployeeDetailSchema],
@@ -303,3 +504,374 @@ async def set_employee_photo(
         data=payload,
     )
     return _ok(result, "Photo updated.")
+
+
+# ===========================================================================
+# Bank details (#38–#41) — SENSITIVE: reads also require employee_salary read
+# ===========================================================================
+
+
+@router.get(
+    "/employees/{employee_id}/bank-details",
+    response_model=SuccessResponse[list[EmployeeBankDetailSchema]],
+    summary="List Bank Details",
+    dependencies=[
+        Depends(require_permission(_EMPLOYEE, A.READ)),
+        Depends(require_permission(_EMPLOYEE_SALARY, A.READ)),
+    ],
+)
+async def list_bank_details(
+    employee_id: int,
+    service: ServiceDep,
+    org_id: OrgIdDep,
+) -> dict[str, Any]:
+    """Return the employee's non-deleted bank details (account numbers are sensitive)."""
+    result = await service.list_bank_details(org_id=org_id, employee_id=employee_id)
+    return _ok(result)
+
+
+@router.post(
+    "/employees/{employee_id}/bank-details",
+    response_model=SuccessResponse[EmployeeBankDetailSchema],
+    status_code=status.HTTP_201_CREATED,
+    summary="Add Bank Detail",
+    dependencies=[Depends(require_permission(_EMPLOYEE, A.EDIT))],
+)
+async def add_bank_detail(
+    employee_id: int,
+    payload: EmployeeBankDetailCreateRequest,
+    service: ServiceDep,
+    current_user: CurrentUserDep,
+    org_id: OrgIdDep,
+) -> dict[str, Any]:
+    """Add a bank detail (a primary row demotes any existing primary)."""
+    result = await service.add_bank_detail(
+        org_id=org_id,
+        actor_id=current_user.user_id,
+        employee_id=employee_id,
+        data=payload,
+    )
+    return _ok(result, "Bank detail added.")
+
+
+@router.patch(
+    "/employees/{employee_id}/bank-details/{bank_detail_id}",
+    response_model=SuccessResponse[EmployeeBankDetailSchema],
+    summary="Update Bank Detail",
+    dependencies=[Depends(require_permission(_EMPLOYEE, A.EDIT))],
+)
+async def update_bank_detail(
+    employee_id: int,
+    bank_detail_id: int,
+    payload: EmployeeBankDetailUpdateRequest,
+    service: ServiceDep,
+    current_user: CurrentUserDep,
+    org_id: OrgIdDep,
+) -> dict[str, Any]:
+    """Partially update a bank detail (primary uniqueness re-enforced)."""
+    result = await service.update_bank_detail(
+        org_id=org_id,
+        actor_id=current_user.user_id,
+        employee_id=employee_id,
+        bank_detail_id=bank_detail_id,
+        data=payload,
+    )
+    return _ok(result, "Bank detail updated.")
+
+
+@router.delete(
+    "/employees/{employee_id}/bank-details/{bank_detail_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete Bank Detail",
+    dependencies=[Depends(require_permission(_EMPLOYEE, A.EDIT))],
+)
+async def delete_bank_detail(
+    employee_id: int,
+    bank_detail_id: int,
+    service: ServiceDep,
+    current_user: CurrentUserDep,
+    org_id: OrgIdDep,
+) -> Response:
+    """Soft-delete a bank detail (``is_deleted=true``)."""
+    await service.delete_bank_detail(
+        org_id=org_id,
+        actor_id=current_user.user_id,
+        employee_id=employee_id,
+        bank_detail_id=bank_detail_id,
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ===========================================================================
+# Emergency contacts (#42–#45)
+# ===========================================================================
+
+
+@router.get(
+    "/employees/{employee_id}/emergency-contacts",
+    response_model=SuccessResponse[list[EmployeeEmergencyContactSchema]],
+    summary="List Emergency Contacts",
+    dependencies=[Depends(require_permission(_EMPLOYEE, A.READ))],
+)
+async def list_emergency_contacts(
+    employee_id: int,
+    service: ServiceDep,
+    org_id: OrgIdDep,
+) -> dict[str, Any]:
+    """Return the employee's non-deleted emergency contacts."""
+    result = await service.list_emergency_contacts(org_id=org_id, employee_id=employee_id)
+    return _ok(result)
+
+
+@router.post(
+    "/employees/{employee_id}/emergency-contacts",
+    response_model=SuccessResponse[EmployeeEmergencyContactSchema],
+    status_code=status.HTTP_201_CREATED,
+    summary="Add Emergency Contact",
+    dependencies=[Depends(require_permission(_EMPLOYEE, A.EDIT))],
+)
+async def add_emergency_contact(
+    employee_id: int,
+    payload: EmployeeEmergencyContactCreateRequest,
+    service: ServiceDep,
+    current_user: CurrentUserDep,
+    org_id: OrgIdDep,
+) -> dict[str, Any]:
+    """Add an emergency contact for the employee."""
+    result = await service.add_emergency_contact(
+        org_id=org_id,
+        actor_id=current_user.user_id,
+        employee_id=employee_id,
+        data=payload,
+    )
+    return _ok(result, "Emergency contact added.")
+
+
+@router.patch(
+    "/employees/{employee_id}/emergency-contacts/{emergency_contact_id}",
+    response_model=SuccessResponse[EmployeeEmergencyContactSchema],
+    summary="Update Emergency Contact",
+    dependencies=[Depends(require_permission(_EMPLOYEE, A.EDIT))],
+)
+async def update_emergency_contact(
+    employee_id: int,
+    emergency_contact_id: int,
+    payload: EmployeeEmergencyContactUpdateRequest,
+    service: ServiceDep,
+    current_user: CurrentUserDep,
+    org_id: OrgIdDep,
+) -> dict[str, Any]:
+    """Partially update an emergency contact."""
+    result = await service.update_emergency_contact(
+        org_id=org_id,
+        actor_id=current_user.user_id,
+        employee_id=employee_id,
+        emergency_contact_id=emergency_contact_id,
+        data=payload,
+    )
+    return _ok(result, "Emergency contact updated.")
+
+
+@router.delete(
+    "/employees/{employee_id}/emergency-contacts/{emergency_contact_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete Emergency Contact",
+    dependencies=[Depends(require_permission(_EMPLOYEE, A.EDIT))],
+)
+async def delete_emergency_contact(
+    employee_id: int,
+    emergency_contact_id: int,
+    service: ServiceDep,
+    current_user: CurrentUserDep,
+    org_id: OrgIdDep,
+) -> Response:
+    """Soft-delete an emergency contact (``is_deleted=true``)."""
+    await service.delete_emergency_contact(
+        org_id=org_id,
+        actor_id=current_user.user_id,
+        employee_id=employee_id,
+        emergency_contact_id=emergency_contact_id,
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ===========================================================================
+# References (#46–#49)
+# ===========================================================================
+
+
+@router.get(
+    "/employees/{employee_id}/references",
+    response_model=SuccessResponse[list[EmployeeReferenceSchema]],
+    summary="List References",
+    dependencies=[Depends(require_permission(_EMPLOYEE, A.READ))],
+)
+async def list_references(
+    employee_id: int,
+    service: ServiceDep,
+    org_id: OrgIdDep,
+) -> dict[str, Any]:
+    """Return the employee's non-deleted references (ordered by ``sort_order``)."""
+    result = await service.list_references(org_id=org_id, employee_id=employee_id)
+    return _ok(result)
+
+
+@router.post(
+    "/employees/{employee_id}/references",
+    response_model=SuccessResponse[EmployeeReferenceSchema],
+    status_code=status.HTTP_201_CREATED,
+    summary="Add Reference",
+    dependencies=[Depends(require_permission(_EMPLOYEE, A.EDIT))],
+)
+async def add_reference(
+    employee_id: int,
+    payload: EmployeeReferenceCreateRequest,
+    service: ServiceDep,
+    current_user: CurrentUserDep,
+    org_id: OrgIdDep,
+) -> dict[str, Any]:
+    """Add a reference for the employee."""
+    result = await service.add_reference(
+        org_id=org_id,
+        actor_id=current_user.user_id,
+        employee_id=employee_id,
+        data=payload,
+    )
+    return _ok(result, "Reference added.")
+
+
+@router.patch(
+    "/employees/{employee_id}/references/{reference_id}",
+    response_model=SuccessResponse[EmployeeReferenceSchema],
+    summary="Update Reference",
+    dependencies=[Depends(require_permission(_EMPLOYEE, A.EDIT))],
+)
+async def update_reference(
+    employee_id: int,
+    reference_id: int,
+    payload: EmployeeReferenceUpdateRequest,
+    service: ServiceDep,
+    current_user: CurrentUserDep,
+    org_id: OrgIdDep,
+) -> dict[str, Any]:
+    """Partially update a reference."""
+    result = await service.update_reference(
+        org_id=org_id,
+        actor_id=current_user.user_id,
+        employee_id=employee_id,
+        reference_id=reference_id,
+        data=payload,
+    )
+    return _ok(result, "Reference updated.")
+
+
+@router.delete(
+    "/employees/{employee_id}/references/{reference_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete Reference",
+    dependencies=[Depends(require_permission(_EMPLOYEE, A.EDIT))],
+)
+async def delete_reference(
+    employee_id: int,
+    reference_id: int,
+    service: ServiceDep,
+    current_user: CurrentUserDep,
+    org_id: OrgIdDep,
+) -> Response:
+    """Soft-delete a reference (``is_deleted=true``)."""
+    await service.delete_reference(
+        org_id=org_id,
+        actor_id=current_user.user_id,
+        employee_id=employee_id,
+        reference_id=reference_id,
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ===========================================================================
+# Tags (#50–#52) — hard-deleted (no is_deleted column)
+# ===========================================================================
+
+
+@router.get(
+    "/employees/{employee_id}/tags",
+    response_model=SuccessResponse[list[EmployeeTagSchema]],
+    summary="List Tags",
+    dependencies=[Depends(require_permission(_EMPLOYEE, A.READ))],
+)
+async def list_tags(
+    employee_id: int,
+    service: ServiceDep,
+    org_id: OrgIdDep,
+) -> dict[str, Any]:
+    """Return the employee's tags."""
+    result = await service.list_tags(org_id=org_id, employee_id=employee_id)
+    return _ok(result)
+
+
+@router.post(
+    "/employees/{employee_id}/tags",
+    response_model=SuccessResponse[EmployeeTagSchema],
+    status_code=status.HTTP_201_CREATED,
+    summary="Add Tag",
+    dependencies=[Depends(require_permission(_EMPLOYEE, A.EDIT))],
+)
+async def add_tag(
+    employee_id: int,
+    payload: EmployeeTagCreateRequest,
+    service: ServiceDep,
+    current_user: CurrentUserDep,
+    org_id: OrgIdDep,
+) -> dict[str, Any]:
+    """Add a tag to the employee."""
+    result = await service.add_tag(
+        org_id=org_id,
+        actor_id=current_user.user_id,
+        employee_id=employee_id,
+        data=payload,
+    )
+    return _ok(result, "Tag added.")
+
+
+@router.delete(
+    "/employees/{employee_id}/tags/{tag_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete Tag",
+    dependencies=[Depends(require_permission(_EMPLOYEE, A.EDIT))],
+)
+async def delete_tag(
+    employee_id: int,
+    tag_id: int,
+    service: ServiceDep,
+    current_user: CurrentUserDep,
+    org_id: OrgIdDep,
+) -> Response:
+    """Hard-delete a tag (``employee_tags`` has no soft-delete column)."""
+    await service.delete_tag(
+        org_id=org_id,
+        actor_id=current_user.user_id,
+        employee_id=employee_id,
+        tag_id=tag_id,
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ===========================================================================
+# Status history (#53) — read-only, system-maintained
+# ===========================================================================
+
+
+@router.get(
+    "/employees/{employee_id}/status-history",
+    response_model=SuccessResponse[list[EmployeeStatusHistorySchema]],
+    summary="List Status History",
+    dependencies=[Depends(require_permission(_EMPLOYEE, A.READ))],
+)
+async def list_status_history(
+    employee_id: int,
+    service: ServiceDep,
+    org_id: OrgIdDep,
+) -> dict[str, Any]:
+    """Return the employee's status transitions in chronological order."""
+    result = await service.list_status_history(org_id=org_id, employee_id=employee_id)
+    return _ok(result)

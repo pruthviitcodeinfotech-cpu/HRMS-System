@@ -120,6 +120,6 @@ class AttendanceAdjustmentExtraHours(Base):
         UniqueConstraint(
             "employee_id",
             "attendance_date",
-            name="uq_attendance_adjustment_extra_hours_employee_id_attendance_date",
+            name="uq_att_adjust_extra_hours_employee_id_attendance_date",
         ),
     )

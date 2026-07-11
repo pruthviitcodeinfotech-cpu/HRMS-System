@@ -60,7 +60,7 @@ class Notification(Base):
     __table_args__ = (
         Index("ix_notifications_org_id_created_at", "org_id", "created_at"),
         Index(
-            "ix_notifications_org_id_source_module_source_entity_type_source_entity_id",
+            "ix_notifications_org_source_module_entity_type_entity_id",
             "org_id",
             "source_module",
             "source_entity_type",

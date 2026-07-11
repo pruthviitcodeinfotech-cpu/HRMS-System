@@ -336,7 +336,9 @@ class EmployeeImportLog(Base):
     success_rows: Mapped[int | None] = mapped_column(Integer)  # data column (not a key)
     failed_rows: Mapped[int | None] = mapped_column(Integer)  # data column (not a key)
     error_details: Mapped[dict | None] = mapped_column(JSONB)
-    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'pending'"))
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default=text("'pending'")
+    )
     # DEFERRED cross-module FK -> users.id
     initiated_by: Mapped[int | None] = mapped_column(BigInteger)
     created_at: Mapped[datetime] = mapped_column(

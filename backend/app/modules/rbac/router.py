@@ -11,9 +11,10 @@ Authorization: each route declares an RBAC feature-permission guard
 tenant (``org_id``), and super-admin flag. Mounted under the ``/api/v1`` prefix by
 the version router.
 
-Not included here (no service method — documented scope): the read-only permission
-**catalogue** (registry-backed, a contract Open Question) and administrative
-**session** endpoints (owned by the Authentication module's session admin).
+Also mounted here (contract §5.4 / §5.9): the read-only permission **catalog**
+(backed by the static registry in ``core/security/permissions.py``) and the
+administrative **session** endpoints, which act on *another* user's sessions
+(distinct from the Authentication module's self-service session routes).
 """
 
 from __future__ import annotations
@@ -42,6 +43,7 @@ from app.modules.rbac.schemas import (
     CustomPermissionSchema,
     DepartmentAccessSchema,
     EffectivePermissionsSchema,
+    PermissionCatalogItemSchema,
     ReplaceBranchAccessRequest,
     ReplaceCustomPermissionsRequest,
     ReplaceDepartmentAccessRequest,
@@ -52,6 +54,7 @@ from app.modules.rbac.schemas import (
     RoleListResponse,
     RoleSchema,
     RoleUpdateRequest,
+    SessionsRevokedSchema,
     TemplatePermissionInput,
     TemplatePermissionSchema,
     UserCreateRequest,
@@ -59,6 +62,7 @@ from app.modules.rbac.schemas import (
     UserListResponse,
     UserRoleSchema,
     UserSchema,
+    UserSessionListResponse,
     UserUpdateRequest,
 )
 from app.modules.rbac.service import RBACService
@@ -460,6 +464,37 @@ async def remove_template_permission(
 
 
 # ===========================================================================
+# Permission catalog (read-only, from core/security/permissions.py)
+# ===========================================================================
+
+
+@router.get(
+    "/permissions",
+    response_model=SuccessResponse[list[PermissionCatalogItemSchema]],
+    summary="List Permissions (catalog)",
+    dependencies=[Depends(require_permission(_ROLE, A.READ))],
+)
+async def list_permission_catalog(
+    service: ServiceDep,
+    parent_feature_key: Annotated[str | None, Query()] = None,
+) -> dict[str, Any]:
+    """Return the registered feature-key catalog (optionally one parent's subtree)."""
+    result = await service.list_permission_catalog(parent_feature_key=parent_feature_key)
+    return _ok(result)
+
+
+@router.get(
+    "/permissions/{feature_key}",
+    response_model=SuccessResponse[PermissionCatalogItemSchema],
+    summary="View Permission Details",
+    dependencies=[Depends(require_permission(_ROLE, A.READ))],
+)
+async def get_permission_catalog_entry(feature_key: str, service: ServiceDep) -> dict[str, Any]:
+    """Return one registered feature's metadata."""
+    return _ok(await service.get_permission_catalog_entry(feature_key=feature_key))
+
+
+# ===========================================================================
 # User ↔ template assignment (user role)
 # ===========================================================================
 
@@ -742,5 +777,71 @@ async def remove_department_access(
     """Revoke a department grant from a user."""
     await service.remove_department_access(
         org_id=org_id, user_id=user_id, department_id=department_id
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ===========================================================================
+# Session administration (admin — another user's sessions)
+# ===========================================================================
+
+
+@router.get(
+    "/users/{user_id}/sessions",
+    response_model=SuccessResponse[UserSessionListResponse],
+    summary="View User Active Sessions",
+    dependencies=[Depends(require_permission(_USER, A.READ))],
+)
+async def list_user_sessions(
+    user_id: int,
+    service: ServiceDep,
+    org_id: OrgIdDep,
+    pagination: Annotated[PaginationParams, Depends(pagination_params)],
+    active_only: Annotated[bool, Query()] = True,
+) -> dict[str, Any]:
+    """Return a page of the target user's sessions (never includes tokens)."""
+    result = await service.list_user_sessions(
+        org_id=org_id,
+        user_id=user_id,
+        active_only=active_only,
+        page=pagination.page,
+        page_size=pagination.page_size,
+    )
+    return _ok(result)
+
+
+# Static path declared before the parameterized DELETE sibling below.
+@router.post(
+    "/users/{user_id}/sessions/revoke-all",
+    response_model=SuccessResponse[SessionsRevokedSchema],
+    summary="Revoke All User Sessions",
+    dependencies=[Depends(require_permission(_USER, A.EDIT))],
+)
+async def revoke_all_user_sessions(
+    user_id: int, service: ServiceDep, current_user: CurrentUserDep, org_id: OrgIdDep
+) -> dict[str, Any]:
+    """Revoke all of the target user's active sessions."""
+    result = await service.revoke_all_user_sessions(
+        org_id=org_id, actor_id=current_user.user_id, user_id=user_id
+    )
+    return _ok(result, "Sessions revoked.")
+
+
+@router.delete(
+    "/users/{user_id}/sessions/{session_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Force Logout (revoke one session)",
+    dependencies=[Depends(require_permission(_USER, A.EDIT))],
+)
+async def force_logout_session(
+    user_id: int,
+    session_id: int,
+    service: ServiceDep,
+    current_user: CurrentUserDep,
+    org_id: OrgIdDep,
+) -> Response:
+    """Revoke one of the target user's sessions (force logout)."""
+    await service.force_logout_session(
+        org_id=org_id, actor_id=current_user.user_id, user_id=user_id, session_id=session_id
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)

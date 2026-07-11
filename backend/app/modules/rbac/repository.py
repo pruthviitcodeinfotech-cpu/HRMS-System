@@ -10,8 +10,6 @@ carries ``org_id``.
 
 from __future__ import annotations
 
-from datetime import datetime
-
 from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 

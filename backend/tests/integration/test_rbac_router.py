@@ -8,7 +8,7 @@ enforcement, unauthorized access, and validation failures.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock
 
 from httpx import AsyncClient
@@ -22,7 +22,7 @@ from app.modules.rbac.schemas import (
 )
 from tests.conftest import API_PREFIX
 
-_NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
+_NOW = datetime(2026, 1, 1, tzinfo=UTC)
 
 
 def _user_schema() -> UserSchema:
@@ -112,6 +112,58 @@ async def test_effective_permissions_200(
     )
     assert resp.status_code == 200
     assert "permissions" in resp.json()["data"]
+
+
+# --- Permission catalog ------------------------------------------------------
+async def test_list_permission_catalog_200(
+    client: AsyncClient, mock_rbac_service: AsyncMock, super_admin_headers: dict[str, str]
+) -> None:
+    from app.modules.rbac.schemas import PermissionCatalogItemSchema
+
+    mock_rbac_service.list_permission_catalog.return_value = [
+        PermissionCatalogItemSchema(feature_key="employee", feature_label="Employees")
+    ]
+    resp = await client.get(f"{API_PREFIX}/permissions", headers=super_admin_headers)
+    assert resp.status_code == 200
+    assert resp.json()["data"][0]["feature_key"] == "employee"
+
+
+async def test_get_permission_catalog_entry_200(
+    client: AsyncClient, mock_rbac_service: AsyncMock, super_admin_headers: dict[str, str]
+) -> None:
+    from app.modules.rbac.schemas import PermissionCatalogItemSchema
+
+    mock_rbac_service.get_permission_catalog_entry.return_value = PermissionCatalogItemSchema(
+        feature_key="employee", feature_label="Employees"
+    )
+    resp = await client.get(f"{API_PREFIX}/permissions/employee", headers=super_admin_headers)
+    assert resp.status_code == 200
+    assert resp.json()["data"]["feature_key"] == "employee"
+
+
+# --- Session administration --------------------------------------------------
+async def test_force_logout_session_204(
+    client: AsyncClient, mock_rbac_service: AsyncMock, super_admin_headers: dict[str, str]
+) -> None:
+    mock_rbac_service.force_logout_session.return_value = None
+    resp = await client.delete(f"{API_PREFIX}/users/2/sessions/5", headers=super_admin_headers)
+    assert resp.status_code == 204
+    mock_rbac_service.force_logout_session.assert_awaited_once()
+
+
+async def test_revoke_all_user_sessions_200(
+    client: AsyncClient, mock_rbac_service: AsyncMock, super_admin_headers: dict[str, str]
+) -> None:
+    from app.modules.rbac.schemas import SessionsRevokedSchema
+
+    mock_rbac_service.revoke_all_user_sessions.return_value = SessionsRevokedSchema(
+        revoked_count=2
+    )
+    resp = await client.post(
+        f"{API_PREFIX}/users/2/sessions/revoke-all", headers=super_admin_headers
+    )
+    assert resp.status_code == 200
+    assert resp.json()["data"]["revoked_count"] == 2
 
 
 # --- Permission enforcement (authorization failure) ------------------------

@@ -104,11 +104,11 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id", name="pk_employee_payroll_group_assignments"),
         sa.ForeignKeyConstraint(
             ["payroll_group_id"], ["payroll_groups.id"],
-            name="fk_employee_payroll_group_assignments_payroll_group_id_payroll_groups",
+            name="fk_emp_payroll_grp_assign_payroll_group_id_payroll_groups",
         ),
         sa.ForeignKeyConstraint(
             ["previous_group_id"], ["payroll_groups.id"],
-            name="fk_employee_payroll_group_assignments_previous_group_id_payroll_groups",
+            name="fk_emp_payroll_grp_assign_previous_group_id_payroll_groups",
         ),
         sa.UniqueConstraint("employee_id", name="uq_employee_payroll_group_assignments_employee_id"),
         sa.CheckConstraint(
@@ -202,7 +202,7 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id", name="pk_attendance_adjustment_extra_hours"),
         sa.UniqueConstraint(
             "employee_id", "attendance_date",
-            name="uq_attendance_adjustment_extra_hours_employee_id_attendance_date",
+            name="uq_att_adjust_extra_hours_employee_id_attendance_date",
         ),
     )
 
@@ -300,11 +300,11 @@ def upgrade() -> None:
         ),
         sa.ForeignKeyConstraint(
             ["finalized_run_id"], ["finalized_payroll_runs.id"],
-            name="fk_payroll_computed_rows_finalized_run_id_finalized_payroll_runs",
+            name="fk_payroll_computed_rows_finalized_run_id_final_runs",
         ),
         sa.UniqueConstraint(
             "payroll_group_id", "employee_id", "cycle_from", "cycle_to",
-            name="uq_payroll_computed_rows_payroll_group_id_employee_id_cycle_from_cycle_to",
+            name="uq_payroll_computed_rows_group_employee_cycle",
         ),
     )
     op.create_index(

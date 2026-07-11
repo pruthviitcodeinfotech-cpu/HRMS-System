@@ -33,6 +33,8 @@ Schema-reconciliation notes (the models are the source of truth):
 
 from __future__ import annotations
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.core.exceptions.base import (
     ConflictException,
     NotFoundException,
@@ -41,13 +43,29 @@ from app.core.exceptions.base import (
 from app.modules.audit.constants import ActionType
 from app.modules.audit.service import AuditService
 from app.modules.employee.constants import EmploymentStatus
-from app.modules.employee.models import Employee, EmployeeDocument
-from app.modules.employee.models.satellites import EmployeeStatusHistory
+from app.modules.employee.exceptions import (
+    BankDetailNotFoundException,
+    BranchNotFoundException,
+    DepartmentNotFoundException,
+    DesignationNotFoundException,
+    DocumentNotFoundException,
+    EmergencyContactNotFoundException,
+    EmployeeAlreadyTerminatedException,
+    ReferenceNotFoundException,
+    TagNotFoundException,
+)
+from app.modules.employee.models import Employee
 from app.modules.employee.repository import (
     BranchRepository,
     DepartmentRepository,
     DesignationRepository,
+    EmployeeBankDetailRepository,
+    EmployeeDocumentRepository,
+    EmployeeEmergencyContactRepository,
+    EmployeeReferenceRepository,
     EmployeeRepository,
+    EmployeeStatusHistoryRepository,
+    EmployeeTagRepository,
 )
 from app.modules.employee.schemas import (
     BranchRefSchema,
@@ -55,34 +73,41 @@ from app.modules.employee.schemas import (
     DesignationRefSchema,
     DeviceEnrollmentStatusSchema,
     EmployeeAttendancePermissionSchema,
+    EmployeeBankDetailCreateRequest,
     EmployeeBankDetailSchema,
+    EmployeeBankDetailUpdateRequest,
     EmployeeBiometricSchema,
     EmployeeCreateRequest,
     EmployeeCreateResponse,
     EmployeeDetailSchema,
     EmployeeDocumentCreateRequest,
     EmployeeDocumentSchema,
+    EmployeeEmergencyContactCreateRequest,
     EmployeeEmergencyContactSchema,
+    EmployeeEmergencyContactUpdateRequest,
     EmployeeExitRequest,
     EmployeeListQuery,
     EmployeeListResponse,
     EmployeePhotoUploadRequest,
+    EmployeePromoteRequest,
     EmployeePunchBranchSchema,
+    EmployeeReferenceCreateRequest,
     EmployeeReferenceSchema,
+    EmployeeReferenceUpdateRequest,
     EmployeeRehireRequest,
     EmployeeSalarySchema,
     EmployeeSchema,
     EmployeeStatusHistorySchema,
     EmployeeSummarySchema,
+    EmployeeTagCreateRequest,
     EmployeeTagSchema,
+    EmployeeTerminateRequest,
+    EmployeeTransferRequest,
     EmployeeUpdateRequest,
 )
 from app.modules.rbac.repository import UserRepository
-from app.shared.base.repository import BaseRepository
 from app.shared.base.service import BaseService
 from app.shared.utils.datetime import utcnow
-
-from sqlalchemy.ext.asyncio import AsyncSession
 
 _CODE_PREFIX = "EMP"
 _CODE_PAD = 5
@@ -102,13 +127,14 @@ class EmployeeService(BaseService):
         self.users = UserRepository(session)
         # Shared audit trail (writes participate in this service's transaction).
         self.audit = AuditService(session)
-        # Satellite writes via the generic shared repository.
-        self.status_history: BaseRepository[EmployeeStatusHistory] = BaseRepository(
-            session, EmployeeStatusHistory
-        )
-        self.documents: BaseRepository[EmployeeDocument] = BaseRepository(
-            session, EmployeeDocument
-        )
+        # Satellite (sub-record) repositories — every lookup is org-scoped via
+        # the parent employees row.
+        self.status_history = EmployeeStatusHistoryRepository(session)
+        self.documents = EmployeeDocumentRepository(session)
+        self.bank_details = EmployeeBankDetailRepository(session)
+        self.emergency_contacts = EmployeeEmergencyContactRepository(session)
+        self.references = EmployeeReferenceRepository(session)
+        self.tags = EmployeeTagRepository(session)
 
     # =====================================================================
     # Create / update
@@ -182,7 +208,9 @@ class EmployeeService(BaseService):
                 employee=employee,
             )
 
-        detail = await self._load_detail(org_id, employee.employee_id, include_salary=can_set_salary)
+        detail = await self._load_detail(
+            org_id, employee.employee_id, include_salary=can_set_salary
+        )
         enrollment = [
             DeviceEnrollmentStatusSchema(device_id=device_id) for device_id in data.device_ids
         ]
@@ -290,27 +318,41 @@ class EmployeeService(BaseService):
     # Employment-status management
     # =====================================================================
     async def activate_employee(
-        self, *, org_id: int, actor_id: int, employee_id: int, reason: str | None = None
+        self,
+        *,
+        org_id: int,
+        actor_id: int,
+        employee_id: int,
+        reason: str | None = None,
+        effective_date=None,
     ) -> EmployeeDetailSchema:
-        """Set employment status to ``active`` (idempotency guarded)."""
+        """Set employment status to ``active`` (contract #29; idempotency guarded)."""
         return await self.change_status(
             org_id=org_id,
             actor_id=actor_id,
             employee_id=employee_id,
             new_status=EmploymentStatus.ACTIVE,
             reason=reason,
+            effective_date=effective_date,
         )
 
     async def deactivate_employee(
-        self, *, org_id: int, actor_id: int, employee_id: int, reason: str | None = None
+        self,
+        *,
+        org_id: int,
+        actor_id: int,
+        employee_id: int,
+        reason: str | None = None,
+        effective_date=None,
     ) -> EmployeeDetailSchema:
-        """Set employment status to ``inactive`` (idempotency guarded)."""
+        """Set employment status to ``inactive`` (contract #30; idempotency guarded)."""
         return await self.change_status(
             org_id=org_id,
             actor_id=actor_id,
             employee_id=employee_id,
             new_status=EmploymentStatus.INACTIVE,
             reason=reason,
+            effective_date=effective_date,
         )
 
     async def change_status(
@@ -323,11 +365,18 @@ class EmployeeService(BaseService):
         reason: str | None = None,
         effective_date=None,
     ) -> EmployeeDetailSchema:
-        """Transition an employee to ``new_status`` and record status history.
+        """Transition an employee between ``active`` and ``inactive`` (contract §9).
 
-        Rejects a no-op transition (already in the target status) as a conflict.
+        ``terminated`` is terminal: a terminated employee cannot be re-activated
+        or deactivated here (409 ``EMPLOYEE_ALREADY_TERMINATED``; the dedicated
+        rehire flow is the only way back). A no-op transition (already in the
+        target status) is rejected as a conflict.
         """
         employee = await self._get_active_employee(org_id, employee_id)
+        if employee.employment_status == EmploymentStatus.TERMINATED.value:
+            raise EmployeeAlreadyTerminatedException(
+                "Employee is terminated; termination is terminal (use rehire to reactivate)."
+            )
         if employee.employment_status == new_status.value:
             raise ConflictException(
                 f"Employee is already {new_status.value}.",
@@ -351,6 +400,39 @@ class EmployeeService(BaseService):
             )
         return await self._load_detail(org_id, employee_id, include_salary=False)
 
+    async def terminate_employee(
+        self,
+        *,
+        org_id: int,
+        actor_id: int,
+        employee_id: int,
+        data: EmployeeTerminateRequest,
+    ) -> EmployeeDetailSchema:
+        """Terminate an employee (contract #31 — terminal transition).
+
+        Sets ``employment_status='terminated'`` and ``date_of_leaving`` (defaulting
+        to the effective date) and appends the status-history row. Terminating an
+        already-terminated employee is a 409 ``EMPLOYEE_ALREADY_TERMINATED``.
+        """
+        employee = await self._get_active_employee(org_id, employee_id)
+        if employee.employment_status == EmploymentStatus.TERMINATED.value:
+            raise EmployeeAlreadyTerminatedException()
+        date_of_leaving = data.date_of_leaving or data.effective_date
+        return await self._terminate(
+            employee,
+            org_id=org_id,
+            actor_id=actor_id,
+            reason=data.reason,
+            effective_date=data.effective_date,
+            date_of_leaving=date_of_leaving,
+            title="Employee terminated",
+            description=self._with_context(
+                f"Terminated (date of leaving {date_of_leaving.isoformat()})",
+                effective_date=data.effective_date,
+                reason=data.reason,
+            ),
+        )
+
     async def exit_employee(
         self,
         *,
@@ -359,13 +441,14 @@ class EmployeeService(BaseService):
         employee_id: int,
         data: EmployeeExitRequest,
     ) -> EmployeeDetailSchema:
-        """Off-board an employee: record the last working day and terminate.
+        """Off-board an employee — deprecated alias of :meth:`terminate_employee`.
 
-        The date logic (``last_working_day`` ≥ ``resignation_date``) is validated by
-        the request schema; it is re-checked here (``invalid_exit_dates``) so
-        non-HTTP callers get the contract error code. The downstream cascade (device
-        de-map, future-shift unassignment, payroll pro-rata / F&F) is owned by the
-        enrollment / payroll modules and is out of scope for this data-only service.
+        Same terminal transition (contract #31) expressed through the legacy exit
+        body (``resignation_date`` / ``last_working_day``). The date logic is
+        validated by the request schema; it is re-checked here
+        (``invalid_exit_dates``) so non-HTTP callers get the contract error code.
+        The downstream cascade (device de-map, future-shift unassignment, payroll
+        pro-rata / F&F) is owned by the enrollment / payroll modules.
         """
         if data.last_working_day < data.resignation_date:
             raise ValidationException(
@@ -377,26 +460,50 @@ class EmployeeService(BaseService):
             raise ConflictException(
                 "Employee has already exited.", code="EMPLOYEE_ALREADY_EXITED"
             )
+        return await self._terminate(
+            employee,
+            org_id=org_id,
+            actor_id=actor_id,
+            reason=data.reason,
+            effective_date=data.last_working_day,
+            date_of_leaving=data.last_working_day,
+            title="Employee exited",
+            description=(
+                f"Exit recorded (last working day {data.last_working_day.isoformat()})."
+            ),
+        )
+
+    async def _terminate(
+        self,
+        employee: Employee,
+        *,
+        org_id: int,
+        actor_id: int,
+        reason: str | None,
+        effective_date,
+        date_of_leaving,
+        title: str,
+        description: str,
+    ) -> EmployeeDetailSchema:
+        """Shared terminal transition used by terminate (#31) and its exit alias."""
         async with self.transaction():
             await self._apply_status(
                 employee,
                 new_status=EmploymentStatus.TERMINATED,
                 actor_id=actor_id,
-                reason=data.reason,
-                effective_date=data.last_working_day,
-                extra_updates={"date_of_leaving": data.last_working_day},
+                reason=reason,
+                effective_date=effective_date,
+                extra_updates={"date_of_leaving": date_of_leaving},
             )
             await self._audit(
                 org_id=org_id,
                 actor_id=actor_id,
                 action_type=ActionType.UPDATE,
-                title="Employee exited",
-                description=(
-                    f"Exit recorded (last working day {data.last_working_day.isoformat()})."
-                ),
+                title=title,
+                description=description,
                 employee=employee,
             )
-        return await self._load_detail(org_id, employee_id, include_salary=False)
+        return await self._load_detail(org_id, employee.employee_id, include_salary=False)
 
     async def rehire_employee(
         self,
@@ -538,6 +645,87 @@ class EmployeeService(BaseService):
             code="REPORTING_MANAGER_NOT_SUPPORTED",
         )
 
+    async def transfer_employee(
+        self,
+        *,
+        org_id: int,
+        actor_id: int,
+        employee_id: int,
+        data: EmployeeTransferRequest,
+    ) -> EmployeeDetailSchema:
+        """Transfer an employee to another branch and/or department (contract #32).
+
+        Updates the FK(s) after validating the targets exist and are active in the
+        caller's org (404 on unknown target). There is no transfer-history table:
+        the change context (``reason`` / ``effective_date``) is captured in the
+        Activity Log only (§9).
+        """
+        employee = await self._get_active_employee(org_id, employee_id)
+        updates: dict = {}
+        if data.master_branch_id is not None:
+            if not await self.branches.exists_active(org_id, data.master_branch_id):
+                raise BranchNotFoundException()
+            updates["master_branch_id"] = data.master_branch_id
+        if data.dept_id is not None:
+            if not await self.departments.exists_active(org_id, data.dept_id):
+                raise DepartmentNotFoundException()
+            updates["dept_id"] = data.dept_id
+        async with self.transaction():
+            await self.employees.update(employee, updates)
+            await self._audit(
+                org_id=org_id,
+                actor_id=actor_id,
+                action_type=ActionType.UPDATE,
+                title="Employee transferred",
+                description=self._with_context(
+                    "Transferred: "
+                    + ", ".join(f"{field} → {value}" for field, value in updates.items()),
+                    effective_date=data.effective_date,
+                    reason=data.reason,
+                ),
+                employee=employee,
+            )
+        return await self._load_detail(org_id, employee_id, include_salary=False)
+
+    async def promote_employee(
+        self,
+        *,
+        org_id: int,
+        actor_id: int,
+        employee_id: int,
+        data: EmployeePromoteRequest,
+        can_set_salary: bool = True,
+    ) -> EmployeeDetailSchema:
+        """Promote an employee to a new designation (contract #33).
+
+        Optionally revises ``monthly_salary`` — persisted only when the caller
+        holds the salary permission (same gate as create/update employee). The
+        change context is captured in the Activity Log only (§9).
+        """
+        employee = await self._get_active_employee(org_id, employee_id)
+        if not await self.designations.exists_active(org_id, data.designation_id):
+            raise DesignationNotFoundException()
+        updates: dict = {"designation_id": data.designation_id}
+        salary_changed = can_set_salary and data.monthly_salary is not None
+        if salary_changed:
+            updates["monthly_salary"] = data.monthly_salary
+        async with self.transaction():
+            await self.employees.update(employee, updates)
+            await self._audit(
+                org_id=org_id,
+                actor_id=actor_id,
+                action_type=ActionType.UPDATE,
+                title="Employee promoted",
+                description=self._with_context(
+                    f"Promoted: designation → {data.designation_id}"
+                    + ("; salary revised" if salary_changed else ""),
+                    effective_date=data.effective_date,
+                    reason=data.reason,
+                ),
+                employee=employee,
+            )
+        return await self._load_detail(org_id, employee_id, include_salary=can_set_salary)
+
     # =====================================================================
     # Documents / photo
     # =====================================================================
@@ -578,6 +766,47 @@ class EmployeeService(BaseService):
             )
         return EmployeeDocumentSchema.model_validate(document)
 
+    async def list_documents(
+        self, *, org_id: int, employee_id: int
+    ) -> list[EmployeeDocumentSchema]:
+        """Return the employee's non-deleted document metadata (contract #35)."""
+        await self._get_active_employee(org_id, employee_id)
+        rows = await self.documents.list_for_employee(org_id, employee_id)
+        return [EmployeeDocumentSchema.model_validate(row) for row in rows]
+
+    async def get_document(
+        self, *, org_id: int, employee_id: int, document_id: int
+    ) -> EmployeeDocumentSchema:
+        """Return one document's stored URL + metadata for download (contract #36).
+
+        The storage client is a stub, so the persisted ``file_url`` is returned
+        directly instead of a short-lived signed URL / byte stream.
+        """
+        document = await self.documents.get_by_id_in_org(org_id, employee_id, document_id)
+        if document is None:
+            raise DocumentNotFoundException()
+        return EmployeeDocumentSchema.model_validate(document)
+
+    async def delete_document(
+        self, *, org_id: int, actor_id: int, employee_id: int, document_id: int
+    ) -> None:
+        """Soft-delete a document (``is_deleted=true``; contract #37)."""
+        employee = await self._get_active_employee(org_id, employee_id)
+        document = await self.documents.get_by_id_in_org(org_id, employee_id, document_id)
+        if document is None:
+            raise DocumentNotFoundException()
+        async with self.transaction():
+            await self.documents.update(document, {"is_deleted": True})
+            await self._audit(
+                org_id=org_id,
+                actor_id=actor_id,
+                action_type=ActionType.DELETE,
+                title="Document deleted",
+                description=f"Deleted {document.document_type} document #{document_id}.",
+                employee=employee,
+                sub_module="Documents",
+            )
+
     async def set_photo(
         self,
         *,
@@ -606,8 +835,336 @@ class EmployeeService(BaseService):
         return await self._load_detail(org_id, employee_id, include_salary=False)
 
     # =====================================================================
+    # Bank details (§8.1 — sensitive; reads additionally gated by salary perm)
+    # =====================================================================
+    async def list_bank_details(
+        self, *, org_id: int, employee_id: int
+    ) -> list[EmployeeBankDetailSchema]:
+        """Return the employee's non-deleted bank details (contract #38)."""
+        await self._get_active_employee(org_id, employee_id)
+        rows = await self.bank_details.list_for_employee(org_id, employee_id)
+        return [EmployeeBankDetailSchema.model_validate(row) for row in rows]
+
+    async def add_bank_detail(
+        self,
+        *,
+        org_id: int,
+        actor_id: int,
+        employee_id: int,
+        data: EmployeeBankDetailCreateRequest,
+    ) -> EmployeeBankDetailSchema:
+        """Add a bank detail; a primary row demotes any existing primary (contract #39, §9)."""
+        employee = await self._get_active_employee(org_id, employee_id)
+        async with self.transaction():
+            if data.is_primary:
+                await self.bank_details.unset_primary(employee_id)
+            row = await self.bank_details.create(
+                {"employee_id": employee_id, **data.model_dump()}
+            )
+            await self._audit(
+                org_id=org_id,
+                actor_id=actor_id,
+                action_type=ActionType.INSERT,
+                title="Bank detail added",
+                description="Added a bank detail.",
+                employee=employee,
+                sub_module="Bank Details",
+            )
+        return EmployeeBankDetailSchema.model_validate(row)
+
+    async def update_bank_detail(
+        self,
+        *,
+        org_id: int,
+        actor_id: int,
+        employee_id: int,
+        bank_detail_id: int,
+        data: EmployeeBankDetailUpdateRequest,
+    ) -> EmployeeBankDetailSchema:
+        """Partially update a bank detail (contract #40; primary rule re-enforced)."""
+        employee = await self._get_active_employee(org_id, employee_id)
+        row = await self.bank_details.get_by_id_in_org(org_id, employee_id, bank_detail_id)
+        if row is None:
+            raise BankDetailNotFoundException()
+        updates = data.model_dump(exclude_unset=True)
+        async with self.transaction():
+            if updates.get("is_primary"):
+                await self.bank_details.unset_primary(employee_id, exclude_id=bank_detail_id)
+            await self.bank_details.update(row, updates)
+            await self._audit(
+                org_id=org_id,
+                actor_id=actor_id,
+                action_type=ActionType.UPDATE,
+                title="Bank detail updated",
+                description=f"Updated bank detail #{bank_detail_id}.",
+                employee=employee,
+                sub_module="Bank Details",
+            )
+        return EmployeeBankDetailSchema.model_validate(row)
+
+    async def delete_bank_detail(
+        self, *, org_id: int, actor_id: int, employee_id: int, bank_detail_id: int
+    ) -> None:
+        """Soft-delete a bank detail (``is_deleted=true``; contract #41)."""
+        employee = await self._get_active_employee(org_id, employee_id)
+        row = await self.bank_details.get_by_id_in_org(org_id, employee_id, bank_detail_id)
+        if row is None:
+            raise BankDetailNotFoundException()
+        async with self.transaction():
+            await self.bank_details.update(row, {"is_deleted": True})
+            await self._audit(
+                org_id=org_id,
+                actor_id=actor_id,
+                action_type=ActionType.DELETE,
+                title="Bank detail deleted",
+                description=f"Deleted bank detail #{bank_detail_id}.",
+                employee=employee,
+                sub_module="Bank Details",
+            )
+
+    # =====================================================================
+    # Emergency contacts (§8.2)
+    # =====================================================================
+    async def list_emergency_contacts(
+        self, *, org_id: int, employee_id: int
+    ) -> list[EmployeeEmergencyContactSchema]:
+        """Return the employee's non-deleted emergency contacts (contract #42)."""
+        await self._get_active_employee(org_id, employee_id)
+        rows = await self.emergency_contacts.list_for_employee(org_id, employee_id)
+        return [EmployeeEmergencyContactSchema.model_validate(row) for row in rows]
+
+    async def add_emergency_contact(
+        self,
+        *,
+        org_id: int,
+        actor_id: int,
+        employee_id: int,
+        data: EmployeeEmergencyContactCreateRequest,
+    ) -> EmployeeEmergencyContactSchema:
+        """Add an emergency contact (contract #43)."""
+        employee = await self._get_active_employee(org_id, employee_id)
+        async with self.transaction():
+            row = await self.emergency_contacts.create(
+                {"employee_id": employee_id, **data.model_dump()}
+            )
+            await self._audit(
+                org_id=org_id,
+                actor_id=actor_id,
+                action_type=ActionType.INSERT,
+                title="Emergency contact added",
+                description=f"Added emergency contact {data.contact_person_name}.",
+                employee=employee,
+                sub_module="Emergency Contacts",
+            )
+        return EmployeeEmergencyContactSchema.model_validate(row)
+
+    async def update_emergency_contact(
+        self,
+        *,
+        org_id: int,
+        actor_id: int,
+        employee_id: int,
+        emergency_contact_id: int,
+        data: EmployeeEmergencyContactUpdateRequest,
+    ) -> EmployeeEmergencyContactSchema:
+        """Partially update an emergency contact (contract #44)."""
+        employee = await self._get_active_employee(org_id, employee_id)
+        row = await self.emergency_contacts.get_by_id_in_org(
+            org_id, employee_id, emergency_contact_id
+        )
+        if row is None:
+            raise EmergencyContactNotFoundException()
+        async with self.transaction():
+            await self.emergency_contacts.update(row, data.model_dump(exclude_unset=True))
+            await self._audit(
+                org_id=org_id,
+                actor_id=actor_id,
+                action_type=ActionType.UPDATE,
+                title="Emergency contact updated",
+                description=f"Updated emergency contact #{emergency_contact_id}.",
+                employee=employee,
+                sub_module="Emergency Contacts",
+            )
+        return EmployeeEmergencyContactSchema.model_validate(row)
+
+    async def delete_emergency_contact(
+        self, *, org_id: int, actor_id: int, employee_id: int, emergency_contact_id: int
+    ) -> None:
+        """Soft-delete an emergency contact (contract #45)."""
+        employee = await self._get_active_employee(org_id, employee_id)
+        row = await self.emergency_contacts.get_by_id_in_org(
+            org_id, employee_id, emergency_contact_id
+        )
+        if row is None:
+            raise EmergencyContactNotFoundException()
+        async with self.transaction():
+            await self.emergency_contacts.update(row, {"is_deleted": True})
+            await self._audit(
+                org_id=org_id,
+                actor_id=actor_id,
+                action_type=ActionType.DELETE,
+                title="Emergency contact deleted",
+                description=f"Deleted emergency contact #{emergency_contact_id}.",
+                employee=employee,
+                sub_module="Emergency Contacts",
+            )
+
+    # =====================================================================
+    # References (§8.3)
+    # =====================================================================
+    async def list_references(
+        self, *, org_id: int, employee_id: int
+    ) -> list[EmployeeReferenceSchema]:
+        """Return the employee's non-deleted references (contract #46)."""
+        await self._get_active_employee(org_id, employee_id)
+        rows = await self.references.list_for_employee(org_id, employee_id)
+        return [EmployeeReferenceSchema.model_validate(row) for row in rows]
+
+    async def add_reference(
+        self,
+        *,
+        org_id: int,
+        actor_id: int,
+        employee_id: int,
+        data: EmployeeReferenceCreateRequest,
+    ) -> EmployeeReferenceSchema:
+        """Add a reference (contract #47)."""
+        employee = await self._get_active_employee(org_id, employee_id)
+        async with self.transaction():
+            row = await self.references.create(
+                {"employee_id": employee_id, **data.model_dump()}
+            )
+            await self._audit(
+                org_id=org_id,
+                actor_id=actor_id,
+                action_type=ActionType.INSERT,
+                title="Reference added",
+                description=f"Added reference {data.reference_name}.",
+                employee=employee,
+                sub_module="References",
+            )
+        return EmployeeReferenceSchema.model_validate(row)
+
+    async def update_reference(
+        self,
+        *,
+        org_id: int,
+        actor_id: int,
+        employee_id: int,
+        reference_id: int,
+        data: EmployeeReferenceUpdateRequest,
+    ) -> EmployeeReferenceSchema:
+        """Partially update a reference (contract #48)."""
+        employee = await self._get_active_employee(org_id, employee_id)
+        row = await self.references.get_by_id_in_org(org_id, employee_id, reference_id)
+        if row is None:
+            raise ReferenceNotFoundException()
+        async with self.transaction():
+            await self.references.update(row, data.model_dump(exclude_unset=True))
+            await self._audit(
+                org_id=org_id,
+                actor_id=actor_id,
+                action_type=ActionType.UPDATE,
+                title="Reference updated",
+                description=f"Updated reference #{reference_id}.",
+                employee=employee,
+                sub_module="References",
+            )
+        return EmployeeReferenceSchema.model_validate(row)
+
+    async def delete_reference(
+        self, *, org_id: int, actor_id: int, employee_id: int, reference_id: int
+    ) -> None:
+        """Soft-delete a reference (contract #49)."""
+        employee = await self._get_active_employee(org_id, employee_id)
+        row = await self.references.get_by_id_in_org(org_id, employee_id, reference_id)
+        if row is None:
+            raise ReferenceNotFoundException()
+        async with self.transaction():
+            await self.references.update(row, {"is_deleted": True})
+            await self._audit(
+                org_id=org_id,
+                actor_id=actor_id,
+                action_type=ActionType.DELETE,
+                title="Reference deleted",
+                description=f"Deleted reference #{reference_id}.",
+                employee=employee,
+                sub_module="References",
+            )
+
+    # =====================================================================
+    # Tags (§8.4 — no is_deleted column: hard delete)
+    # =====================================================================
+    async def list_tags(self, *, org_id: int, employee_id: int) -> list[EmployeeTagSchema]:
+        """Return the employee's tags (contract #50)."""
+        await self._get_active_employee(org_id, employee_id)
+        rows = await self.tags.list_for_employee(org_id, employee_id)
+        return [EmployeeTagSchema.model_validate(row) for row in rows]
+
+    async def add_tag(
+        self, *, org_id: int, actor_id: int, employee_id: int, data: EmployeeTagCreateRequest
+    ) -> EmployeeTagSchema:
+        """Add a tag (contract #51)."""
+        employee = await self._get_active_employee(org_id, employee_id)
+        async with self.transaction():
+            row = await self.tags.create(
+                {"employee_id": employee_id, "created_by": actor_id, **data.model_dump()}
+            )
+            await self._audit(
+                org_id=org_id,
+                actor_id=actor_id,
+                action_type=ActionType.INSERT,
+                title="Tag added",
+                description=f"Added tag '{data.tag_label}'.",
+                employee=employee,
+                sub_module="Tags",
+            )
+        return EmployeeTagSchema.model_validate(row)
+
+    async def delete_tag(
+        self, *, org_id: int, actor_id: int, employee_id: int, tag_id: int
+    ) -> None:
+        """Hard-delete a tag — ``employee_tags`` has no ``is_deleted`` (contract #52)."""
+        employee = await self._get_active_employee(org_id, employee_id)
+        row = await self.tags.get_by_id_in_org(org_id, employee_id, tag_id)
+        if row is None:
+            raise TagNotFoundException()
+        tag_label = row.tag_label
+        async with self.transaction():
+            await self.tags.delete(row)
+            await self._audit(
+                org_id=org_id,
+                actor_id=actor_id,
+                action_type=ActionType.DELETE,
+                title="Tag deleted",
+                description=f"Deleted tag '{tag_label}'.",
+                employee=employee,
+                sub_module="Tags",
+            )
+
+    # =====================================================================
+    # Status history (§8.5 — read-only, system-maintained)
+    # =====================================================================
+    async def list_status_history(
+        self, *, org_id: int, employee_id: int
+    ) -> list[EmployeeStatusHistorySchema]:
+        """Return the employee's status history, oldest first (contract #53)."""
+        await self._get_active_employee(org_id, employee_id)
+        rows = await self.status_history.list_for_employee(org_id, employee_id)
+        return [EmployeeStatusHistorySchema.model_validate(row) for row in rows]
+
+    # =====================================================================
     # Internal helpers
     # =====================================================================
+    @staticmethod
+    def _with_context(base: str, *, effective_date=None, reason: str | None = None) -> str:
+        """Append the transfer/promote change context for the Activity Log (§9)."""
+        parts = [base]
+        if effective_date is not None:
+            parts.append(f"effective {effective_date.isoformat()}")
+        if reason:
+            parts.append(f"reason: {reason}")
+        return "; ".join(parts) + "."
     async def _get_active_employee(self, org_id: int, employee_id: int) -> Employee:
         """Return the active employee or raise :class:`NotFoundException` (``not_found``)."""
         employee = await self.employees.get_active_by_id(employee_id, org_id)

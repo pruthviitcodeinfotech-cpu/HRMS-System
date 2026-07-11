@@ -6,10 +6,10 @@ the architecture models these as VARCHAR columns with CHECK constraints, and
 that is preserved.
 """
 
-from enum import Enum
+from enum import StrEnum
 
 
-class RequestType(str, Enum):
+class RequestType(StrEnum):
     """approval_requests.request_type. (Enforced by DB CHECK.)"""
 
     ATTENDANCE = "attendance"
@@ -17,7 +17,7 @@ class RequestType(str, Enum):
     LOGIN_RESET = "login_reset"
 
 
-class ApprovalStatus(str, Enum):
+class ApprovalStatus(StrEnum):
     """status on approval_requests / attendance_regularization_requests /
     login_reset_requests. (Enforced by DB CHECK on each table.)"""
 

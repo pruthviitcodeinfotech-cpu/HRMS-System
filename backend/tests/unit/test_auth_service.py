@@ -42,6 +42,7 @@ async def test_login_success(service, fake_user) -> None:
     assert result.user.email == fake_user.email
     service.sessions.create_session.assert_awaited_once()
     service.users.update_last_login.assert_awaited_once()
+    service.audit.record.assert_awaited_once()
 
 
 async def test_login_wrong_password(service, fake_user) -> None:

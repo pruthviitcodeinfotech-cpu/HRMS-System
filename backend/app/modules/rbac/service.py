@@ -16,14 +16,26 @@ account locking as an unsupported Open Question. Enable/disable is provided via
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions.base import (
     AuthorizationException,
     ConflictException,
     NotFoundException,
+    ValidationException,
 )
 from app.core.security.password import hash_password
+from app.core.security.permissions import (
+    FeatureCatalogEntry,
+    get_catalog_entry,
+    is_known_feature,
+    list_catalog,
+)
+from app.modules.audit.constants import ActionType
+from app.modules.audit.service import AuditService
+from app.modules.auth.repository import UserSessionRepository
 from app.modules.rbac.authorization import PermissionResolver
 from app.modules.rbac.models import RightsTemplate, User
 from app.modules.rbac.repository import (
@@ -44,6 +56,7 @@ from app.modules.rbac.schemas import (
     DepartmentAccessSchema,
     EffectivePermissionSchema,
     EffectivePermissionsSchema,
+    PermissionCatalogItemSchema,
     RoleCloneRequest,
     RoleCreateRequest,
     RoleDetailSchema,
@@ -51,6 +64,7 @@ from app.modules.rbac.schemas import (
     RoleRefSchema,
     RoleSchema,
     RoleUpdateRequest,
+    SessionsRevokedSchema,
     TemplatePermissionInput,
     TemplatePermissionSchema,
     UserCreateRequest,
@@ -58,6 +72,8 @@ from app.modules.rbac.schemas import (
     UserListResponse,
     UserRoleSchema,
     UserSchema,
+    UserSessionListResponse,
+    UserSessionSchema,
     UserSummarySchema,
     UserUpdateRequest,
 )
@@ -79,7 +95,55 @@ class RBACService(BaseService):
         self.custom_perms = UserCustomPermissionRepository(session)
         self.branch_access = UserBranchAccessRepository(session)
         self.dept_access = UserDepartmentAccessRepository(session)
+        self.sessions = UserSessionRepository(session)
         self._resolver = PermissionResolver(session)
+        self.audit = AuditService(session)
+
+    # =====================================================================
+    # Audit helpers
+    # =====================================================================
+    async def _actor_name(self, org_id: int, actor_id: int | None) -> str:
+        """Resolve the acting user's display name for auditing (best-effort).
+
+        Several mutating methods do not receive an ``actor_id`` (their contract
+        signature omits it); those actions are attributed to ``"System"`` rather
+        than inventing an identity.
+        """
+        if actor_id is None:
+            return "System"
+        user = await self.users.get_active_by_id(actor_id, org_id)
+        name = getattr(user, "name", None)
+        return name if isinstance(name, str) and name else f"user #{actor_id}"
+
+    async def _audit(
+        self,
+        *,
+        org_id: int,
+        actor_id: int | None,
+        module: str,
+        action_type: ActionType,
+        title: str,
+        description: str,
+        sub_module: str | None = None,
+        employee_id: int | None = None,
+    ) -> None:
+        """Write one audit row inside the caller's active transaction boundary.
+
+        ``module`` is either ``"user_management"`` (user accounts) or ``"rbac"``
+        (roles, permissions, assignments, data scope) so the security/access report
+        (``reports.repository`` security-events query) returns these rows.
+        """
+        await self.audit.record(
+            org_id=org_id,
+            module=module,
+            sub_module=sub_module,
+            action_type=action_type,
+            title=title,
+            description=description,
+            performed_by_user_id=actor_id,
+            performed_by_name=await self._actor_name(org_id, actor_id),
+            employee_id=employee_id,
+        )
 
     # =====================================================================
     # Users
@@ -116,6 +180,15 @@ class RBACService(BaseService):
         }
         async with self.transaction():
             user = await self.users.create(payload)
+            await self._audit(
+                org_id=org_id,
+                actor_id=actor_id,
+                module="user_management",
+                sub_module="user",
+                action_type=ActionType.INSERT,
+                title="User created",
+                description=f"Created user '{user.name}' ({user.email}) #{user.id}",
+            )
         return self._user_schema(user)
 
     async def update_user(
@@ -147,6 +220,18 @@ class RBACService(BaseService):
 
         async with self.transaction():
             user = await self.users.update(user, updates)
+            await self._audit(
+                org_id=org_id,
+                actor_id=None,
+                module="user_management",
+                sub_module="user",
+                action_type=ActionType.UPDATE,
+                title="User updated",
+                description=(
+                    f"Updated user '{user.name}' #{user.id}; "
+                    f"fields: {sorted(updates.keys())}"
+                ),
+            )
         return self._user_schema(user)
 
     async def get_user(self, *, org_id: int, user_id: int) -> UserDetailSchema:
@@ -202,6 +287,15 @@ class RBACService(BaseService):
         user = await self._get_active_user(org_id, user_id)
         async with self.transaction():
             user = await self.users.update(user, {"is_active": True})
+            await self._audit(
+                org_id=org_id,
+                actor_id=None,
+                module="user_management",
+                sub_module="user",
+                action_type=ActionType.UPDATE,
+                title="User activated",
+                description=f"Activated user '{user.name}' #{user.id}",
+            )
         return self._user_schema(user)
 
     async def deactivate_user(self, *, org_id: int, actor_id: int, user_id: int) -> UserSchema:
@@ -213,6 +307,15 @@ class RBACService(BaseService):
         user = await self._get_active_user(org_id, user_id)
         async with self.transaction():
             user = await self.users.update(user, {"is_active": False})
+            await self._audit(
+                org_id=org_id,
+                actor_id=actor_id,
+                module="user_management",
+                sub_module="user",
+                action_type=ActionType.UPDATE,
+                title="User deactivated",
+                description=f"Deactivated user '{user.name}' #{user.id}",
+            )
         return self._user_schema(user)
 
     async def delete_user(self, *, org_id: int, actor_id: int, user_id: int) -> None:
@@ -224,6 +327,15 @@ class RBACService(BaseService):
         user = await self._get_active_user(org_id, user_id)
         async with self.transaction():
             await self.users.update(user, {"deleted_at": utcnow()})
+            await self._audit(
+                org_id=org_id,
+                actor_id=actor_id,
+                module="user_management",
+                sub_module="user",
+                action_type=ActionType.DELETE,
+                title="User deleted",
+                description=f"Soft-deleted user '{user.name}' #{user.id}",
+            )
 
     async def restore_user(self, *, org_id: int, user_id: int) -> UserSchema:
         """Restore a soft-deleted user (clear ``deleted_at``)."""
@@ -232,6 +344,15 @@ class RBACService(BaseService):
             raise ConflictException("User is not deleted.", code="USER_NOT_DELETED")
         async with self.transaction():
             user = await self.users.update(user, {"deleted_at": None})
+            await self._audit(
+                org_id=org_id,
+                actor_id=None,
+                module="user_management",
+                sub_module="user",
+                action_type=ActionType.UPDATE,
+                title="User restored",
+                description=f"Restored user '{user.name}' #{user.id}",
+            )
         return self._user_schema(user)
 
     async def assign_employee(
@@ -245,13 +366,37 @@ class RBACService(BaseService):
             )
         async with self.transaction():
             user = await self.users.update(user, {"employee_id": employee_id})
+            await self._audit(
+                org_id=org_id,
+                actor_id=None,
+                module="user_management",
+                sub_module="user",
+                action_type=ActionType.ASSIGN,
+                title="Employee linked to user",
+                description=f"Linked employee #{employee_id} to user '{user.name}' #{user.id}",
+                employee_id=employee_id,
+            )
         return self._user_schema(user)
 
     async def remove_employee(self, *, org_id: int, user_id: int) -> UserSchema:
         """Unlink the employee from a user."""
         user = await self._get_active_user(org_id, user_id)
+        prior_employee_id = user.employee_id
         async with self.transaction():
             user = await self.users.update(user, {"employee_id": None})
+            await self._audit(
+                org_id=org_id,
+                actor_id=None,
+                module="user_management",
+                sub_module="user",
+                action_type=ActionType.DELETE,
+                title="Employee unlinked from user",
+                description=(
+                    f"Unlinked employee #{prior_employee_id} from user "
+                    f"'{user.name}' #{user.id}"
+                ),
+                employee_id=prior_employee_id,
+            )
         return self._user_schema(user)
 
     # =====================================================================
@@ -263,12 +408,25 @@ class RBACService(BaseService):
         """Create a rights template and (optionally) its initial permissions."""
         if await self.roles.name_exists(org_id, data.name):
             raise ConflictException("Role name already in use.", code="TEMPLATE_NAME_EXISTS")
+        self._require_known_feature_keys(item.feature_key for item in data.permissions)
         async with self.transaction():
             role = await self.roles.create(
                 {"org_id": org_id, "name": data.name, "created_by": actor_id}
             )
             for item in data.permissions:
                 await self.template_perms.create(self._template_perm_payload(role.id, item))
+            await self._audit(
+                org_id=org_id,
+                actor_id=actor_id,
+                module="rbac",
+                sub_module="role",
+                action_type=ActionType.INSERT,
+                title="Role created",
+                description=(
+                    f"Created role '{role.name}' #{role.id} "
+                    f"with {len(data.permissions)} permission(s)"
+                ),
+            )
         return await self.get_role(org_id=org_id, template_id=role.id)
 
     async def update_role(
@@ -282,6 +440,15 @@ class RBACService(BaseService):
             raise ConflictException("Role name already in use.", code="TEMPLATE_NAME_EXISTS")
         async with self.transaction():
             role = await self.roles.update(role, {"name": data.name, "updated_by": actor_id})
+            await self._audit(
+                org_id=org_id,
+                actor_id=actor_id,
+                module="rbac",
+                sub_module="role",
+                action_type=ActionType.UPDATE,
+                title="Role updated",
+                description=f"Renamed role to '{role.name}' #{role.id}",
+            )
         return await self._role_schema(role)
 
     async def get_role(self, *, org_id: int, template_id: int) -> RoleDetailSchema:
@@ -326,6 +493,15 @@ class RBACService(BaseService):
             raise ConflictException("Role is assigned to users.", code="TEMPLATE_IN_USE")
         async with self.transaction():
             await self.roles.update(role, {"deleted_at": utcnow()})
+            await self._audit(
+                org_id=org_id,
+                actor_id=None,
+                module="rbac",
+                sub_module="role",
+                action_type=ActionType.DELETE,
+                title="Role deleted",
+                description=f"Soft-deleted role '{role.name}' #{role.id}",
+            )
 
     async def restore_role(self, *, org_id: int, template_id: int) -> RoleSchema:
         """Restore a soft-deleted template."""
@@ -334,6 +510,15 @@ class RBACService(BaseService):
             raise ConflictException("Role is not deleted.", code="TEMPLATE_NOT_DELETED")
         async with self.transaction():
             role = await self.roles.update(role, {"deleted_at": None})
+            await self._audit(
+                org_id=org_id,
+                actor_id=None,
+                module="rbac",
+                sub_module="role",
+                action_type=ActionType.UPDATE,
+                title="Role restored",
+                description=f"Restored role '{role.name}' #{role.id}",
+            )
         return await self._role_schema(role)
 
     async def clone_role(
@@ -358,6 +543,18 @@ class RBACService(BaseService):
                         **{key: getattr(perm, key) for key in _CRUD_KEYS},
                     }
                 )
+            await self._audit(
+                org_id=org_id,
+                actor_id=actor_id,
+                module="rbac",
+                sub_module="role",
+                action_type=ActionType.INSERT,
+                title="Role cloned",
+                description=(
+                    f"Cloned role '{source.name}' #{source.id} into "
+                    f"'{clone.name}' #{clone.id}"
+                ),
+            )
         return await self.get_role(org_id=org_id, template_id=clone.id)
 
     # =====================================================================
@@ -375,6 +572,7 @@ class RBACService(BaseService):
         self, *, org_id: int, template_id: int, item: TemplatePermissionInput
     ) -> TemplatePermissionSchema:
         """Add or update (upsert) one feature's permission on a template."""
+        self._require_known_feature_keys((item.feature_key,))
         await self._get_active_role(org_id, template_id)
         existing = await self.template_perms.get_for_feature(template_id, item.feature_key)
         async with self.transaction():
@@ -386,6 +584,17 @@ class RBACService(BaseService):
                 row = await self.template_perms.create(
                     self._template_perm_payload(template_id, item)
                 )
+            await self._audit(
+                org_id=org_id,
+                actor_id=None,
+                module="rbac",
+                sub_module="role_permission",
+                action_type=ActionType.ASSIGN,
+                title="Role permission set",
+                description=(
+                    f"Set permission for feature '{item.feature_key}' on role #{template_id}"
+                ),
+            )
         return TemplatePermissionSchema.model_validate(row)
 
     async def remove_template_permission(
@@ -395,6 +604,18 @@ class RBACService(BaseService):
         await self._get_active_role(org_id, template_id)
         async with self.transaction():
             removed = await self.template_perms.delete_for_feature(template_id, feature_key)
+            if removed:
+                await self._audit(
+                    org_id=org_id,
+                    actor_id=None,
+                    module="rbac",
+                    sub_module="role_permission",
+                    action_type=ActionType.DELETE,
+                    title="Role permission removed",
+                    description=(
+                        f"Removed permission for feature '{feature_key}' from role #{template_id}"
+                    ),
+                )
         if not removed:
             raise NotFoundException("Permission not found.", code="PERMISSION_NOT_FOUND")
 
@@ -402,6 +623,7 @@ class RBACService(BaseService):
         self, *, org_id: int, template_id: int, items: list[TemplatePermissionInput]
     ) -> list[TemplatePermissionSchema]:
         """Replace a template's entire permission set atomically."""
+        self._require_known_feature_keys(item.feature_key for item in items)
         await self._get_active_role(org_id, template_id)
         async with self.transaction():
             await self.template_perms.delete_all_for_template(template_id)
@@ -409,7 +631,40 @@ class RBACService(BaseService):
                 await self.template_perms.create(self._template_perm_payload(template_id, item))
                 for item in items
             ]
+            await self._audit(
+                org_id=org_id,
+                actor_id=None,
+                module="rbac",
+                sub_module="role_permission",
+                action_type=ActionType.BULK_ASSIGN,
+                title="Role permissions replaced",
+                description=(
+                    f"Replaced permission set on role #{template_id} "
+                    f"with {len(rows)} feature(s)"
+                ),
+            )
         return [TemplatePermissionSchema.model_validate(r) for r in rows]
+
+    # =====================================================================
+    # Permission catalog (static code registry — contract §5.4)
+    # =====================================================================
+    async def list_permission_catalog(
+        self, *, parent_feature_key: str | None = None
+    ) -> list[PermissionCatalogItemSchema]:
+        """Return the registered feature catalog (optionally one parent's subtree)."""
+        return [self._catalog_item(entry) for entry in list_catalog(parent_feature_key)]
+
+    async def get_permission_catalog_entry(
+        self, *, feature_key: str
+    ) -> PermissionCatalogItemSchema:
+        """Return one registered feature's metadata (404 ``FEATURE_KEY_UNKNOWN``)."""
+        entry = get_catalog_entry(feature_key)
+        if entry is None:
+            raise NotFoundException(
+                "Feature key is not registered in the permission catalog.",
+                code="FEATURE_KEY_UNKNOWN",
+            )
+        return self._catalog_item(entry)
 
     # =====================================================================
     # User ↔ template assignment (user role)
@@ -432,11 +687,20 @@ class RBACService(BaseService):
     ) -> UserRoleSchema:
         """Assign or replace the user's single rights template."""
         await self._get_active_user(org_id, user_id)
-        await self._get_active_role(org_id, data.template_id)
+        role = await self._get_active_role(org_id, data.template_id)
         async with self.transaction():
             await self.assignments.delete_for_user(user_id)
             await self.assignments.create(
                 {"user_id": user_id, "template_id": data.template_id, "assigned_by": actor_id}
+            )
+            await self._audit(
+                org_id=org_id,
+                actor_id=actor_id,
+                module="rbac",
+                sub_module="user_role",
+                action_type=ActionType.ASSIGN,
+                title="Role assigned to user",
+                description=f"Assigned role '{role.name}' #{role.id} to user #{user_id}",
             )
         return await self.get_user_role(org_id=org_id, user_id=user_id)
 
@@ -445,6 +709,16 @@ class RBACService(BaseService):
         await self._get_active_user(org_id, user_id)
         async with self.transaction():
             removed = await self.assignments.delete_for_user(user_id)
+            if removed:
+                await self._audit(
+                    org_id=org_id,
+                    actor_id=None,
+                    module="rbac",
+                    sub_module="user_role",
+                    action_type=ActionType.DELETE,
+                    title="Role removed from user",
+                    description=f"Removed role assignment from user #{user_id}",
+                )
         if not removed:
             raise NotFoundException("No role assigned.", code="ASSIGNMENT_NOT_FOUND")
 
@@ -463,6 +737,7 @@ class RBACService(BaseService):
         self, *, org_id: int, actor_id: int, user_id: int, item: CustomPermissionInput
     ) -> CustomPermissionSchema:
         """Add or update (upsert) a per-user permission override."""
+        self._require_known_feature_keys((item.feature_key,))
         await self._get_active_user(org_id, user_id)
         existing = await self.custom_perms.get_for_feature(user_id, item.feature_key)
         async with self.transaction():
@@ -474,6 +749,17 @@ class RBACService(BaseService):
                 row = await self.custom_perms.create(
                     self._custom_perm_payload(user_id, actor_id, item)
                 )
+            await self._audit(
+                org_id=org_id,
+                actor_id=actor_id,
+                module="rbac",
+                sub_module="custom_permission",
+                action_type=ActionType.ASSIGN,
+                title="Custom permission set",
+                description=(
+                    f"Set custom permission for feature '{item.feature_key}' on user #{user_id}"
+                ),
+            )
         return CustomPermissionSchema.model_validate(row)
 
     async def remove_custom_permission(
@@ -483,6 +769,19 @@ class RBACService(BaseService):
         await self._get_active_user(org_id, user_id)
         async with self.transaction():
             removed = await self.custom_perms.delete_for_feature(user_id, feature_key)
+            if removed:
+                await self._audit(
+                    org_id=org_id,
+                    actor_id=None,
+                    module="rbac",
+                    sub_module="custom_permission",
+                    action_type=ActionType.DELETE,
+                    title="Custom permission removed",
+                    description=(
+                        f"Removed custom permission for feature '{feature_key}' "
+                        f"from user #{user_id}"
+                    ),
+                )
         if not removed:
             raise NotFoundException("Permission not found.", code="PERMISSION_NOT_FOUND")
 
@@ -490,6 +789,7 @@ class RBACService(BaseService):
         self, *, org_id: int, actor_id: int, user_id: int, items: list[CustomPermissionInput]
     ) -> list[CustomPermissionSchema]:
         """Replace a user's entire override set atomically."""
+        self._require_known_feature_keys(item.feature_key for item in items)
         await self._get_active_user(org_id, user_id)
         async with self.transaction():
             await self.custom_perms.delete_all_for_user(user_id)
@@ -497,6 +797,18 @@ class RBACService(BaseService):
                 await self.custom_perms.create(self._custom_perm_payload(user_id, actor_id, item))
                 for item in items
             ]
+            await self._audit(
+                org_id=org_id,
+                actor_id=actor_id,
+                module="rbac",
+                sub_module="custom_permission",
+                action_type=ActionType.BULK_ASSIGN,
+                title="Custom permissions replaced",
+                description=(
+                    f"Replaced custom permission set for user #{user_id} "
+                    f"with {len(rows)} feature(s)"
+                ),
+            )
         return [CustomPermissionSchema.model_validate(r) for r in rows]
 
     # =====================================================================
@@ -551,6 +863,15 @@ class RBACService(BaseService):
             row = await self.branch_access.create(
                 {"user_id": user_id, "branch_id": branch_id, "granted_by": actor_id}
             )
+            await self._audit(
+                org_id=org_id,
+                actor_id=actor_id,
+                module="rbac",
+                sub_module="branch_access",
+                action_type=ActionType.ASSIGN,
+                title="Branch access granted",
+                description=f"Granted branch #{branch_id} access to user #{user_id}",
+            )
         return BranchAccessSchema.model_validate(row)
 
     async def remove_branch_access(self, *, org_id: int, user_id: int, branch_id: int) -> None:
@@ -558,6 +879,16 @@ class RBACService(BaseService):
         await self._get_active_user(org_id, user_id)
         async with self.transaction():
             removed = await self.branch_access.delete_for_branch(user_id, branch_id)
+            if removed:
+                await self._audit(
+                    org_id=org_id,
+                    actor_id=None,
+                    module="rbac",
+                    sub_module="branch_access",
+                    action_type=ActionType.DELETE,
+                    title="Branch access revoked",
+                    description=f"Revoked branch #{branch_id} access from user #{user_id}",
+                )
         if not removed:
             raise NotFoundException("Branch access not found.", code="BRANCH_ACCESS_NOT_FOUND")
 
@@ -574,6 +905,18 @@ class RBACService(BaseService):
                 )
                 for bid in dict.fromkeys(branch_ids)  # de-duplicate, preserve order
             ]
+            await self._audit(
+                org_id=org_id,
+                actor_id=actor_id,
+                module="rbac",
+                sub_module="branch_access",
+                action_type=ActionType.BULK_ASSIGN,
+                title="Branch access replaced",
+                description=(
+                    f"Replaced branch access for user #{user_id} "
+                    f"with {len(rows)} branch(es)"
+                ),
+            )
         return [BranchAccessSchema.model_validate(r) for r in rows]
 
     # =====================================================================
@@ -600,6 +943,15 @@ class RBACService(BaseService):
             row = await self.dept_access.create(
                 {"user_id": user_id, "department_id": department_id, "granted_by": actor_id}
             )
+            await self._audit(
+                org_id=org_id,
+                actor_id=actor_id,
+                module="rbac",
+                sub_module="department_access",
+                action_type=ActionType.ASSIGN,
+                title="Department access granted",
+                description=f"Granted department #{department_id} access to user #{user_id}",
+            )
         return DepartmentAccessSchema.model_validate(row)
 
     async def remove_department_access(
@@ -609,6 +961,16 @@ class RBACService(BaseService):
         await self._get_active_user(org_id, user_id)
         async with self.transaction():
             removed = await self.dept_access.delete_for_department(user_id, department_id)
+            if removed:
+                await self._audit(
+                    org_id=org_id,
+                    actor_id=None,
+                    module="rbac",
+                    sub_module="department_access",
+                    action_type=ActionType.DELETE,
+                    title="Department access revoked",
+                    description=f"Revoked department #{department_id} access from user #{user_id}",
+                )
         if not removed:
             raise NotFoundException(
                 "Department access not found.", code="DEPARTMENT_ACCESS_NOT_FOUND"
@@ -627,11 +989,108 @@ class RBACService(BaseService):
                 )
                 for did in dict.fromkeys(department_ids)
             ]
+            await self._audit(
+                org_id=org_id,
+                actor_id=actor_id,
+                module="rbac",
+                sub_module="department_access",
+                action_type=ActionType.BULK_ASSIGN,
+                title="Department access replaced",
+                description=(
+                    f"Replaced department access for user #{user_id} with {len(rows)} department(s)"
+                ),
+            )
         return [DepartmentAccessSchema.model_validate(r) for r in rows]
+
+    # =====================================================================
+    # Session administration (admin — another user's ``user_sessions``)
+    # =====================================================================
+    async def list_user_sessions(
+        self,
+        *,
+        org_id: int,
+        user_id: int,
+        active_only: bool = True,
+        page: int = 1,
+        page_size: int = 25,
+    ) -> UserSessionListResponse:
+        """Return a page of the target user's sessions (``session_token`` never leaves)."""
+        await self._get_any_user(org_id, user_id)
+        rows = await self.sessions.list_for_user(
+            user_id, active_only=active_only, page=page, page_size=page_size
+        )
+        total = await self.sessions.count_for_user(user_id, active_only=active_only)
+        items = [UserSessionSchema.model_validate(row) for row in rows]
+        return UserSessionListResponse.build(
+            items=items, page=page, page_size=page_size, total_records=total
+        )
+
+    async def force_logout_session(
+        self, *, org_id: int, actor_id: int, user_id: int, session_id: int
+    ) -> None:
+        """Revoke one of the target user's sessions (force logout)."""
+        user = await self._get_any_user(org_id, user_id)
+        session_row = await self.sessions.get_for_user(session_id, user_id)
+        if session_row is None:
+            raise NotFoundException("Session not found.", code="SESSION_NOT_FOUND")
+        async with self.transaction():
+            await self.sessions.revoke(session_row, when=utcnow())
+            await self._audit(
+                org_id=org_id,
+                actor_id=actor_id,
+                module="user_management",
+                sub_module="session",
+                action_type=ActionType.DELETE,
+                title="Session force-logged-out",
+                description=(
+                    f"Force-logged-out session #{session_id} of user "
+                    f"'{user.name}' #{user_id}"
+                ),
+            )
+
+    async def revoke_all_user_sessions(
+        self, *, org_id: int, actor_id: int, user_id: int
+    ) -> SessionsRevokedSchema:
+        """Revoke all of the target user's active sessions (e.g. after deactivate/delete)."""
+        user = await self._get_any_user(org_id, user_id)
+        async with self.transaction():
+            revoked = await self.sessions.revoke_all_for_user(user_id, when=utcnow())
+            await self._audit(
+                org_id=org_id,
+                actor_id=actor_id,
+                module="user_management",
+                sub_module="session",
+                action_type=ActionType.DELETE,
+                title="All user sessions revoked",
+                description=(
+                    f"Revoked {revoked} session(s) of user '{user.name}' #{user_id}"
+                ),
+            )
+        return SessionsRevokedSchema(revoked_count=revoked)
 
     # =====================================================================
     # Internal helpers
     # =====================================================================
+    @staticmethod
+    def _require_known_feature_keys(feature_keys: Iterable[str]) -> None:
+        """Raise 422 ``FEATURE_KEY_UNKNOWN`` if any key is not in the catalog."""
+        unknown = sorted({key for key in feature_keys if not is_known_feature(key)})
+        if unknown:
+            raise ValidationException(
+                f"Unknown feature key(s): {', '.join(unknown)}.",
+                code="FEATURE_KEY_UNKNOWN",
+                details={"unknown_feature_keys": unknown},
+            )
+
+    @staticmethod
+    def _catalog_item(entry: FeatureCatalogEntry) -> PermissionCatalogItemSchema:
+        return PermissionCatalogItemSchema(
+            feature_key=entry.feature_key,
+            feature_label=entry.feature_label,
+            parent_feature_key=entry.parent_feature_key,
+            supported_actions=list(entry.supported_actions),
+        )
+
     async def _get_active_user(self, org_id: int, user_id: int) -> User:
         user = await self.users.get_active_by_id(user_id, org_id)
         if user is None:

@@ -6,43 +6,37 @@ All database access is performed strictly via repositories and session queries.
 
 from __future__ import annotations
 
-from datetime import date, datetime, time
-from decimal import Decimal
 import io
+from datetime import date, time
+from decimal import Decimal
+from typing import TYPE_CHECKING
 
-from sqlalchemy import select, and_, func
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.constants.enums import SortOrder
 from app.core.exceptions.base import ConflictException, NotFoundException, ValidationException
+from app.modules.attendance.models import AttendanceDay
 from app.modules.audit.constants import ActionType
 from app.modules.audit.service import AuditService
 from app.modules.employee.models.employee import Employee
 from app.modules.employee.repository import EmployeeRepository
-from app.modules.rbac.repository import UserRepository
-from app.modules.attendance.models import AttendanceDay
 from app.modules.leave.models.leave import LeaveRequest
-from app.modules.settlements.models import (
-    EmployeeLoanAdvance,
-    LoanAdvanceTransaction,
-    EmployeeArrears,
-    ArrearsTransaction,
-)
-from app.modules.payroll.constants import PaymentStatus, WorkingHourType, AttendanceMode
+from app.modules.notifications.constants import NotificationType
+from app.modules.payroll.constants import AttendanceMode, PaymentStatus, WorkingHourType
 from app.modules.payroll.exceptions import (
-    PayrollGroupNotFoundException,
-    PayrollGroupNameExistsException,
-    PayrollGroupInUseException,
-    CycleNotFoundException,
+    AdjustmentExistsException,
+    AdjustmentNotFoundException,
+    ComputedRowNotFoundException,
     CycleExistsException,
     CycleFinalizedException,
-    ComputedRowNotFoundException,
+    CycleNotFoundException,
+    EmployeeNotFoundException,
     FinalizedRunNotFoundException,
     PayrollAlreadyFinalizedException,
+    PayrollGroupInUseException,
+    PayrollGroupNameExistsException,
+    PayrollGroupNotFoundException,
     PayrollNotFinalizedException,
-    AdjustmentNotFoundException,
-    AdjustmentExistsException,
-    EmployeeNotFoundException,
 )
 from app.modules.payroll.models import (
     AttendanceAdjustment,
@@ -57,40 +51,50 @@ from app.modules.payroll.models import (
     PayrollSetting,
 )
 from app.modules.payroll.repository import (
-    PayrollSettingRepository,
-    PayrollGroupRepository,
-    EmployeePayrollGroupAssignmentRepository,
-    PayrollSalaryCycleRepository,
-    PayrollColumnSettingRepository,
-    FinalizedPayrollRunRepository,
-    PayrollComputedRowRepository,
-    AttendanceAdjustmentRepository,
-    AttendanceAdjustmentPenaltyRepository,
     AttendanceAdjustmentExtraHoursRepository,
+    AttendanceAdjustmentPenaltyRepository,
+    AttendanceAdjustmentRepository,
+    EmployeePayrollGroupAssignmentRepository,
+    FinalizedPayrollRunRepository,
+    PayrollColumnSettingRepository,
+    PayrollComputedRowRepository,
+    PayrollGroupRepository,
+    PayrollSalaryCycleRepository,
+    PayrollSettingRepository,
 )
 from app.modules.payroll.schemas import (
-    PayrollSettingUpdateSchema,
-    PayrollGroupCreateSchema,
-    PayrollGroupUpdateSchema,
+    AttendanceAdjustmentCreateSchema,
+    AttendanceAdjustmentExtraHoursCreateSchema,
+    AttendanceAdjustmentPenaltyCreateSchema,
+    AttendanceAdjustmentUpdateSchema,
     EmployeeGroupAssignRequestSchema,
     PayrollColumnSettingsReplaceSchema,
     PayrollCycleCreateSchema,
     PayrollCycleUpdateSchema,
+    PayrollGroupCreateSchema,
+    PayrollGroupUpdateSchema,
+    PayrollProcessItemResultSchema,
     PayrollProcessRequestSchema,
     PayrollProcessResponseSchema,
-    PayrollProcessItemResultSchema,
-    RecordPaymentRequestSchema,
+    PayrollSettingUpdateSchema,
     PayrollSummaryResponseSchema,
     PayslipResponseSchema,
     PayslipSectionItemSchema,
-    AttendanceAdjustmentCreateSchema,
-    AttendanceAdjustmentUpdateSchema,
-    AttendanceAdjustmentPenaltyCreateSchema,
-    AttendanceAdjustmentExtraHoursCreateSchema,
+    RecordPaymentRequestSchema,
+)
+from app.modules.rbac.repository import UserRepository
+from app.modules.settlements.models import (
+    ArrearsTransaction,
+    EmployeeArrears,
+    EmployeeLoanAdvance,
+    LoanAdvanceTransaction,
 )
 from app.shared.base.service import BaseService
 from app.shared.schemas.pagination import PaginatedResponse
 from app.shared.utils.datetime import utcnow
+
+if TYPE_CHECKING:
+    from app.modules.notifications.service import NotificationService
 
 
 class PayrollService(BaseService):
@@ -115,7 +119,18 @@ class PayrollService(BaseService):
         self.users = UserRepository(session)
         self.audit = AuditService(session)
 
+        # Cross-module notifier (constructed lazily — see _get_notifier).
+        self.notifications: NotificationService | None = None
+
     # --- Helper & Guard Methods ----------------------------------------------
+
+    def _get_notifier(self) -> NotificationService:
+        """Return the notifications service, importing lazily to avoid module-level coupling."""
+        if self.notifications is None:
+            from app.modules.notifications.service import NotificationService
+
+            self.notifications = NotificationService(self.session)
+        return self.notifications
 
     async def _validate_employee(self, org_id: int, employee_id: int) -> Employee:
         """Validate employee existence and active status in organization context."""
@@ -223,7 +238,9 @@ class PayrollService(BaseService):
             )
         return group
 
-    async def list_groups(self, org_id: int, page: int, page_size: int) -> PaginatedResponse[PayrollGroup]:
+    async def list_groups(
+        self, org_id: int, page: int, page_size: int
+    ) -> PaginatedResponse[PayrollGroup]:
         """List paginated payroll groups."""
         groups = await self.groups.search(org_id, page=page, page_size=page_size)
         total = await self.groups.search_count(org_id)
@@ -242,7 +259,9 @@ class PayrollService(BaseService):
 
         async with self.transaction():
             if "name" in update_data and update_data["name"] != group.name:
-                name_exists = await self.groups.name_exists(org_id, update_data["name"], exclude_id=group_id)
+                name_exists = await self.groups.name_exists(
+                    org_id, update_data["name"], exclude_id=group_id
+                )
                 if name_exists:
                     raise PayrollGroupNameExistsException()
 
@@ -313,7 +332,7 @@ class PayrollService(BaseService):
     ) -> EmployeePayrollGroupAssignment:
         """Assign employee to payroll group, recording assignment history."""
         employee = await self._validate_employee(org_id, employee_id)
-        group = await self._validate_payroll_group(org_id, payload.payroll_group_id)
+        await self._validate_payroll_group(org_id, payload.payroll_group_id)
 
         async with self.transaction():
             existing = await self.assignments.get_by_employee(employee_id)
@@ -357,14 +376,17 @@ class PayrollService(BaseService):
                 sub_module="assignments",
                 action_type=ActionType.ASSIGN,
                 title="Assign Payroll Group",
-                description=f"Assigned employee ID {employee_id} to group ID {payload.payroll_group_id}.",
+                description=f"Assigned employee ID {employee_id} to group ID "
+                    f"{payload.payroll_group_id}.",
                 performed_by_user_id=user_id,
                 performed_by_name=f"User {user_id}",
                 employee_id=employee_id,
             )
         return assignment
 
-    async def get_employee_assignment(self, org_id: int, employee_id: int) -> EmployeePayrollGroupAssignment:
+    async def get_employee_assignment(
+        self, org_id: int, employee_id: int
+    ) -> EmployeePayrollGroupAssignment:
         """Get current employee assignment details."""
         await self._validate_employee(org_id, employee_id)
         assignment = await self.assignments.get_by_employee(employee_id)
@@ -428,17 +450,25 @@ class PayrollService(BaseService):
                 sub_module="cycles",
                 action_type=ActionType.INSERT,
                 title="Create Salary Cycle",
-                description=f"Created cycle for group ID {payload.payroll_group_id} date {payload.cycle_date}.",
+                description=f"Created cycle for group ID {payload.payroll_group_id} date "
+                    f"{payload.cycle_date}.",
                 performed_by_user_id=user_id,
                 performed_by_name=f"User {user_id}",
             )
         return cycle
 
     async def list_cycles(
-        self, org_id: int, group_id: int | None, is_finalized: bool | None, page: int, page_size: int
+        self,
+        org_id: int,
+        group_id: int | None,
+        is_finalized: bool | None,
+        page: int,
+        page_size: int,
     ) -> PaginatedResponse[PayrollSalaryCycle]:
         """List paginated cycles."""
-        cycles = await self.cycles.search(org_id, group_id=group_id, is_finalized=is_finalized, page=page, page_size=page_size)
+        cycles = await self.cycles.search(
+            org_id, group_id=group_id, is_finalized=is_finalized, page=page, page_size=page_size
+        )
         total = await self.cycles.search_count(org_id, group_id=group_id, is_finalized=is_finalized)
         return self.paginate(cycles, page=page, page_size=page_size, total_records=total)
 
@@ -485,7 +515,8 @@ class PayrollService(BaseService):
         # 1. Verify group assignment
         assignment = await self.assignments.get_by_employee(employee.employee_id)
         if not assignment:
-            raise ValidationException(f"Employee {employee.employee_id} not assigned to payroll group.")
+            raise ValidationException(f"Employee {employee.employee_id} not assigned to payroll "
+                "group.")
 
         monthly_salary = employee.monthly_salary or Decimal("0.00")
         salary_type = assignment.salary_type
@@ -525,7 +556,11 @@ class PayrollService(BaseService):
 
         # 4. Overwrite counts via manual adjustments
         adjustments = await self.adjustments.search(
-            org_id, employee_id=employee.employee_id, date_from=cycle_from, date_to=cycle_to, page_size=100
+            org_id,
+            employee_id=employee.employee_id,
+            date_from=cycle_from,
+            date_to=cycle_to,
+            page_size=100,
         )
         adj_map = {adj.attendance_date: adj for adj in adjustments}
 
@@ -573,7 +608,9 @@ class PayrollService(BaseService):
         if settings.off_day_compensation == "paid":
             off_day_basis = Decimal(str(wo_count)) * settings.off_day_wage_multiplier
 
-        paid_day_count = Decimal(str(fd_count)) + (Decimal(str(hd_count)) * Decimal("0.5")) + off_day_basis + paid_leave_count
+        paid_day_count = Decimal(
+            str(fd_count)) + (Decimal(str(hd_count)) * Decimal("0.5")
+        ) + off_day_basis + paid_leave_count
         paid_day_count = min(paid_day_count, Decimal(str(total_days)))
 
         unpaid_day_count = Decimal(str(total_days)) - paid_day_count
@@ -581,7 +618,9 @@ class PayrollService(BaseService):
 
         # 7. Derived Daily Wage
         if salary_type == "hourly":
-            full_working_hours = settings.full_day_working_hours.hour + (settings.full_day_working_hours.minute / 60)
+            full_working_hours = settings.full_day_working_hours.hour + (
+                settings.full_day_working_hours.minute / 60
+            )
             daily_wage = monthly_salary * Decimal(str(full_working_hours))
         else:
             if settings.daily_wage_formula == "fixed_30":
@@ -617,7 +656,9 @@ class PayrollService(BaseService):
         # 10. Penalties Calculation
         penalties_amount = Decimal("0.00")
         # Sum active (non-removed) manual penalties
-        penalties_list = await self.penalties.get_penalties(employee.employee_id, cycle_from, cycle_to)
+        penalties_list = await self.penalties.get_penalties(
+            employee.employee_id, cycle_from, cycle_to
+        )
         for pen in penalties_list:
             penalties_amount += pen.penalty_amount
 
@@ -630,7 +671,9 @@ class PayrollService(BaseService):
 
         # 11. Extra Hours Addition
         extras_amount = Decimal("0.00")
-        extra_hours_records = await self.extra_hours.get_extra_hours_range(employee.employee_id, cycle_from, cycle_to)
+        extra_hours_records = await self.extra_hours.get_extra_hours_range(
+            employee.employee_id, cycle_from, cycle_to
+        )
         if salary_type == "hourly":
             hourly_rate = monthly_salary
         else:
@@ -766,7 +809,10 @@ class PayrollService(BaseService):
                 try:
                     # Check if already finalized
                     existing = await self.computed_rows.get_row(
-                        payload.payroll_group_id, emp.employee_id, payload.cycle_from, payload.cycle_to
+                        payload.payroll_group_id,
+                        emp.employee_id,
+                        payload.cycle_from,
+                        payload.cycle_to,
                     )
                     if existing and existing.is_finalized:
                         results.append(
@@ -774,7 +820,8 @@ class PayrollService(BaseService):
                                 employee_id=emp.employee_id,
                                 success=False,
                                 error_code="PAYROLL_ALREADY_FINALIZED",
-                                error_message="Payroll already finalized for this employee in this period.",
+                                error_message="Payroll already finalized for this employee in this "
+                                    "period.",
                             )
                         )
                         continue
@@ -789,7 +836,9 @@ class PayrollService(BaseService):
                     else:
                         await self.computed_rows.create(row_dict)
 
-                    results.append(PayrollProcessItemResultSchema(employee_id=emp.employee_id, success=True))
+                    results.append(
+                        PayrollProcessItemResultSchema(employee_id=emp.employee_id, success=True)
+                    )
                 except Exception as e:
                     results.append(
                         PayrollProcessItemResultSchema(
@@ -806,7 +855,8 @@ class PayrollService(BaseService):
                 sub_module="processing",
                 action_type=ActionType.INSERT,
                 title="Generate Payroll Run",
-                description=f"Generated payroll calculation run for group ID {payload.payroll_group_id} from {payload.cycle_from} to {payload.cycle_to}.",
+                description="Generated payroll calculation run for group ID "
+                    f"{payload.payroll_group_id} from {payload.cycle_from} to {payload.cycle_to}.",
                 performed_by_user_id=user_id,
                 performed_by_name=f"User {user_id}",
             )
@@ -844,7 +894,10 @@ class PayrollService(BaseService):
             for emp in employees:
                 try:
                     existing = await self.computed_rows.get_row(
-                        payload.payroll_group_id, emp.employee_id, payload.cycle_from, payload.cycle_to
+                        payload.payroll_group_id,
+                        emp.employee_id,
+                        payload.cycle_from,
+                        payload.cycle_to,
                     )
                     row_dict = await self._calculate_employee_payroll(
                         org_id, emp, payload.cycle_from, payload.cycle_to, settings, user_id
@@ -855,7 +908,9 @@ class PayrollService(BaseService):
                     else:
                         await self.computed_rows.create(row_dict)
 
-                    results.append(PayrollProcessItemResultSchema(employee_id=emp.employee_id, success=True))
+                    results.append(
+                        PayrollProcessItemResultSchema(employee_id=emp.employee_id, success=True)
+                    )
                 except Exception as e:
                     results.append(
                         PayrollProcessItemResultSchema(
@@ -872,7 +927,8 @@ class PayrollService(BaseService):
                 sub_module="processing",
                 action_type=ActionType.UPDATE,
                 title="Recalculate Payroll Run",
-                description=f"Recalculated payroll calculation run for group ID {payload.payroll_group_id} from {payload.cycle_from} to {payload.cycle_to}.",
+                description="Recalculated payroll calculation run for group ID "
+                    f"{payload.payroll_group_id} from {payload.cycle_from} to {payload.cycle_to}.",
                 performed_by_user_id=user_id,
                 performed_by_name=f"User {user_id}",
             )
@@ -934,7 +990,9 @@ class PayrollService(BaseService):
 
             # 2. Lock computed rows
             for row in comp_rows:
-                await self.computed_rows.update(row, {"is_finalized": True, "finalized_run_id": run.id})
+                await self.computed_rows.update(
+                    row, {"is_finalized": True, "finalized_run_id": run.id}
+                )
 
                 # 3. Process settlements (Loans)
                 if row.loan_advance_deduction > 0:
@@ -1011,19 +1069,43 @@ class PayrollService(BaseService):
             if cycle:
                 await self.cycles.update(cycle, {"is_finalized": True})
 
+            # 6. Notify affected employees' linked users (one query, one
+            #    multi-recipient notification; unlinked employees are skipped).
+            notifier = self._get_notifier()
+            recipient_user_ids = await notifier.resolve_user_ids_for_employees(
+                org_id, sorted({row.employee_id for row in comp_rows})
+            )
+            await notifier.emit_system_notification(
+                org_id,
+                recipient_user_ids=recipient_user_ids,
+                title="Payroll Finalized",
+                message=(
+                    f"Your payroll for {payload.cycle_from} to {payload.cycle_to} "
+                    "has been finalized."
+                ),
+                notification_type=NotificationType.PAYROLL.value,
+                source_module="payroll",
+                source_entity_type="finalized_payroll_run",
+                source_entity_id=run.id,
+                created_by=user_id,
+            )
+
             await self.audit.record(
                 org_id=org_id,
                 module="payroll",
                 sub_module="processing",
                 action_type=ActionType.UPDATE,
                 title="Finalize Payroll Run",
-                description=f"Finalized & locked payroll run ID {run.id} for amount {total_amount}.",
+                description=f"Finalized & locked payroll run ID {run.id} for amount "
+                    f"{total_amount}.",
                 performed_by_user_id=user_id,
                 performed_by_name=f"User {user_id}",
             )
         return run
 
-    async def definalize_payroll(self, org_id: int, run_id: int, user_id: int) -> FinalizedPayrollRun:
+    async def definalize_payroll(
+        self, org_id: int, run_id: int, user_id: int
+    ) -> FinalizedPayrollRun:
         """Unlock payroll run, reversing loan adjustments and arrears changes."""
         run = await self.runs.get_by_id_in_org(org_id, run_id)
         if not run:
@@ -1039,7 +1121,9 @@ class PayrollService(BaseService):
             loan_txs = (await self.session.execute(stmt_loan_txs)).scalars().all()
             for tx in loan_txs:
                 # restore loan balance
-                stmt_loan = select(EmployeeLoanAdvance).where(EmployeeLoanAdvance.id == tx.loan_advance_id)
+                stmt_loan = select(
+                    EmployeeLoanAdvance).where(EmployeeLoanAdvance.id == tx.loan_advance_id
+                )
                 loan = (await self.session.execute(stmt_loan)).scalar_one_or_none()
                 if loan:
                     loan.outstanding_amount += tx.amount
@@ -1054,7 +1138,9 @@ class PayrollService(BaseService):
             arr_txs = (await self.session.execute(stmt_arr_txs)).scalars().all()
             for tx in arr_txs:
                 # restore arrears balance
-                stmt_arr = select(EmployeeArrears).where(EmployeeArrears.id == tx.employee_arrears_id)
+                stmt_arr = select(
+                    EmployeeArrears).where(EmployeeArrears.id == tx.employee_arrears_id
+                )
                 arr = (await self.session.execute(stmt_arr)).scalar_one_or_none()
                 if arr:
                     arr.outstanding_arrears += tx.amount
@@ -1067,7 +1153,9 @@ class PayrollService(BaseService):
             )
             comp_rows = (await self.session.execute(stmt_rows)).scalars().all()
             for row in comp_rows:
-                await self.computed_rows.update(row, {"is_finalized": False, "finalized_run_id": None})
+                await self.computed_rows.update(
+                    row, {"is_finalized": False, "finalized_run_id": None}
+                )
 
             # 4. Unfinalize Cycle
             cycle = await self.cycles.get_cycle(run.payroll_group_id, run.cycle_to)
@@ -1120,7 +1208,8 @@ class PayrollService(BaseService):
                 sub_module="processing",
                 action_type=ActionType.UPDATE,
                 title="Record Payroll Payment",
-                description=f"Recorded payment for run ID {run_id} status {payload.payment_status}.",
+                description=f"Recorded payment for run ID {run_id} status "
+                    f"{payload.payment_status}.",
                 performed_by_user_id=user_id,
                 performed_by_name=f"User {user_id}",
             )
@@ -1232,7 +1321,9 @@ class PayrollService(BaseService):
     ) -> PaginatedResponse[PayrollComputedRow]:
         """Fetch historical payslips / computed rows of a specific employee."""
         await self._validate_employee(org_id, employee_id)
-        rows = await self.computed_rows.get_employee_history(employee_id, page=page, page_size=page_size)
+        rows = await self.computed_rows.get_employee_history(
+            employee_id, page=page, page_size=page_size
+        )
         total = await self.computed_rows.get_employee_history_count(employee_id)
         return self.paginate(rows, page=page, page_size=page_size, total_records=total)
 
@@ -1247,14 +1338,24 @@ class PayrollService(BaseService):
 
         # Build structures
         earnings = [
-            PayslipSectionItemSchema(key="gross_wages", label="Gross Wages / Basic", value=row.gross_wages),
-            PayslipSectionItemSchema(key="overtime", label="Overtime Earnings", value=row.overtime_amount),
-            PayslipSectionItemSchema(key="extras", label="Extra Hours / Adjustments Additions", value=row.extras_amount),
+            PayslipSectionItemSchema(
+                key="gross_wages", label="Gross Wages / Basic", value=row.gross_wages
+            ),
+            PayslipSectionItemSchema(
+                key="overtime", label="Overtime Earnings", value=row.overtime_amount
+            ),
+            PayslipSectionItemSchema(
+                key="extras", label="Extra Hours / Adjustments Additions", value=row.extras_amount
+            ),
             PayslipSectionItemSchema(key="arrears", label="Arrears", value=row.arrears_amount),
         ]
         deductions = [
-            PayslipSectionItemSchema(key="penalties", label="Manual Penalties / Deductions", value=row.penalties_amount),
-            PayslipSectionItemSchema(key="loans", label="Loan / Advance Installment", value=row.loan_advance_deduction),
+            PayslipSectionItemSchema(
+                key="penalties", label="Manual Penalties / Deductions", value=row.penalties_amount
+            ),
+            PayslipSectionItemSchema(
+                key="loans", label="Loan / Advance Installment", value=row.loan_advance_deduction
+            ),
         ]
 
         return PayslipResponseSchema(
@@ -1303,7 +1404,9 @@ class PayrollService(BaseService):
             raise PayrollAlreadyFinalizedException()
 
         async with self.transaction():
-            existing = await self.adjustments.get_adjustment(payload.employee_id, payload.attendance_date)
+            existing = await self.adjustments.get_adjustment(
+                payload.employee_id, payload.attendance_date
+            )
             if existing:
                 if not payload.is_forced_overwrite:
                     raise AdjustmentExistsException()
@@ -1312,7 +1415,9 @@ class PayrollService(BaseService):
                     existing,
                     {
                         "adjusted_status": payload.adjusted_status.value,
-                        "original_status": payload.original_status.value if payload.original_status else None,
+                        "original_status": (
+                            payload.original_status.value if payload.original_status else None
+                        ),
                         "has_punch_error": payload.has_punch_error,
                         "adjustment_source": payload.adjustment_source.value,
                         "adjusted_by": user_id,
@@ -1325,7 +1430,9 @@ class PayrollService(BaseService):
                         "org_id": org_id,
                         "employee_id": payload.employee_id,
                         "attendance_date": payload.attendance_date,
-                        "original_status": payload.original_status.value if payload.original_status else None,
+                        "original_status": (
+                            payload.original_status.value if payload.original_status else None
+                        ),
                         "adjusted_status": payload.adjusted_status.value,
                         "is_forced_overwrite": payload.is_forced_overwrite,
                         "has_punch_error": payload.has_punch_error,
@@ -1341,7 +1448,8 @@ class PayrollService(BaseService):
                 sub_module="adjustments",
                 action_type=ActionType.INSERT,
                 title="Add Attendance Adjustment",
-                description=f"Added/updated attendance override for employee {payload.employee_id} on {payload.attendance_date}.",
+                description=f"Added/updated attendance override for employee {payload.employee_id} "
+                    f"on {payload.attendance_date}.",
                 performed_by_user_id=user_id,
                 performed_by_name=f"User {user_id}",
                 employee_id=payload.employee_id,
@@ -1349,7 +1457,11 @@ class PayrollService(BaseService):
         return adj
 
     async def update_adjustment(
-        self, org_id: int, adjustment_id: int, payload: AttendanceAdjustmentUpdateSchema, user_id: int
+        self,
+        org_id: int,
+        adjustment_id: int,
+        payload: AttendanceAdjustmentUpdateSchema,
+        user_id: int,
     ) -> AttendanceAdjustment:
         """Modify an override record, verifying finalization lock constraints."""
         adj = await self.adjustments.get_by_id(adjustment_id)
@@ -1484,7 +1596,8 @@ class PayrollService(BaseService):
                 sub_module="adjustments",
                 action_type=ActionType.INSERT,
                 title="Add Attendance Penalty",
-                description=f"Recorded penalty of {payload.penalty_amount} for employee {payload.employee_id} on {payload.attendance_date}.",
+                description=f"Recorded penalty of {payload.penalty_amount} for employee "
+                    f"{payload.employee_id} on {payload.attendance_date}.",
                 performed_by_user_id=user_id,
                 performed_by_name=f"User {user_id}",
                 employee_id=payload.employee_id,
@@ -1494,7 +1607,8 @@ class PayrollService(BaseService):
     async def add_extra_hours(
         self, org_id: int, payload: AttendanceAdjustmentExtraHoursCreateSchema, user_id: int
     ) -> AttendanceAdjustmentExtraHours:
-        """Create custom extra hours logs mapping to salary additions, checking finalization status."""
+        """Create custom extra hours logs mapping to salary additions, checking finalization status.
+        """
         await self._validate_employee(org_id, payload.employee_id)
 
         # Check if period finalized
@@ -1509,7 +1623,9 @@ class PayrollService(BaseService):
             raise PayrollAlreadyFinalizedException()
 
         async with self.transaction():
-            existing = await self.extra_hours.get_extra_hours(payload.employee_id, payload.attendance_date)
+            existing = await self.extra_hours.get_extra_hours(
+                payload.employee_id, payload.attendance_date
+            )
             if existing:
                 raise AdjustmentExistsException("Extra hours log already exists for this date.")
 
@@ -1529,7 +1645,8 @@ class PayrollService(BaseService):
                 sub_module="adjustments",
                 action_type=ActionType.INSERT,
                 title="Add Extra Hours Adjustment",
-                description=f"Recorded {payload.extra_hours} extra hours for employee {payload.employee_id} on {payload.attendance_date}.",
+                description=f"Recorded {payload.extra_hours} extra hours for employee "
+                    f"{payload.employee_id} on {payload.attendance_date}.",
                 performed_by_user_id=user_id,
                 performed_by_name=f"User {user_id}",
                 employee_id=payload.employee_id,

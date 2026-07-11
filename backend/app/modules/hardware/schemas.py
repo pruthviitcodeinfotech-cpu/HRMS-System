@@ -7,7 +7,7 @@ heartbeat logs, and health stats.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, time as dt_time
 import re
 import socket
 from typing import Any
@@ -290,6 +290,19 @@ class BiometricDeviceListResponse(PaginatedResponse[BiometricDeviceSchema]):
     """Paginated list response for biometric devices."""
 
 
+# Fields not resolved from the device row itself: the ``*_key_set`` booleans are
+# derived from the write-only keys, and the org-settings fields are merged in by
+# the service (Settings module `org_settings`), so ORM-object resolution must not
+# stomp their defaults with ``None``.
+_COMPUTED_CONFIGURATION_FIELDS = (
+    "communication_key_set",
+    "sync_key_set",
+    "device_sync_time",
+    "sync_code_set",
+    "pass_code_set",
+)
+
+
 class BiometricDeviceConfigurationSchema(BaseSchema):
     """Response representing the network and ADMS configuration details of a device (secrets redacted)."""
 
@@ -308,13 +321,22 @@ class BiometricDeviceConfigurationSchema(BaseSchema):
     communication_key_set: bool = Field(default=False, description="True if the communication key is set.")
     sync_key_set: bool = Field(default=False, description="True if the sync key is set.")
 
+    # Org-wide hardware settings (Settings module `org_settings`); defaults apply
+    # when the org has no settings row. Codes are exposed as booleans only.
+    device_sync_time: dt_time = Field(
+        default=dt_time(16, 51),
+        description="Org-wide daily device synchronization time (org_settings.device_sync_time).",
+    )
+    sync_code_set: bool = Field(default=False, description="True if the org sync code is set.")
+    pass_code_set: bool = Field(default=False, description="True if the org pass code is set.")
+
     @model_validator(mode="before")
     @classmethod
     def resolve_keys_set(cls, values: Any) -> Any:
         if not isinstance(values, dict):
             resolved = {}
             for field in cls.model_fields:
-                if field not in ("communication_key_set", "sync_key_set"):
+                if field not in _COMPUTED_CONFIGURATION_FIELDS:
                     resolved[field] = getattr(values, field, None)
             
             comm_key = getattr(values, "communication_key", None)

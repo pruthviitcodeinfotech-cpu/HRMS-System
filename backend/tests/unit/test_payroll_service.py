@@ -282,6 +282,7 @@ def payroll_service():
         "employees",
         "users",
         "audit",
+        "notifications",
     ):
         setattr(svc, attr, AsyncMock())
 
@@ -302,6 +303,9 @@ def payroll_service():
     svc.adjustments.search.return_value = []
     svc.penalties.get_penalties.return_value = []
     svc.extra_hours.get_extra_hours_range.return_value = []
+
+    # Finalization notifications: employee 5 resolves to linked user 42 by default.
+    svc.notifications.resolve_user_ids_for_employees.return_value = [42]
 
     return svc
 
@@ -544,6 +548,40 @@ async def test_finalize_payroll_success(payroll_service) -> None:
     payroll_service.computed_rows.update.assert_awaited_once()
     locked = payroll_service.computed_rows.update.await_args.args[1]
     assert locked == {"is_finalized": True, "finalized_run_id": 4}
+
+
+async def test_finalize_payroll_notifies_affected_employees(payroll_service) -> None:
+    """Finalizing emits ONE multi-recipient notification for all affected employees."""
+    payload = PayrollProcessRequestSchema(
+        payroll_group_id=2, cycle_from=date(2026, 1, 1), cycle_to=date(2026, 1, 31)
+    )
+    payroll_service.runs.create.return_value = _run()
+    payroll_service.session.execute = AsyncMock(
+        side_effect=[
+            _result(scalar_one=None),  # no existing finalized run
+            _result(
+                [
+                    _computed_row(is_finalized=False, employee_id=5),
+                    _computed_row(id=11, is_finalized=False, employee_id=6),
+                ]
+            ),
+        ]
+    )
+    payroll_service.notifications.resolve_user_ids_for_employees.return_value = [42, 43]
+
+    await payroll_service.finalize_payroll(org_id=1, payload=payload, user_id=9)
+
+    # Users resolved once, for the distinct affected employee ids.
+    payroll_service.notifications.resolve_user_ids_for_employees.assert_awaited_once_with(
+        1, [5, 6]
+    )
+    payroll_service.notifications.emit_system_notification.assert_awaited_once()
+    kwargs = payroll_service.notifications.emit_system_notification.await_args.kwargs
+    assert kwargs["recipient_user_ids"] == [42, 43]
+    assert kwargs["notification_type"] == "payroll"
+    assert kwargs["source_module"] == "payroll"
+    assert kwargs["source_entity_id"] == 4
+    assert "finalized" in kwargs["message"]
 
 
 async def test_finalize_payroll_settles_loan_deduction(payroll_service) -> None:

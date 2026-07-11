@@ -58,6 +58,11 @@ class ShiftRepository(BaseRepository[Shift]):
         )
         return (await self.session.execute(stmt.limit(1))).scalar_one_or_none()
 
+    async def get_any_by_id(self, shift_id: int, org_id: int) -> Shift | None:
+        """Return a shift by id within ``org_id`` **including soft-deleted** (restore)."""
+        stmt = select(Shift).where(Shift.shift_id == shift_id, Shift.org_id == org_id)
+        return (await self.session.execute(stmt.limit(1))).scalar_one_or_none()
+
     async def get_detail(self, shift_id: int, org_id: int) -> Shift | None:
         """Return a non-deleted shift with its ``day_timings`` eager-loaded."""
         stmt = (
@@ -218,6 +223,30 @@ class ShiftDayTimingRepository(BaseRepository[ShiftDayTiming]):
         )
         return list((await self.session.execute(stmt)).scalars().all())
 
+    async def get_for_shift(self, timing_id: int, shift_id: int) -> ShiftDayTiming | None:
+        """Return a timing row by id belonging to ``shift_id``, or ``None``."""
+        stmt = select(ShiftDayTiming).where(
+            ShiftDayTiming.timing_id == timing_id, ShiftDayTiming.shift_id == shift_id
+        )
+        return (await self.session.execute(stmt.limit(1))).scalar_one_or_none()
+
+    async def exists_for_day(
+        self, shift_id: int, day_of_week: int | None, *, exclude_timing_id: int | None = None
+    ) -> bool:
+        """Return whether the shift already has a timing row for ``day_of_week``.
+
+        Mirrors the unique constraint ``uq_shift_day_timings_shift_id_day_of_week``
+        (with NULL treated as a distinct 'uniform' slot at the app level).
+        """
+        stmt = select(ShiftDayTiming.timing_id).where(ShiftDayTiming.shift_id == shift_id)
+        if day_of_week is None:
+            stmt = stmt.where(ShiftDayTiming.day_of_week.is_(None))
+        else:
+            stmt = stmt.where(ShiftDayTiming.day_of_week == day_of_week)
+        if exclude_timing_id is not None:
+            stmt = stmt.where(ShiftDayTiming.timing_id != exclude_timing_id)
+        return (await self.session.execute(stmt.limit(1))).first() is not None
+
     async def delete_all_for_shift(self, shift_id: int) -> int:
         """Delete every timing row for a shift (for wholesale replace); returns count."""
         stmt = delete(ShiftDayTiming).where(ShiftDayTiming.shift_id == shift_id)
@@ -296,6 +325,95 @@ class ShiftAssignmentRepository(BaseRepository[ShiftAssignment]):
             stmt = stmt.where(ShiftAssignment.assignment_id != exclude_assignment_id)
         return (await self.session.execute(stmt.limit(1))).first() is not None
 
+    async def overlap_exists(
+        self,
+        employee_id: int,
+        effective_from: date,
+        effective_to: date | None,
+        *,
+        exclude_assignment_id: int | None = None,
+    ) -> bool:
+        """Return whether ``[effective_from, effective_to]`` overlaps another assignment.
+
+        An open-ended range (``effective_to IS NULL``) extends to infinity. Backs the
+        contract's ``409 ASSIGNMENT_OVERLAP`` business guard (no DB constraint exists).
+        """
+        stmt = select(ShiftAssignment.assignment_id).where(
+            ShiftAssignment.employee_id == employee_id,
+            (ShiftAssignment.effective_to.is_(None))
+            | (ShiftAssignment.effective_to >= effective_from),
+        )
+        if effective_to is not None:
+            stmt = stmt.where(ShiftAssignment.effective_from <= effective_to)
+        if exclude_assignment_id is not None:
+            stmt = stmt.where(ShiftAssignment.assignment_id != exclude_assignment_id)
+        return (await self.session.execute(stmt.limit(1))).first() is not None
+
+    @staticmethod
+    def _search_conditions(
+        org_id: int,
+        *,
+        employee_id: int | None,
+        shift_id: int | None,
+        active_on: date | None,
+    ) -> list:
+        """Build the WHERE conditions shared by :meth:`search` and :meth:`search_count`."""
+        conds: list = [ShiftAssignment.org_id == org_id]
+        if employee_id is not None:
+            conds.append(ShiftAssignment.employee_id == employee_id)
+        if shift_id is not None:
+            conds.append(ShiftAssignment.shift_id == shift_id)
+        if active_on is not None:
+            conds.append(ShiftAssignment.effective_from <= active_on)
+            conds.append(
+                (ShiftAssignment.effective_to.is_(None))
+                | (ShiftAssignment.effective_to >= active_on)
+            )
+        return conds
+
+    async def search(
+        self,
+        org_id: int,
+        *,
+        employee_id: int | None = None,
+        shift_id: int | None = None,
+        active_on: date | None = None,
+        sort_by: str | None = "effective_from",
+        sort_order: SortOrder | str = SortOrder.DESC,
+        page: int = 1,
+        page_size: int = 25,
+    ) -> list[ShiftAssignment]:
+        """Return a filtered, sorted, paginated page of assignments in ``org_id``."""
+        conds = self._search_conditions(
+            org_id, employee_id=employee_id, shift_id=shift_id, active_on=active_on
+        )
+        stmt = select(ShiftAssignment).where(and_(*conds))
+        stmt = apply_sorting(
+            stmt,
+            ShiftAssignment,
+            sort_by,
+            sort_order,
+            allowed=_ASSIGNMENT_SORTS,
+            default_sort_by="effective_from",
+        )
+        stmt = stmt.limit(page_size).offset((page - 1) * page_size)
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def search_count(
+        self,
+        org_id: int,
+        *,
+        employee_id: int | None = None,
+        shift_id: int | None = None,
+        active_on: date | None = None,
+    ) -> int:
+        """Return the total number of assignments matching the same filters as :meth:`search`."""
+        conds = self._search_conditions(
+            org_id, employee_id=employee_id, shift_id=shift_id, active_on=active_on
+        )
+        stmt = select(func.count()).select_from(ShiftAssignment).where(and_(*conds))
+        return int((await self.session.execute(stmt)).scalar_one())
+
     async def list_for_employee(
         self,
         org_id: int,
@@ -339,6 +457,102 @@ class RosterRepository(BaseRepository[Roster]):
 
     def __init__(self, session: AsyncSession) -> None:
         super().__init__(session, Roster)
+
+    async def get_by_id_in_org(self, roster_id: int, org_id: int) -> Roster | None:
+        """Return a roster row by id within ``org_id``, or ``None``."""
+        stmt = select(Roster).where(Roster.roster_id == roster_id, Roster.org_id == org_id)
+        return (await self.session.execute(stmt.limit(1))).scalar_one_or_none()
+
+    async def exists_for_shift_on_or_after(self, shift_id: int, on_date: date) -> bool:
+        """Return whether any roster row on/after ``on_date`` references ``shift_id``.
+
+        Backs the "shift delete blocked while referenced by roster entries" rule
+        (contract §4 #5 → ``409 SHIFT_IN_USE``).
+        """
+        stmt = select(Roster.roster_id).where(
+            Roster.shift_id == shift_id, Roster.roster_date >= on_date
+        )
+        return (await self.session.execute(stmt.limit(1))).first() is not None
+
+    @staticmethod
+    def _range_conditions(
+        org_id: int,
+        date_from: date,
+        date_to: date,
+        *,
+        employee_id: int | None,
+        shift_id: int | None,
+        employee_ids: list[int] | None,
+    ) -> list:
+        """Build the WHERE conditions shared by :meth:`search_range` and its count."""
+        conds: list = [
+            Roster.org_id == org_id,
+            Roster.roster_date >= date_from,
+            Roster.roster_date <= date_to,
+        ]
+        if employee_id is not None:
+            conds.append(Roster.employee_id == employee_id)
+        if employee_ids is not None:
+            conds.append(Roster.employee_id.in_(employee_ids))
+        if shift_id is not None:
+            conds.append(Roster.shift_id == shift_id)
+        return conds
+
+    async def search_range(
+        self,
+        org_id: int,
+        date_from: date,
+        date_to: date,
+        *,
+        employee_id: int | None = None,
+        shift_id: int | None = None,
+        employee_ids: list[int] | None = None,
+        page: int = 1,
+        page_size: int = 25,
+    ) -> list[Roster]:
+        """Return a filtered, paginated page of roster rows in a date window.
+
+        ``employee_ids`` confines the result to a resolved branch/department scope
+        (the service resolves scope → employee ids to respect module boundaries).
+        """
+        conds = self._range_conditions(
+            org_id,
+            date_from,
+            date_to,
+            employee_id=employee_id,
+            shift_id=shift_id,
+            employee_ids=employee_ids,
+        )
+        stmt = (
+            select(Roster)
+            .where(and_(*conds))
+            .order_by(Roster.roster_date.asc(), Roster.employee_id.asc())
+            .limit(page_size)
+            .offset((page - 1) * page_size)
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def search_range_count(
+        self,
+        org_id: int,
+        date_from: date,
+        date_to: date,
+        *,
+        employee_id: int | None = None,
+        shift_id: int | None = None,
+        employee_ids: list[int] | None = None,
+    ) -> int:
+        """Return the total roster rows matching the same filters as :meth:`search_range`."""
+        conds = self._range_conditions(
+            org_id,
+            date_from,
+            date_to,
+            employee_id=employee_id,
+            shift_id=shift_id,
+            employee_ids=employee_ids,
+        )
+        stmt = select(func.count()).select_from(Roster).where(and_(*conds))
+        return int((await self.session.execute(stmt)).scalar_one())
 
     async def get_for_employee_date(self, employee_id: int, roster_date: date) -> Roster | None:
         """Return the roster row for an employee on a date (unique), or ``None``."""
@@ -414,6 +628,16 @@ class WeeklyOffRepository(BaseRepository[EmployeeWeekoff]):
             stmt = stmt.where(EmployeeWeekoff.effective_to.is_(None))
         stmt = stmt.order_by(EmployeeWeekoff.day_of_week.asc())
         return list((await self.session.execute(stmt)).scalars().all())
+
+    async def get_by_id_for_employee(
+        self, weekoff_id: int, employee_id: int
+    ) -> EmployeeWeekoff | None:
+        """Return a week-off row by id belonging to ``employee_id``, or ``None``."""
+        stmt = select(EmployeeWeekoff).where(
+            EmployeeWeekoff.weekoff_id == weekoff_id,
+            EmployeeWeekoff.employee_id == employee_id,
+        )
+        return (await self.session.execute(stmt.limit(1))).scalar_one_or_none()
 
     async def get_active_for_day(
         self, employee_id: int, day_of_week: int

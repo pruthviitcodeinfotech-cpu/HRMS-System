@@ -115,7 +115,7 @@ def upgrade() -> None:
         ),
         sa.UniqueConstraint(
             "employee_id", "leave_type_id", "cycle_year", "cycle_period",
-            name="uq_employee_leave_allocations_employee_id_leave_type_id_cycle_year_cycle_period",
+            name="uq_emp_leave_alloc_employee_type_cycle_year_period",
         ),
     )
 
@@ -239,7 +239,7 @@ def upgrade() -> None:
         ),
         sa.ForeignKeyConstraint(
             ["previous_template_id"], ["holiday_templates.id"],
-            name="fk_employee_holiday_assignments_previous_template_id_holiday_templates",
+            name="fk_emp_holiday_assign_prev_template_id_holiday_templates",
         ),
         sa.UniqueConstraint("employee_id", name="uq_employee_holiday_assignments_employee_id"),
     )

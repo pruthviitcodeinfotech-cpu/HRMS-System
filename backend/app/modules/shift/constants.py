@@ -7,17 +7,17 @@ PostgreSQL ENUM types are intentionally NOT used — the approved architecture
 models these as VARCHAR columns with CHECK constraints, and that is preserved.
 """
 
-from enum import Enum, IntEnum
+from enum import IntEnum, StrEnum
 
 
-class ShiftType(str, Enum):
+class ShiftType(StrEnum):
     """shifts.shift_type."""
 
     FIXED = "fixed"
     OPEN = "open"
 
 
-class WeekoffType(str, Enum):
+class WeekoffType(StrEnum):
     """employee_weekoffs.weekoff_type."""
 
     WORKING = "working"
@@ -25,14 +25,14 @@ class WeekoffType(str, Enum):
     OCCASIONAL_WEEK_OFF = "occasional_week_off"
 
 
-class WorkingHoursMode(str, Enum):
+class WorkingHoursMode(StrEnum):
     """working_hours_config.working_hours_mode / *_history.working_hours_mode."""
 
     FIXED = "fixed"
     SHIFT_WISE = "shift_wise"
 
 
-class AttendanceMode(str, Enum):
+class AttendanceMode(StrEnum):
     """working_hours_config.attendance_mode / *_history.attendance_mode."""
 
     CONSIDER_ALL_PUNCH = "consider_all_punch"

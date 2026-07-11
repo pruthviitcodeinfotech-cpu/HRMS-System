@@ -509,3 +509,94 @@ async def test_get_notification_timeline_with_archived_and_deleted() -> None:
     assert len(timeline) == 5
     assert timeline[3]["event"] == "archived"
     assert timeline[4]["event"] == "deleted"
+
+
+# ===========================================================================
+# System-generated emission (cross-module orchestration)
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+async def test_emit_system_notification_creates_definition_and_recipients() -> None:
+    """Emission writes the definition plus one recipient row per (deduped) user,
+    without opening its own transaction (the caller owns the boundary)."""
+    session = AsyncMock()
+    service = NotificationService(session)
+
+    created_notif = Notification(
+        id=7,
+        org_id=10,
+        title="Request Approved",
+        message="Your leave request was approved.",
+        notification_type="approval",
+        priority="normal",
+    )
+    service.notifications.create = AsyncMock(return_value=created_notif)
+    service.recipients.create = AsyncMock()
+
+    res = await service.emit_system_notification(
+        10,
+        recipient_user_ids=[42, 43, 42],  # duplicate must collapse
+        title="Request Approved",
+        message="Your leave request was approved.",
+        notification_type="approval",
+        source_module="approvals",
+        source_entity_type="approval_request",
+        source_entity_id=1,
+        created_by=9,
+    )
+
+    assert res == created_notif
+    payload = service.notifications.create.await_args.args[0]
+    assert payload["notification_type"] == "approval"
+    assert payload["source_module"] == "approvals"
+    assert payload["created_by"] == 9
+    assert service.recipients.create.await_count == 2
+    recipient_ids = [
+        c.args[0]["user_id"] for c in service.recipients.create.await_args_list
+    ]
+    assert recipient_ids == [42, 43]
+    # Caller owns the transaction: the emission itself never commits.
+    session.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_emit_system_notification_skips_without_recipients() -> None:
+    session = AsyncMock()
+    service = NotificationService(session)
+    service.notifications.create = AsyncMock()
+    service.recipients.create = AsyncMock()
+
+    res = await service.emit_system_notification(
+        10,
+        recipient_user_ids=[],
+        title="T",
+        message="M",
+        notification_type="approval",
+    )
+
+    assert res is None
+    service.notifications.create.assert_not_awaited()
+    service.recipients.create.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_resolve_user_ids_for_employees_empty_input_short_circuits() -> None:
+    session = AsyncMock()
+    service = NotificationService(session)
+
+    assert await service.resolve_user_ids_for_employees(10, []) == []
+    session.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_resolve_user_ids_for_employees_returns_scalar_ids() -> None:
+    session = AsyncMock()
+    result = MagicMock()
+    result.scalars.return_value.all.return_value = [42, 43]
+    session.execute = AsyncMock(return_value=result)
+    service = NotificationService(session)
+
+    res = await service.resolve_user_ids_for_employees(10, [5, 6])
+    assert res == [42, 43]
+    session.execute.assert_awaited_once()

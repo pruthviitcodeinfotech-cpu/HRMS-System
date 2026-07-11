@@ -30,6 +30,7 @@ schemas use ``from_attributes`` so they build directly from model instances.
 
 from __future__ import annotations
 
+import re
 from datetime import date, datetime
 from decimal import Decimal
 
@@ -46,7 +47,6 @@ from app.modules.employee.constants import (
 from app.shared.base.schema import BaseSchema
 from app.shared.schemas.pagination import PaginatedResponse, PaginationRequest
 from app.shared.utils.validators import is_valid_email, is_valid_phone, normalize_phone
-
 
 # ===========================================================================
 # Validation helpers
@@ -386,7 +386,7 @@ class EmployeeExitRequest(BaseSchema):
     reason: str | None = Field(default=None, max_length=500)
 
     @model_validator(mode="after")
-    def _validate_dates(self) -> "EmployeeExitRequest":
+    def _validate_dates(self) -> EmployeeExitRequest:
         """Last working day must not precede the resignation date (contract 422)."""
         if self.last_working_day < self.resignation_date:
             raise ValueError("last_working_day must be on or after resignation_date")
@@ -397,6 +397,172 @@ class EmployeeRehireRequest(BaseSchema):
     """Body for ``POST /employees/{id}/rehire`` (reactivate, preserving history)."""
 
     date_of_joining: date = Field(..., description="New joining date for the re-hire.")
+
+
+class EmployeeStatusChangeRequest(BaseSchema):
+    """Body for ``POST /employees/{id}/activate`` / ``/deactivate`` (contract #29/#30)."""
+
+    effective_date: date | None = Field(
+        default=None, description="When the transition takes effect (defaults to today)."
+    )
+    reason: str | None = Field(default=None, max_length=500)
+
+
+class EmployeeTerminateRequest(BaseSchema):
+    """Body for ``POST /employees/{id}/terminate`` (contract #31 — terminal transition).
+
+    ``date_of_leaving`` defaults to ``effective_date`` when omitted.
+    """
+
+    effective_date: date
+    date_of_leaving: date | None = None
+    reason: str | None = Field(default=None, max_length=500)
+
+
+class EmployeeTransferRequest(BaseSchema):
+    """Body for ``POST /employees/{id}/transfer`` (contract #32).
+
+    Changes ``master_branch_id`` and/or ``dept_id``; the change context
+    (``reason`` / ``effective_date``) is captured in the Activity Log only (§9).
+    """
+
+    master_branch_id: int | None = None
+    dept_id: int | None = None
+    effective_date: date | None = None
+    reason: str | None = Field(default=None, max_length=500)
+
+    @model_validator(mode="after")
+    def _require_target(self) -> EmployeeTransferRequest:
+        """At least one transfer target (branch or department) must be supplied."""
+        if self.master_branch_id is None and self.dept_id is None:
+            raise ValueError("at least one of master_branch_id or dept_id is required")
+        return self
+
+
+class EmployeePromoteRequest(BaseSchema):
+    """Body for ``POST /employees/{id}/promote`` (contract #33).
+
+    ``monthly_salary`` is persisted only for callers holding the salary
+    permission (same gate as create/update employee).
+    """
+
+    designation_id: int
+    monthly_salary: Decimal | None = Field(default=None, ge=0, max_digits=12, decimal_places=2)
+    effective_date: date | None = None
+    reason: str | None = Field(default=None, max_length=500)
+
+
+# ===========================================================================
+# Sub-record request schemas (§8.1–8.4)
+# ===========================================================================
+
+
+def _validate_ifsc(value: str) -> str:
+    """Normalise and app-layer-validate an IFSC code (4 letters, '0', 6 alnum)."""
+    normalised = value.strip().upper()
+    if not re.fullmatch(r"[A-Z]{4}0[A-Z0-9]{6}", normalised):
+        raise ValueError("invalid IFSC code format")
+    return normalised
+
+
+def _validate_account_number(value: str) -> str:
+    """Normalise and app-layer-validate a bank account number (alphanumeric, ≤30)."""
+    normalised = value.replace(" ", "")
+    if not normalised.isalnum():
+        raise ValueError("account number must be alphanumeric")
+    return normalised
+
+
+class EmployeeBankDetailCreateRequest(BaseSchema):
+    """Body for ``POST /employees/{id}/bank-details`` (contract #39)."""
+
+    bank_name: str | None = Field(default=None, max_length=150)
+    bank_branch_name: str | None = Field(default=None, max_length=150)
+    account_number: str | None = Field(default=None, min_length=1, max_length=30)
+    ifsc_code: str | None = Field(default=None, max_length=15)
+    is_primary: bool = True
+
+    @field_validator("ifsc_code")
+    @classmethod
+    def _ifsc(cls, value: str | None) -> str | None:
+        return _validate_ifsc(value) if value is not None else None
+
+    @field_validator("account_number")
+    @classmethod
+    def _account(cls, value: str | None) -> str | None:
+        return _validate_account_number(value) if value is not None else None
+
+
+class EmployeeBankDetailUpdateRequest(EmployeeBankDetailCreateRequest):
+    """Body for ``PATCH /employees/{id}/bank-details/{bank_detail_id}`` (all optional)."""
+
+    is_primary: bool | None = None
+
+
+class EmployeeEmergencyContactCreateRequest(BaseSchema):
+    """Body for ``POST /employees/{id}/emergency-contacts`` (contract #43)."""
+
+    contact_country_code: str = Field(default="+91", max_length=5)
+    contact_number: str = Field(..., min_length=1, max_length=20)
+    contact_person_name: str = Field(..., min_length=1, max_length=200)
+    relation: str | None = Field(default=None, max_length=100)
+    address: str | None = None
+
+    @field_validator("contact_number")
+    @classmethod
+    def _phone(cls, value: str) -> str:
+        return _validate_phone(value)
+
+
+class EmployeeEmergencyContactUpdateRequest(BaseSchema):
+    """Body for ``PATCH .../emergency-contacts/{emergency_contact_id}`` (all optional)."""
+
+    contact_country_code: str | None = Field(default=None, max_length=5)
+    contact_number: str | None = Field(default=None, min_length=1, max_length=20)
+    contact_person_name: str | None = Field(default=None, min_length=1, max_length=200)
+    relation: str | None = Field(default=None, max_length=100)
+    address: str | None = None
+
+    @field_validator("contact_number")
+    @classmethod
+    def _phone(cls, value: str | None) -> str | None:
+        return _validate_phone(value) if value is not None else None
+
+
+class EmployeeReferenceCreateRequest(BaseSchema):
+    """Body for ``POST /employees/{id}/references`` (contract #47)."""
+
+    reference_name: str = Field(..., min_length=1, max_length=200)
+    reference_country_code: str = Field(default="+91", max_length=5)
+    reference_contact_number: str = Field(..., min_length=1, max_length=20)
+    sort_order: int = Field(default=1, ge=1, le=32767)
+
+    @field_validator("reference_contact_number")
+    @classmethod
+    def _phone(cls, value: str) -> str:
+        return _validate_phone(value)
+
+
+class EmployeeReferenceUpdateRequest(BaseSchema):
+    """Body for ``PATCH .../references/{reference_id}`` (all optional)."""
+
+    reference_name: str | None = Field(default=None, min_length=1, max_length=200)
+    reference_country_code: str | None = Field(default=None, max_length=5)
+    reference_contact_number: str | None = Field(default=None, min_length=1, max_length=20)
+    sort_order: int | None = Field(default=None, ge=1, le=32767)
+
+    @field_validator("reference_contact_number")
+    @classmethod
+    def _phone(cls, value: str | None) -> str | None:
+        return _validate_phone(value) if value is not None else None
+
+
+class EmployeeTagCreateRequest(BaseSchema):
+    """Body for ``POST /employees/{id}/tags`` (contract #51 — hard-deleted rows)."""
+
+    tag_label: str = Field(..., min_length=1, max_length=100)
+    tag_color: str | None = Field(default=None, max_length=10)
+    is_status_tag: bool = False
 
 
 class EmployeeDeviceMappingRequest(BaseSchema):
@@ -520,6 +686,17 @@ __all__ = [
     "EmployeePhotoUploadRequest",
     "EmployeeExitRequest",
     "EmployeeRehireRequest",
+    "EmployeeStatusChangeRequest",
+    "EmployeeTerminateRequest",
+    "EmployeeTransferRequest",
+    "EmployeePromoteRequest",
+    "EmployeeBankDetailCreateRequest",
+    "EmployeeBankDetailUpdateRequest",
+    "EmployeeEmergencyContactCreateRequest",
+    "EmployeeEmergencyContactUpdateRequest",
+    "EmployeeReferenceCreateRequest",
+    "EmployeeReferenceUpdateRequest",
+    "EmployeeTagCreateRequest",
     "EmployeeDeviceMappingRequest",
     # responses
     "EmployeeSummarySchema",

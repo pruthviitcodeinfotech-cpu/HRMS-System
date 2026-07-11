@@ -6,7 +6,6 @@ status heartbeats, diagnostics, and synchronization checkpoints.
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,10 +19,10 @@ from app.modules.hardware.models import BiometricDevice
 from app.modules.hardware.repository import BiometricDeviceRepository
 from app.modules.hardware.schemas import (
     BiometricDeviceAssignBranchRequest,
-    BiometricDeviceConfigureRequest,
     BiometricDeviceConfigurationSchema,
-    BiometricDeviceHeartbeatRequest,
+    BiometricDeviceConfigureRequest,
     BiometricDeviceHealthSchema,
+    BiometricDeviceHeartbeatRequest,
     BiometricDeviceListResponse,
     BiometricDeviceRegisterRequest,
     BiometricDeviceSchema,
@@ -32,6 +31,7 @@ from app.modules.hardware.schemas import (
     BiometricDeviceUpdateRequest,
 )
 from app.modules.rbac.repository import UserRepository
+from app.modules.settings.repository import OrgSettingsRepository
 from app.shared.base.service import BaseService
 from app.shared.utils.datetime import utcnow
 
@@ -47,6 +47,8 @@ class BiometricDeviceService(BaseService):
         self.branches = BranchRepository(session)
         self.users = UserRepository(session)
         self.audit = AuditService(session)
+        # Org-wide hardware settings owned by the Settings module.
+        self.org_settings = OrgSettingsRepository(session)
 
     # --- Core CRUD operations ---
 
@@ -89,7 +91,8 @@ class BiometricDeviceService(BaseService):
                 actor_id=actor_id,
                 action_type=ActionType.INSERT,
                 title="Device registered",
-                description=f"Registered device '{device.device_name}' with serial number '{device.serial_number}'.",
+                description=f"Registered device '{device.device_name}' with serial number "
+                    f"'{device.serial_number}'.",
             )
 
         return BiometricDeviceSchema.model_validate(device)
@@ -162,14 +165,18 @@ class BiometricDeviceService(BaseService):
         updates = data.model_dump(exclude_unset=True)
 
         if "serial_number" in updates and updates["serial_number"] != device.serial_number:
-            if await self.devices.serial_number_exists(updates["serial_number"], exclude_id=device_id):
+            if await self.devices.serial_number_exists(
+                updates["serial_number"], exclude_id=device_id
+            ):
                 raise ConflictException(
                     "Device serial number already exists.",
                     code="DEVICE_SERIAL_EXISTS",
                 )
 
         if "device_code" in updates and updates["device_code"] != device.device_code:
-            if await self.devices.device_code_exists(org_id, updates["device_code"], exclude_id=device_id):
+            if await self.devices.device_code_exists(
+                org_id, updates["device_code"], exclude_id=device_id
+            ):
                 raise ConflictException(
                     "Device code already exists in this organization.",
                     code="DEVICE_CODE_EXISTS",
@@ -200,7 +207,8 @@ class BiometricDeviceService(BaseService):
         """Delete a biometric device from the registry."""
         device = await self._get_device_or_404(org_id, device_id)
 
-        # Enforce referential integrity checks (cannot delete if punches, mappings or settings reference it)
+        # Enforce referential integrity checks (cannot delete if punches,
+        # mappings or settings reference it)
         if await self.devices.is_device_in_use(device_id):
             raise ConflictException(
                 "Device is in use and cannot be deleted.",
@@ -214,17 +222,39 @@ class BiometricDeviceService(BaseService):
                 actor_id=actor_id,
                 action_type=ActionType.DELETE,
                 title="Device deleted",
-                description=f"Deleted device '{device.device_name}' with serial number '{device.serial_number}'.",
+                description=f"Deleted device '{device.device_name}' with serial number "
+                    f"'{device.serial_number}'.",
             )
 
     # --- Device Configuration & Management ---
+
+    async def _merge_org_hardware_settings(
+        self, org_id: int, config: BiometricDeviceConfigurationSchema
+    ) -> BiometricDeviceConfigurationSchema:
+        """Merge the org-wide hardware settings (`org_settings`) into ``config``.
+
+        Adds ``device_sync_time`` and whether the org sync/pass codes are set
+        (booleans only — raw code values are never exposed). An org without a
+        settings row keeps the schema defaults, matching the column defaults.
+        """
+        settings = await self.org_settings.get_by_org_id(org_id)
+        if settings is None:
+            return config
+        return config.model_copy(
+            update={
+                "device_sync_time": settings.device_sync_time,
+                "sync_code_set": bool(settings.sync_code),
+                "pass_code_set": bool(settings.pass_code),
+            }
+        )
 
     async def get_device_configuration(
         self, *, org_id: int, device_id: int
     ) -> BiometricDeviceConfigurationSchema:
         """Retrieve network and ADMS configuration details (secrets redacted)."""
         device = await self._get_device_or_404(org_id, device_id)
-        return BiometricDeviceConfigurationSchema.model_validate(device)
+        config = BiometricDeviceConfigurationSchema.model_validate(device)
+        return await self._merge_org_hardware_settings(org_id, config)
 
     async def update_device_configuration(
         self,
@@ -246,10 +276,12 @@ class BiometricDeviceService(BaseService):
                 actor_id=actor_id,
                 action_type=ActionType.UPDATE,
                 title="Device configuration updated",
-                description=f"Updated network/ADMS configuration for device '{device.device_name}'.",
+                description="Updated network/ADMS configuration for device "
+                    f"'{device.device_name}'.",
             )
 
-        return BiometricDeviceConfigurationSchema.model_validate(device)
+        config = BiometricDeviceConfigurationSchema.model_validate(device)
+        return await self._merge_org_hardware_settings(org_id, config)
 
     async def assign_device_to_branch(
         self,
@@ -342,7 +374,8 @@ class BiometricDeviceService(BaseService):
         device_id: int,
         data: BiometricDeviceHeartbeatRequest,
     ) -> BiometricDeviceSchema:
-        """Report connectivity stats, firmware version, and device capacity statistics from reporting agent."""
+        """Report connectivity stats, firmware version, and device capacity statistics from
+        reporting agent."""
         device = await self._get_device_or_404(org_id, device_id)
 
         async with self.transaction():

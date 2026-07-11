@@ -10,7 +10,8 @@ Operates entirely on existing database models and inherits from BaseRepository.
 
 from __future__ import annotations
 
-from datetime import date as dt_date, datetime, time, timezone
+from datetime import UTC, datetime, time
+from datetime import date as dt_date
 from typing import Any
 
 from sqlalchemy import and_, desc, func, select
@@ -73,11 +74,11 @@ class ApprovalRequestRepository(BaseRepository[ApprovalRequest]):
             conds.append(ApprovalRequest.employee_id == employee_id)
 
         if date_from is not None:
-            dt_min = datetime.combine(date_from, time.min).replace(tzinfo=timezone.utc)
+            dt_min = datetime.combine(date_from, time.min).replace(tzinfo=UTC)
             conds.append(ApprovalRequest.requested_at >= dt_min)
 
         if date_to is not None:
-            dt_max = datetime.combine(date_to, time.max).replace(tzinfo=timezone.utc)
+            dt_max = datetime.combine(date_to, time.max).replace(tzinfo=UTC)
             conds.append(ApprovalRequest.requested_at <= dt_max)
 
         return conds
@@ -175,7 +176,8 @@ class ApprovalRequestRepository(BaseRepository[ApprovalRequest]):
     async def get_source_record(
         self, request_type: RequestType | str, reference_id: int
     ) -> LeaveRequest | AttendanceRegularizationRequest | LoginResetRequest | None:
-        """Resolve and retrieve the underlying source record based on type and polymorphic reference ID."""
+        """Resolve and retrieve the underlying source record based on type and polymorphic reference
+        ID."""
         type_val = request_type.value if isinstance(request_type, RequestType) else request_type
 
         if type_val == RequestType.LEAVE:
@@ -197,7 +199,8 @@ class ApprovalRequestRepository(BaseRepository[ApprovalRequest]):
     async def get_pending_counts_by_type(
         self, org_id: int, *, branch_id: int | None = None, dept_id: int | None = None
     ) -> dict[str, int]:
-        """Aggregate counts of pending approvals scoped by org and data scope, grouped by request type."""
+        """Aggregate counts of pending approvals scoped by org and data scope, grouped by request
+        type."""
         conds = [
             ApprovalRequest.org_id == org_id,
             ApprovalRequest.status == ApprovalStatus.PENDING.value,
@@ -231,7 +234,8 @@ class ApprovalRequestRepository(BaseRepository[ApprovalRequest]):
         dept_id: int | None = None,
         limit: int = 10,
     ) -> list[ApprovalRequest]:
-        """Fetch recent decided approval requests scoped by org and data scope, sorted by review time."""
+        """Fetch recent decided approval requests scoped by org and data scope, sorted by review
+        time."""
         conds = [
             ApprovalRequest.org_id == org_id,
             ApprovalRequest.status == decision.value,

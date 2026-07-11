@@ -1,10 +1,10 @@
 """Approval Management exception definitions."""
 
 from app.core.exceptions.base import (
+    AuthorizationException,
     ConflictException,
     NotFoundException,
     ValidationException,
-    AuthorizationException,
 )
 
 
@@ -27,7 +27,8 @@ class RejectRemarksRequiredException(ValidationException):
 
 
 class ApprovalForbiddenScopeException(AuthorizationException):
-    """Raised when a user attempts to access or decide a request outside their branch/department data scope."""
+    """Raised when a user attempts to access or decide a request outside their branch/department
+    data scope."""
     code = "APPROVAL_FORBIDDEN_SCOPE"
     message = "You do not have permission to access approvals in this data scope."
 

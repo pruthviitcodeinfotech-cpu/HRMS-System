@@ -25,11 +25,14 @@ from app.main import create_app
 from app.modules.employee.router import get_employee_service
 from app.modules.employee.router import router as employee_router
 from app.modules.employee.schemas import (
+    EmployeeBankDetailSchema,
     EmployeeCreateResponse,
     EmployeeDetailSchema,
     EmployeeDocumentSchema,
     EmployeeListResponse,
+    EmployeeStatusHistorySchema,
     EmployeeSummarySchema,
+    EmployeeTagSchema,
 )
 from tests.conftest import API_PREFIX
 
@@ -168,7 +171,7 @@ async def test_update_employee_200(
     employee_client: AsyncClient, mock_employee_service: AsyncMock, super_admin_headers
 ) -> None:
     mock_employee_service.update_employee.return_value = _detail()
-    resp = await employee_client.put(
+    resp = await employee_client.patch(
         f"{API_PREFIX}/employees/1",
         json={"employee_name": "Jane R. Doe"},
         headers=super_admin_headers,
@@ -363,3 +366,383 @@ async def test_add_document_forbidden_without_permission(
     )
     assert resp.status_code == 403
     assert resp.json()["error"]["code"] == "AUTH_FORBIDDEN"
+
+
+# ===========================================================================
+# Status lifecycle (#29–#31) and org moves (#32–#33)
+# ===========================================================================
+async def test_activate_employee_200_empty_body(
+    employee_client: AsyncClient, mock_employee_service: AsyncMock, super_admin_headers
+) -> None:
+    """Activate accepts an omitted body (effective_date / reason are optional)."""
+    mock_employee_service.activate_employee.return_value = _detail()
+    resp = await employee_client.post(
+        f"{API_PREFIX}/employees/1/activate", headers=super_admin_headers
+    )
+    assert resp.status_code == 200
+    kwargs = mock_employee_service.activate_employee.await_args.kwargs
+    assert kwargs["employee_id"] == 1
+    assert kwargs["reason"] is None
+
+
+async def test_deactivate_employee_200_with_body(
+    employee_client: AsyncClient, mock_employee_service: AsyncMock, super_admin_headers
+) -> None:
+    mock_employee_service.deactivate_employee.return_value = _detail()
+    resp = await employee_client.post(
+        f"{API_PREFIX}/employees/1/deactivate",
+        json={"effective_date": "2026-04-01", "reason": "sabbatical"},
+        headers=super_admin_headers,
+    )
+    assert resp.status_code == 200
+    kwargs = mock_employee_service.deactivate_employee.await_args.kwargs
+    assert kwargs["reason"] == "sabbatical"
+
+
+async def test_terminate_employee_200(
+    employee_client: AsyncClient, mock_employee_service: AsyncMock, super_admin_headers
+) -> None:
+    mock_employee_service.terminate_employee.return_value = _detail()
+    resp = await employee_client.post(
+        f"{API_PREFIX}/employees/1/terminate",
+        json={"effective_date": "2026-05-01", "date_of_leaving": "2026-05-15", "reason": "x"},
+        headers=super_admin_headers,
+    )
+    assert resp.status_code == 200
+
+
+async def test_terminate_employee_requires_effective_date_422(
+    employee_client: AsyncClient, super_admin_headers
+) -> None:
+    resp = await employee_client.post(
+        f"{API_PREFIX}/employees/1/terminate", json={}, headers=super_admin_headers
+    )
+    assert resp.status_code == 422
+
+
+async def test_transfer_employee_200(
+    employee_client: AsyncClient, mock_employee_service: AsyncMock, super_admin_headers
+) -> None:
+    mock_employee_service.transfer_employee.return_value = _detail()
+    resp = await employee_client.post(
+        f"{API_PREFIX}/employees/1/transfer",
+        json={"master_branch_id": 2, "reason": "restructure"},
+        headers=super_admin_headers,
+    )
+    assert resp.status_code == 200
+
+
+async def test_transfer_employee_without_target_422(
+    employee_client: AsyncClient, super_admin_headers
+) -> None:
+    resp = await employee_client.post(
+        f"{API_PREFIX}/employees/1/transfer",
+        json={"reason": "no target"},
+        headers=super_admin_headers,
+    )
+    assert resp.status_code == 422
+
+
+async def test_promote_employee_forwards_salary_permission(
+    employee_client: AsyncClient, mock_employee_service: AsyncMock, make_access_token
+) -> None:
+    """Without employee_salary read, the promote salary change is gated out."""
+    mock_employee_service.promote_employee.return_value = _detail()
+    token = make_access_token(
+        is_super_admin=False,
+        permissions=[{"feature_key": "employee", "can_read": True, "can_edit": True}],
+    )
+    resp = await employee_client.post(
+        f"{API_PREFIX}/employees/1/promote",
+        json={"designation_id": 3, "monthly_salary": "60000"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    assert mock_employee_service.promote_employee.await_args.kwargs["can_set_salary"] is False
+
+
+async def test_lifecycle_forbidden_without_edit_permission(
+    employee_client: AsyncClient, make_access_token
+) -> None:
+    token = make_access_token(
+        is_super_admin=False,
+        permissions=[{"feature_key": "employee", "can_read": True}],
+    )
+    for path, body in (
+        ("activate", None),
+        ("deactivate", None),
+        ("terminate", {"effective_date": "2026-05-01"}),
+        ("transfer", {"master_branch_id": 2}),
+        ("promote", {"designation_id": 3}),
+    ):
+        resp = await employee_client.post(
+            f"{API_PREFIX}/employees/1/{path}",
+            json=body,
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 403, path
+        assert resp.json()["error"]["code"] == "AUTH_FORBIDDEN"
+
+
+# ===========================================================================
+# Documents (#35–#37)
+# ===========================================================================
+def _document() -> EmployeeDocumentSchema:
+    return EmployeeDocumentSchema(
+        document_id=5,
+        document_type="pan_card",
+        file_url="s3://bucket/doc.pdf",
+        original_filename="pan.pdf",
+        file_size_bytes=1024,
+        uploaded_by=1,
+        created_at=_NOW,
+        updated_at=_NOW,
+    )
+
+
+async def test_list_documents_200(
+    employee_client: AsyncClient, mock_employee_service: AsyncMock, super_admin_headers
+) -> None:
+    mock_employee_service.list_documents.return_value = [_document()]
+    resp = await employee_client.get(
+        f"{API_PREFIX}/employees/1/documents", headers=super_admin_headers
+    )
+    assert resp.status_code == 200
+    assert resp.json()["data"][0]["document_id"] == 5
+
+
+async def test_get_document_200(
+    employee_client: AsyncClient, mock_employee_service: AsyncMock, super_admin_headers
+) -> None:
+    mock_employee_service.get_document.return_value = _document()
+    resp = await employee_client.get(
+        f"{API_PREFIX}/employees/1/documents/5", headers=super_admin_headers
+    )
+    assert resp.status_code == 200
+    assert resp.json()["data"]["file_url"] == "s3://bucket/doc.pdf"
+
+
+async def test_delete_document_204(
+    employee_client: AsyncClient, mock_employee_service: AsyncMock, super_admin_headers
+) -> None:
+    mock_employee_service.delete_document.return_value = None
+    resp = await employee_client.delete(
+        f"{API_PREFIX}/employees/1/documents/5", headers=super_admin_headers
+    )
+    assert resp.status_code == 204
+
+
+# ===========================================================================
+# Bank details (#38–#41) — reads gated by employee_salary read as well
+# ===========================================================================
+def _bank_detail() -> EmployeeBankDetailSchema:
+    return EmployeeBankDetailSchema(
+        bank_detail_id=3,
+        bank_name="HDFC",
+        bank_branch_name="MG Road",
+        account_number="1234567890",
+        ifsc_code="HDFC0001234",
+        is_primary=True,
+        created_at=_NOW,
+        updated_at=_NOW,
+    )
+
+
+async def test_list_bank_details_requires_salary_permission(
+    employee_client: AsyncClient, mock_employee_service: AsyncMock, make_access_token
+) -> None:
+    """employee:read alone is NOT enough to read account numbers (sensitive)."""
+    mock_employee_service.list_bank_details.return_value = [_bank_detail()]
+    token = make_access_token(
+        is_super_admin=False,
+        permissions=[{"feature_key": "employee", "can_read": True}],
+    )
+    resp = await employee_client.get(
+        f"{API_PREFIX}/employees/1/bank-details",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 403
+    assert resp.json()["error"]["code"] == "AUTH_FORBIDDEN"
+
+
+async def test_list_bank_details_200_with_salary_permission(
+    employee_client: AsyncClient, mock_employee_service: AsyncMock, make_access_token
+) -> None:
+    mock_employee_service.list_bank_details.return_value = [_bank_detail()]
+    token = make_access_token(
+        is_super_admin=False,
+        permissions=[
+            {"feature_key": "employee", "can_read": True},
+            {"feature_key": "employee_salary", "can_read": True},
+        ],
+    )
+    resp = await employee_client.get(
+        f"{API_PREFIX}/employees/1/bank-details",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["data"][0]["account_number"] == "1234567890"
+
+
+async def test_add_bank_detail_201(
+    employee_client: AsyncClient, mock_employee_service: AsyncMock, super_admin_headers
+) -> None:
+    mock_employee_service.add_bank_detail.return_value = _bank_detail()
+    resp = await employee_client.post(
+        f"{API_PREFIX}/employees/1/bank-details",
+        json={"bank_name": "HDFC", "account_number": "1234567890", "ifsc_code": "HDFC0001234"},
+        headers=super_admin_headers,
+    )
+    assert resp.status_code == 201
+    assert resp.json()["data"]["bank_detail_id"] == 3
+
+
+async def test_add_bank_detail_invalid_ifsc_422(
+    employee_client: AsyncClient, super_admin_headers
+) -> None:
+    resp = await employee_client.post(
+        f"{API_PREFIX}/employees/1/bank-details",
+        json={"ifsc_code": "BAD"},
+        headers=super_admin_headers,
+    )
+    assert resp.status_code == 422
+    assert resp.json()["error"]["code"] == "VALIDATION_ERROR"
+
+
+async def test_update_bank_detail_200(
+    employee_client: AsyncClient, mock_employee_service: AsyncMock, super_admin_headers
+) -> None:
+    mock_employee_service.update_bank_detail.return_value = _bank_detail()
+    resp = await employee_client.patch(
+        f"{API_PREFIX}/employees/1/bank-details/3",
+        json={"bank_name": "ICICI"},
+        headers=super_admin_headers,
+    )
+    assert resp.status_code == 200
+
+
+async def test_delete_bank_detail_204(
+    employee_client: AsyncClient, mock_employee_service: AsyncMock, super_admin_headers
+) -> None:
+    mock_employee_service.delete_bank_detail.return_value = None
+    resp = await employee_client.delete(
+        f"{API_PREFIX}/employees/1/bank-details/3", headers=super_admin_headers
+    )
+    assert resp.status_code == 204
+
+
+# ===========================================================================
+# Emergency contacts (#42–#45) and references (#46–#49)
+# ===========================================================================
+async def test_add_emergency_contact_201(
+    employee_client: AsyncClient, mock_employee_service: AsyncMock, super_admin_headers
+) -> None:
+    mock_employee_service.add_emergency_contact.return_value = {
+        "emergency_contact_id": 7,
+        "contact_country_code": "+91",
+        "contact_number": "9876500000",
+        "contact_person_name": "John Doe",
+        "relation": "spouse",
+        "address": None,
+        "created_at": _NOW.isoformat(),
+        "updated_at": _NOW.isoformat(),
+    }
+    resp = await employee_client.post(
+        f"{API_PREFIX}/employees/1/emergency-contacts",
+        json={"contact_number": "9876500000", "contact_person_name": "John Doe"},
+        headers=super_admin_headers,
+    )
+    assert resp.status_code == 201
+    assert resp.json()["data"]["emergency_contact_id"] == 7
+
+
+async def test_add_emergency_contact_missing_name_422(
+    employee_client: AsyncClient, super_admin_headers
+) -> None:
+    resp = await employee_client.post(
+        f"{API_PREFIX}/employees/1/emergency-contacts",
+        json={"contact_number": "9876500000"},
+        headers=super_admin_headers,
+    )
+    assert resp.status_code == 422
+
+
+async def test_add_reference_201(
+    employee_client: AsyncClient, mock_employee_service: AsyncMock, super_admin_headers
+) -> None:
+    mock_employee_service.add_reference.return_value = {
+        "reference_id": 8,
+        "reference_name": "Jane Ref",
+        "reference_country_code": "+91",
+        "reference_contact_number": "9876511111",
+        "sort_order": 1,
+        "created_at": _NOW.isoformat(),
+        "updated_at": _NOW.isoformat(),
+    }
+    resp = await employee_client.post(
+        f"{API_PREFIX}/employees/1/references",
+        json={"reference_name": "Jane Ref", "reference_contact_number": "9876511111"},
+        headers=super_admin_headers,
+    )
+    assert resp.status_code == 201
+
+
+async def test_delete_reference_204(
+    employee_client: AsyncClient, mock_employee_service: AsyncMock, super_admin_headers
+) -> None:
+    mock_employee_service.delete_reference.return_value = None
+    resp = await employee_client.delete(
+        f"{API_PREFIX}/employees/1/references/8", headers=super_admin_headers
+    )
+    assert resp.status_code == 204
+
+
+# ===========================================================================
+# Tags (#50–#52) and status history (#53)
+# ===========================================================================
+async def test_add_and_delete_tag(
+    employee_client: AsyncClient, mock_employee_service: AsyncMock, super_admin_headers
+) -> None:
+    mock_employee_service.add_tag.return_value = EmployeeTagSchema(
+        tag_id=4,
+        tag_label="Star",
+        tag_color="#ff0000",
+        is_status_tag=False,
+        created_by=1,
+        created_at=_NOW,
+        updated_at=_NOW,
+    )
+    resp = await employee_client.post(
+        f"{API_PREFIX}/employees/1/tags",
+        json={"tag_label": "Star", "tag_color": "#ff0000"},
+        headers=super_admin_headers,
+    )
+    assert resp.status_code == 201
+    assert resp.json()["data"]["tag_id"] == 4
+
+    mock_employee_service.delete_tag.return_value = None
+    resp = await employee_client.delete(
+        f"{API_PREFIX}/employees/1/tags/4", headers=super_admin_headers
+    )
+    assert resp.status_code == 204
+
+
+async def test_list_status_history_200(
+    employee_client: AsyncClient, mock_employee_service: AsyncMock, super_admin_headers
+) -> None:
+    mock_employee_service.list_status_history.return_value = [
+        EmployeeStatusHistorySchema(
+            status_history_id=1,
+            previous_status=None,
+            new_status="active",
+            changed_by=1,
+            reason=None,
+            effective_date="2026-01-01",
+            created_at=_NOW,
+        )
+    ]
+    resp = await employee_client.get(
+        f"{API_PREFIX}/employees/1/status-history", headers=super_admin_headers
+    )
+    assert resp.status_code == 200
+    assert resp.json()["data"][0]["new_status"] == "active"

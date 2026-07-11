@@ -92,7 +92,7 @@ def upgrade() -> None:
         ),
     )
     op.create_index(
-        "ix_attendance_regularization_requests_employee_id_attendance_date",
+        "ix_att_regularization_reqs_employee_id_attendance_date",
         "attendance_regularization_requests",
         ["employee_id", "attendance_date"],
     )
@@ -135,7 +135,7 @@ def downgrade() -> None:
         table_name="attendance_regularization_requests",
     )
     op.drop_index(
-        "ix_attendance_regularization_requests_employee_id_attendance_date",
+        "ix_att_regularization_reqs_employee_id_attendance_date",
         table_name="attendance_regularization_requests",
     )
     op.drop_table("attendance_regularization_requests")

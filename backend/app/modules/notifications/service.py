@@ -7,13 +7,16 @@ All database access is performed strictly via repositories.
 from __future__ import annotations
 
 import datetime
+from collections.abc import Sequence
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants.enums import SortOrder
 from app.modules.audit.constants import ActionType
 from app.modules.audit.service import AuditService
+from app.modules.notifications.constants import NotificationPriority
 from app.modules.notifications.exceptions import (
     NotificationNotFoundException,
     NotificationValidationException,
@@ -25,9 +28,11 @@ from app.modules.notifications.repository import (
     NotificationRecipientRepository,
     NotificationRepository,
 )
+from app.modules.rbac.models import User
 from app.modules.rbac.repository import UserRepository
 from app.shared.base.service import BaseService
 from app.shared.schemas.pagination import PaginatedResponse
+from app.shared.utils.datetime import utcnow
 
 
 class NotificationService(BaseService):
@@ -563,3 +568,76 @@ class NotificationService(BaseService):
             events.append({"event": "deleted", "at": r.deleted_at})
 
         return sorted(events, key=lambda x: x["at"])
+
+    # =========================================================================
+    # 7. System-Generated Emission (cross-module orchestration)
+    # =========================================================================
+
+    async def resolve_user_ids_for_employees(
+        self, org_id: int, employee_ids: Sequence[int]
+    ) -> list[int]:
+        """Resolve employees' linked, non-deleted user ids within ``org_id`` in one query.
+
+        Employees without a linked user account are silently omitted — emitting
+        modules use the (possibly empty) result to decide whether a system
+        notification has any recipient at all.
+        """
+        if not employee_ids:
+            return []
+        stmt = select(User.id).where(
+            User.org_id == org_id,
+            User.employee_id.in_(list(employee_ids)),
+            User.deleted_at.is_(None),
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def emit_system_notification(
+        self,
+        org_id: int,
+        *,
+        recipient_user_ids: Sequence[int],
+        title: str,
+        message: str,
+        notification_type: str,
+        priority: str = NotificationPriority.NORMAL.value,
+        source_module: str | None = None,
+        source_entity_type: str | None = None,
+        source_entity_id: int | None = None,
+        created_by: int | None = None,
+    ) -> Notification | None:
+        """Create a system-generated notification inside the caller's transaction.
+
+        Unlike :meth:`create_notification`, this opens **no** transaction boundary:
+        the emitting business service owns the transaction, so the notification
+        commits (or rolls back) atomically with the business mutation it announces.
+        Returns ``None`` without writing anything when ``recipient_user_ids`` is
+        empty (e.g. the subject employee has no linked user account).
+        """
+        if not recipient_user_ids:
+            return None
+
+        notification = await self.notifications.create(
+            {
+                "org_id": org_id,
+                "title": title,
+                "message": message,
+                "notification_type": notification_type,
+                "priority": priority,
+                "source_module": source_module,
+                "source_entity_type": source_entity_type,
+                "source_entity_id": source_entity_id,
+                "created_by": created_by,
+            }
+        )
+
+        delivered_at = utcnow()
+        for uid in dict.fromkeys(recipient_user_ids):  # dedupe, preserving order
+            await self.recipients.create(
+                {
+                    "org_id": org_id,
+                    "notification_id": notification.id,
+                    "user_id": uid,
+                    "delivered_at": delivered_at,
+                }
+            )
+        return notification

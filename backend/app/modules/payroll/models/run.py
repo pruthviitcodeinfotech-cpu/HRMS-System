@@ -149,7 +149,7 @@ class PayrollComputedRow(Base):
         BigInteger,
         ForeignKey(
             "finalized_payroll_runs.id",
-            name="fk_payroll_computed_rows_finalized_run_id_finalized_payroll_runs",
+            name="fk_payroll_computed_rows_finalized_run_id_final_runs",
         ),
     )
     computed_at: Mapped[datetime] = mapped_column(
@@ -164,7 +164,7 @@ class PayrollComputedRow(Base):
             "employee_id",
             "cycle_from",
             "cycle_to",
-            name="uq_payroll_computed_rows_payroll_group_id_employee_id_cycle_from_cycle_to",
+            name="uq_payroll_computed_rows_group_employee_cycle",
         ),
         Index(
             "ix_payroll_computed_rows_payroll_group_id_cycle_from_cycle_to",

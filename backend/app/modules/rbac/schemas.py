@@ -243,7 +243,9 @@ class PermissionCatalogItemSchema(BaseSchema):
     feature_key: str
     feature_label: str
     parent_feature_key: str | None = None
-    supported_actions: list[str] = Field(default_factory=lambda: ["create", "read", "edit", "delete"])
+    supported_actions: list[str] = Field(
+        default_factory=lambda: ["create", "read", "edit", "delete"]
+    )
 
 
 # ===========================================================================
@@ -352,6 +354,29 @@ class DepartmentAccessSchema(BaseSchema):
 
 
 # ===========================================================================
+# Session administration (admin view of another user's ``user_sessions``)
+# ===========================================================================
+
+
+class UserSessionSchema(BaseSchema):
+    """A target user's ``user_sessions`` row as seen by an admin (no ``session_token``)."""
+
+    id: int
+    device_info: str | None = None
+    ip_address: str | None = None
+    created_at: datetime
+    expires_at: datetime | None = None
+    revoked_at: datetime | None = None
+    is_active: bool
+
+
+class SessionsRevokedSchema(BaseSchema):
+    """Result of ``POST /users/{user_id}/sessions/revoke-all``."""
+
+    revoked_count: int = Field(..., ge=0, description="Number of sessions revoked.")
+
+
+# ===========================================================================
 # Paginated list responses (reuse the shared paged envelope)
 # ===========================================================================
 
@@ -362,6 +387,10 @@ class UserListResponse(PaginatedResponse[UserSummarySchema]):
 
 class RoleListResponse(PaginatedResponse[RoleSchema]):
     """Paginated ``GET /rights-templates`` result."""
+
+
+class UserSessionListResponse(PaginatedResponse[UserSessionSchema]):
+    """Paginated ``GET /users/{user_id}/sessions`` result."""
 
 
 __all__ = [
@@ -396,6 +425,9 @@ __all__ = [
     "AssignDepartmentAccessRequest",
     "ReplaceDepartmentAccessRequest",
     "DepartmentAccessSchema",
+    "UserSessionSchema",
+    "SessionsRevokedSchema",
     "UserListResponse",
     "RoleListResponse",
+    "UserSessionListResponse",
 ]

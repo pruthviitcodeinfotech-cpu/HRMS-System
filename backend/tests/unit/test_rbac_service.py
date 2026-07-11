@@ -7,6 +7,7 @@ conflict/authorization/validation failure paths.
 
 from __future__ import annotations
 
+from datetime import UTC
 from types import SimpleNamespace
 
 import pytest
@@ -15,6 +16,7 @@ from app.core.exceptions.base import (
     AuthorizationException,
     ConflictException,
     NotFoundException,
+    ValidationException,
 )
 from app.modules.rbac.schemas import (
     AssignRoleRequest,
@@ -55,6 +57,7 @@ async def test_create_user_success(rbac_service, make_user) -> None:
     )
     assert result.email == "user@example.com"
     rbac_service.users.create.assert_awaited_once()
+    rbac_service.audit.record.assert_awaited_once()
 
 
 async def test_create_user_email_conflict(rbac_service) -> None:
@@ -109,6 +112,7 @@ async def test_delete_user_success(rbac_service, make_user) -> None:
     rbac_service.users.get_active_by_id.return_value = make_user(id=2)
     await rbac_service.delete_user(org_id=1, actor_id=1, user_id=2)
     rbac_service.users.update.assert_awaited_once()
+    rbac_service.audit.record.assert_awaited_once()
 
 
 async def test_restore_user_not_deleted(rbac_service, make_user) -> None:
@@ -211,6 +215,7 @@ async def test_assign_role_replaces(rbac_service, make_user, make_role) -> None:
     )
     rbac_service.assignments.delete_for_user.assert_awaited_once()
     rbac_service.assignments.create.assert_awaited_once()
+    rbac_service.audit.record.assert_awaited_once()
 
 
 async def test_remove_role_not_assigned(rbac_service, make_user) -> None:
@@ -219,18 +224,27 @@ async def test_remove_role_not_assigned(rbac_service, make_user) -> None:
     with pytest.raises(NotFoundException) as exc:
         await rbac_service.remove_role(org_id=1, user_id=1)
     assert exc.value.code == "ASSIGNMENT_NOT_FOUND"
+    # Nothing was removed, so no audit row must be written.
+    rbac_service.audit.record.assert_not_awaited()
+
+
+async def test_remove_role_success_audits(rbac_service, make_user) -> None:
+    rbac_service.users.get_active_by_id.return_value = make_user()
+    rbac_service.assignments.delete_for_user.return_value = 1
+    await rbac_service.remove_role(org_id=1, user_id=1)
+    rbac_service.audit.record.assert_awaited_once()
 
 
 # --- Custom permission mapping ---------------------------------------------
 async def test_set_custom_permission_updates(rbac_service, make_user) -> None:
     rbac_service.users.get_active_by_id.return_value = make_user()
     existing = SimpleNamespace(
-        id=1, feature_key="leave", parent_feature_key=None, set_by=2, set_at=None,
+        id=1, feature_key="leave_request", parent_feature_key=None, set_by=2, set_at=None,
         can_create=False, can_read=False, can_edit=False, can_delete=False,
     )
     rbac_service.custom_perms.get_for_feature.return_value = existing
     rbac_service.custom_perms.update.return_value = existing
-    item = CustomPermissionInput(feature_key="leave", can_read=True)
+    item = CustomPermissionInput(feature_key="leave_request", can_read=True)
     await rbac_service.set_custom_permission(org_id=1, actor_id=2, user_id=1, item=item)
     rbac_service.custom_perms.update.assert_awaited_once()
     rbac_service.custom_perms.create.assert_not_awaited()
@@ -287,3 +301,109 @@ async def test_effective_permissions_maps_resolver_output(rbac_service, make_use
     assert perm.can_edit is True
     assert result.data_scope.branch_ids == [10]
     assert result.data_scope.department_ids == [5]
+
+
+# --- Permission catalog ------------------------------------------------------
+async def test_catalog_lookup_known_key(rbac_service) -> None:
+    entry = await rbac_service.get_permission_catalog_entry(feature_key="employee")
+    assert entry.feature_key == "employee"
+    assert "read" in entry.supported_actions
+
+
+async def test_catalog_lookup_unknown_key_404(rbac_service) -> None:
+    with pytest.raises(NotFoundException) as exc:
+        await rbac_service.get_permission_catalog_entry(feature_key="nonexistent")
+    assert exc.value.code == "FEATURE_KEY_UNKNOWN"
+    assert exc.value.status_code == 404
+
+
+async def test_catalog_list_and_parent_filter(rbac_service) -> None:
+    full = await rbac_service.list_permission_catalog()
+    keys = {item.feature_key for item in full}
+    assert {"employee", "user_management", "role_management", "access_management"} <= keys
+
+    subtree = await rbac_service.list_permission_catalog(parent_feature_key="employee")
+    assert {item.feature_key for item in subtree} == {"employee_salary", "employee_document"}
+
+
+async def test_set_template_permission_unknown_key_422(rbac_service, make_role) -> None:
+    rbac_service.roles.get_active_by_id.return_value = make_role()
+    item = TemplatePermissionInput(
+        feature_key="nonexistent", feature_label="Ghost", can_read=True
+    )
+    with pytest.raises(ValidationException) as exc:
+        await rbac_service.set_template_permission(org_id=1, template_id=1, item=item)
+    assert exc.value.code == "FEATURE_KEY_UNKNOWN"
+    rbac_service.template_perms.create.assert_not_awaited()
+
+
+async def test_replace_custom_permissions_unknown_key_422(rbac_service, make_user) -> None:
+    rbac_service.users.get_active_by_id.return_value = make_user()
+    items = [CustomPermissionInput(feature_key="nonexistent", can_read=True)]
+    with pytest.raises(ValidationException) as exc:
+        await rbac_service.replace_custom_permissions(
+            org_id=1, actor_id=1, user_id=1, items=items
+        )
+    assert exc.value.code == "FEATURE_KEY_UNKNOWN"
+    rbac_service.custom_perms.delete_all_for_user.assert_not_awaited()
+
+
+# --- Session administration --------------------------------------------------
+def _session_row(session_id: int = 5, user_id: int = 2) -> SimpleNamespace:
+    from datetime import datetime
+
+    return SimpleNamespace(
+        id=session_id,
+        user_id=user_id,
+        device_info="pytest",
+        ip_address="127.0.0.1",
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        expires_at=None,
+        revoked_at=None,
+        is_active=True,
+    )
+
+
+async def test_list_user_sessions(rbac_service, make_user) -> None:
+    rbac_service.users.get_by_id.return_value = make_user(id=2)
+    rbac_service.sessions.list_for_user.return_value = [_session_row()]
+    rbac_service.sessions.count_for_user.return_value = 1
+    result = await rbac_service.list_user_sessions(org_id=1, user_id=2)
+    assert result.items[0].id == 5
+    assert result.pagination.total_records == 1
+
+
+async def test_force_logout_revokes_target_session(rbac_service, make_user) -> None:
+    rbac_service.users.get_by_id.return_value = make_user(id=2)
+    row = _session_row(session_id=5, user_id=2)
+    rbac_service.sessions.get_for_user.return_value = row
+    await rbac_service.force_logout_session(org_id=1, actor_id=9, user_id=2, session_id=5)
+    rbac_service.sessions.get_for_user.assert_awaited_once_with(5, 2)
+    rbac_service.sessions.revoke.assert_awaited_once()
+    assert rbac_service.sessions.revoke.await_args.args[0] is row
+    rbac_service.audit.record.assert_awaited_once()
+
+
+async def test_force_logout_session_not_found(rbac_service, make_user) -> None:
+    rbac_service.users.get_by_id.return_value = make_user(id=2)
+    rbac_service.sessions.get_for_user.return_value = None
+    with pytest.raises(NotFoundException) as exc:
+        await rbac_service.force_logout_session(org_id=1, actor_id=9, user_id=2, session_id=99)
+    assert exc.value.code == "SESSION_NOT_FOUND"
+
+
+async def test_force_logout_cross_org_user_404(rbac_service, make_user) -> None:
+    """A target user belonging to another org is invisible: 404 USER_NOT_FOUND."""
+    rbac_service.users.get_by_id.return_value = make_user(id=2, org_id=999)
+    with pytest.raises(NotFoundException) as exc:
+        await rbac_service.force_logout_session(org_id=1, actor_id=9, user_id=2, session_id=5)
+    assert exc.value.code == "USER_NOT_FOUND"
+    rbac_service.sessions.revoke.assert_not_awaited()
+
+
+async def test_revoke_all_user_sessions_counts_and_audits(rbac_service, make_user) -> None:
+    rbac_service.users.get_by_id.return_value = make_user(id=2)
+    rbac_service.sessions.revoke_all_for_user.return_value = 3
+    result = await rbac_service.revoke_all_user_sessions(org_id=1, actor_id=9, user_id=2)
+    assert result.revoked_count == 3
+    rbac_service.audit.record.assert_awaited_once()

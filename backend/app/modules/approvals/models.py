@@ -53,7 +53,9 @@ class ApprovalRequest(Base):
     reference_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     # DEFERRED cross-module FK -> employees
     employee_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    status: Mapped[str] = mapped_column(String(10), nullable=False, server_default=text("'pending'"))
+    status: Mapped[
+        str
+    ] = mapped_column(String(10), nullable=False, server_default=text("'pending'"))
     requested_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
@@ -98,7 +100,9 @@ class AttendanceRegularizationRequest(Base):
     applied_on: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
-    status: Mapped[str] = mapped_column(String(10), nullable=False, server_default=text("'pending'"))
+    status: Mapped[
+        str
+    ] = mapped_column(String(10), nullable=False, server_default=text("'pending'"))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
@@ -108,7 +112,7 @@ class AttendanceRegularizationRequest(Base):
 
     __table_args__ = (
         Index(
-            "ix_attendance_regularization_requests_employee_id_attendance_date",
+            "ix_att_regularization_reqs_employee_id_attendance_date",
             "employee_id",
             "attendance_date",
         ),
@@ -130,7 +134,9 @@ class LoginResetRequest(Base):
     request_description: Mapped[str] = mapped_column(
         String(255), nullable=False, server_default=text("'Login Reset Request'")
     )
-    status: Mapped[str] = mapped_column(String(10), nullable=False, server_default=text("'pending'"))
+    status: Mapped[
+        str
+    ] = mapped_column(String(10), nullable=False, server_default=text("'pending'"))
     applied_on: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )

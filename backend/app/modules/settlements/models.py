@@ -104,7 +104,7 @@ class LoanAdvanceTransaction(Base):
         BigInteger,
         ForeignKey(
             "employee_loans_advances.id",
-            name="fk_loan_advance_transactions_loan_advance_id_employee_loans_advances",
+            name="fk_loan_adv_txns_loan_advance_id_employee_loans_advances",
             ondelete="RESTRICT",
         ),
         nullable=False,

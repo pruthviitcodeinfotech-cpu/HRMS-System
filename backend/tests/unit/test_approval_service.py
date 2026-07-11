@@ -127,6 +127,7 @@ def approval_service():
         "leave_balances",
         "leave_settings",
         "audit",
+        "notifications",
     ):
         setattr(svc, attr, AsyncMock())
 
@@ -154,6 +155,9 @@ def approval_service():
     
     svc.login_resets.create.return_value = SimpleNamespace(id=102)
     svc.login_resets.has_pending_request.return_value = False
+
+    # Decision notifications: subject employee 5 resolves to linked user 42.
+    svc.notifications.resolve_user_ids_for_employees.return_value = [42]
 
     return svc
 
@@ -335,6 +339,48 @@ async def test_reject_request_missing_remarks(approval_service) -> None:
         await approval_service.reject_request(
             org_id=1, approval_id=1, reject_remarks="", reviewer_id=9
         )
+
+
+# ===========================================================================
+# 3b. Decision notifications
+# ===========================================================================
+
+
+async def test_approve_request_notifies_linked_user(approval_service) -> None:
+    """Approving emits one system notification to the subject employee's linked user."""
+    await approval_service.approve_request(org_id=1, approval_id=1, reviewer_id=9)
+
+    approval_service.notifications.resolve_user_ids_for_employees.assert_awaited_once_with(1, [5])
+    approval_service.notifications.emit_system_notification.assert_awaited_once()
+    kwargs = approval_service.notifications.emit_system_notification.await_args.kwargs
+    assert kwargs["recipient_user_ids"] == [42]
+    assert kwargs["notification_type"] == "approval"
+    assert kwargs["source_module"] == "approvals"
+    assert kwargs["source_entity_id"] == 1
+    assert "approved" in kwargs["message"]
+
+
+async def test_reject_request_notifies_linked_user(approval_service) -> None:
+    """Rejecting emits one system notification to the subject employee's linked user."""
+    await approval_service.reject_request(
+        org_id=1, approval_id=1, reject_remarks="Not allowed", reviewer_id=9
+    )
+
+    approval_service.notifications.emit_system_notification.assert_awaited_once()
+    kwargs = approval_service.notifications.emit_system_notification.await_args.kwargs
+    assert kwargs["recipient_user_ids"] == [42]
+    assert "rejected" in kwargs["message"]
+
+
+async def test_approve_request_skips_notification_without_linked_user(approval_service) -> None:
+    """No linked user for the subject employee -> approval succeeds and nothing is emitted."""
+    approval_service.notifications.resolve_user_ids_for_employees.return_value = []
+
+    result = await approval_service.approve_request(org_id=1, approval_id=1, reviewer_id=9)
+
+    assert result.id == 1
+    approval_service.notifications.emit_system_notification.assert_not_awaited()
+    approval_service.audit.record.assert_awaited_once()
 
 
 # ===========================================================================

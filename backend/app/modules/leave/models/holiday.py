@@ -129,7 +129,7 @@ class EmployeeHolidayAssignment(Base):
         BigInteger,
         ForeignKey(
             "holiday_templates.id",
-            name="fk_employee_holiday_assignments_previous_template_id_holiday_templates",
+            name="fk_emp_holiday_assign_prev_template_id_holiday_templates",
         ),
     )
 
