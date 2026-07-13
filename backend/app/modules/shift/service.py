@@ -144,6 +144,9 @@ class ShiftService(BaseService):
         self.audit = AuditService(session)
         # Org-wide toggles owned by the Settings module.
         self.org_settings = OrgSettingsRepository(session)
+        from app.modules.attendance.repository import AttendanceLockRepository
+
+        self.locks = AttendanceLockRepository(session)
 
     # =====================================================================
     # Shifts — CRUD
@@ -193,9 +196,7 @@ class ShiftService(BaseService):
         new_name = updates.get("shift_name")
         if new_name is not None and new_name != shift.shift_name:
             if await self.shifts.name_exists(org_id, new_name, exclude_shift_id=shift_id):
-                raise ConflictException(
-                    "Shift name already in use.", code="duplicate_shift_name"
-                )
+                raise ConflictException("Shift name already in use.", code="duplicate_shift_name")
 
         async with self.transaction():
             if updates:
@@ -351,9 +352,7 @@ class ShiftService(BaseService):
         if "day_of_week" in updates:
             new_day = updates["day_of_week"]
             updates["day_of_week"] = int(new_day) if new_day is not None else None
-            if updates[
-                "day_of_week"
-            ] != timing.day_of_week:
+            if updates["day_of_week"] != timing.day_of_week:
                 if await self.day_timings.exists_for_day(
                     shift_id, updates["day_of_week"], exclude_timing_id=timing_id
                 ):
@@ -417,6 +416,10 @@ class ShiftService(BaseService):
         shift = await self._get_active_shift(org_id, shift_id)
         employee = await self._get_active_employee(org_id, data.employee_id)
 
+        await self._check_attendance_locked(org_id, data.effective_from, data.employee_id)
+        if data.effective_to:
+            await self._check_attendance_locked(org_id, data.effective_to, data.employee_id)
+
         if employee.date_of_joining is not None and data.effective_from < employee.date_of_joining:
             raise ValidationException(
                 "Shift assignment cannot start before the employee's joining date.",
@@ -472,9 +475,7 @@ class ShiftService(BaseService):
         """
         if query.on_date is not None:
             if query.employee_id is None:
-                raise ValidationException(
-                    "employee_id is required.", code="validation_error"
-                )
+                raise ValidationException("employee_id is required.", code="validation_error")
             resolved = await self.assignments.resolve_for_date(
                 org_id, query.employee_id, query.on_date
             )
@@ -552,10 +553,7 @@ class ShiftService(BaseService):
         employee = await self.employees.get_active_by_id(employee_id, org_id)
         if employee is None:
             return _skip("Employee not found.")
-        if (
-            employee.date_of_joining is not None
-            and data.effective_from < employee.date_of_joining
-        ):
+        if employee.date_of_joining is not None and data.effective_from < employee.date_of_joining:
             return _skip("Assignment starts before the employee's joining date.")
         if await self.assignments.exists_on_effective_from(employee_id, data.effective_from):
             return _skip("An assignment already starts on this date.")
@@ -595,12 +593,29 @@ class ShiftService(BaseService):
         if assignment is None:
             raise AssignmentNotFoundException()
 
+        await self._check_attendance_locked(
+            org_id, assignment.effective_from, assignment.employee_id
+        )
+        if assignment.effective_to:
+            await self._check_attendance_locked(
+                org_id, assignment.effective_to, assignment.employee_id
+            )
+
         updates = data.model_dump(exclude_unset=True)
         if updates.get("shift_id") is not None:
             await self._require_shift(org_id, updates["shift_id"])
 
         new_from = updates.get("effective_from", assignment.effective_from)
         new_to = updates.get("effective_to", assignment.effective_to)
+
+        if updates.get("effective_from"):
+            await self._check_attendance_locked(
+                org_id, updates["effective_from"], assignment.employee_id
+            )
+        if updates.get("effective_to"):
+            await self._check_attendance_locked(
+                org_id, updates["effective_to"], assignment.employee_id
+            )
         if new_to is not None and new_to < new_from:
             raise ValidationException("effective_to must be on or after effective_from.")
         if await self.assignments.overlap_exists(
@@ -621,13 +636,18 @@ class ShiftService(BaseService):
             )
         return ShiftAssignmentSchema.model_validate(assignment)
 
-    async def delete_assignment(
-        self, *, org_id: int, actor_id: int, assignment_id: int
-    ) -> None:
+    async def delete_assignment(self, *, org_id: int, actor_id: int, assignment_id: int) -> None:
         """Hard-delete an assignment (contract #18 — no soft-delete on this table)."""
         assignment = await self.assignments.get_by_id_in_org(assignment_id, org_id)
         if assignment is None:
             raise AssignmentNotFoundException()
+        await self._check_attendance_locked(
+            org_id, assignment.effective_from, assignment.employee_id
+        )
+        if assignment.effective_to:
+            await self._check_attendance_locked(
+                org_id, assignment.effective_to, assignment.employee_id
+            )
         async with self.transaction():
             await self.assignments.delete(assignment)
             await self._audit(
@@ -651,9 +671,7 @@ class ShiftService(BaseService):
         """An employee's assignment history, or only the current one (contract #19)."""
         await self._require_employee(org_id, employee_id)
         if current:
-            resolved = await self.assignments.resolve_for_date(
-                org_id, employee_id, utcnow().date()
-            )
+            resolved = await self.assignments.resolve_for_date(org_id, employee_id, utcnow().date())
             items = [ShiftAssignmentSchema.model_validate(resolved)] if resolved else []
             return ShiftAssignmentListResponse.build(
                 items=items, page=1, page_size=max(len(items), 1), total_records=len(items)
@@ -667,9 +685,7 @@ class ShiftService(BaseService):
             items=items, page=page, page_size=page_size, total_records=total
         )
 
-    async def resolve_shift(
-        self, *, org_id: int, query: ShiftResolveQuery
-    ) -> ShiftResolveResponse:
+    async def resolve_shift(self, *, org_id: int, query: ShiftResolveQuery) -> ShiftResolveResponse:
         """Resolve the shift effective for an employee on a date, plus day flags.
 
         Mirrors the Attendance Engine's internal lookup at the maximum fidelity the
@@ -706,6 +722,31 @@ class ShiftService(BaseService):
     # =====================================================================
     # Shift rotations (roster generation)
     # =====================================================================
+    async def _check_attendance_locked(
+        self, org_id: int, date_val: date, employee_id: int | None = None
+    ) -> None:
+        """Helper to raise AttendancePeriodLockedException if the period containing date_val is locked."""
+        from sqlalchemy import select
+
+        from app.modules.attendance.exceptions import AttendancePeriodLockedException
+        from app.modules.employee.models.employee import Employee
+
+        branch_id = None
+        if employee_id is not None:
+            stmt = select(Employee.master_branch_id).where(
+                Employee.employee_id == employee_id, Employee.org_id == org_id
+            )
+            branch_id = (await self.session.execute(stmt)).scalar()
+
+        is_locked = await self.locks.is_locked(
+            org_id=org_id,
+            month=date_val.month,
+            year=date_val.year,
+            branch_id=branch_id,
+        )
+        if isinstance(is_locked, bool) and is_locked:
+            raise AttendancePeriodLockedException(month=date_val.month, year=date_val.year)
+
     async def _require_advance_shift_enabled(self, org_id: int) -> None:
         """Reject rotation generation when Settings has advance shift turned off.
 
@@ -743,9 +784,7 @@ class ShiftService(BaseService):
 
         for shift_id in data.shift_sequence:
             if not await self.shifts.exists_in_org(org_id, shift_id):
-                raise ValidationException(
-                    f"Shift {shift_id} does not exist.", code="invalid_shift"
-                )
+                raise ValidationException(f"Shift {shift_id} does not exist.", code="invalid_shift")
 
         employees = await self._employees_for_scope(org_id, data.group_scope)
         if not employees:
@@ -861,9 +900,7 @@ class ShiftService(BaseService):
         """One employee's shift calendar over a date range or month (contract #21)."""
         await self._require_employee(org_id, employee_id)
         date_from, date_to = self._resolve_range(query)
-        rows = await self.rosters.list_for_employee_range(
-            org_id, employee_id, date_from, date_to
-        )
+        rows = await self.rosters.list_for_employee_range(org_id, employee_id, date_from, date_to)
         items = [RosterEntrySchema.model_validate(row) for row in rows]
         return RosterListResponse.build(
             items=items, page=1, page_size=max(len(items), 1), total_records=len(items)
@@ -874,6 +911,7 @@ class ShiftService(BaseService):
     ) -> RosterUpsertResult:
         """Upsert one roster entry on ``(employee_id, roster_date)`` (contract #22)."""
         await self._require_employee(org_id, data.employee_id)
+        await self._check_attendance_locked(org_id, data.roster_date, data.employee_id)
         if data.shift_id is not None:
             await self._require_shift(org_id, data.shift_id)
 
@@ -923,6 +961,27 @@ class ShiftService(BaseService):
                         )
                     )
                     continue
+
+                # Check lock
+                from app.modules.attendance.repository import AttendanceLockRepository
+
+                is_locked = await AttendanceLockRepository(self.session).is_locked(
+                    org_id=org_id,
+                    month=entry.roster_date.month,
+                    year=entry.roster_date.year,
+                    branch_id=employee.master_branch_id,
+                )
+                if is_locked:
+                    results.append(
+                        RosterBulkItemResult(
+                            employee_id=entry.employee_id,
+                            roster_date=entry.roster_date,
+                            status="skipped",
+                            reason="Attendance period is locked.",
+                        )
+                    )
+                    continue
+
                 row, created = await self._write_roster_entry(org_id, actor_id, entry)
                 created_count += int(created)
                 updated_count += int(not created)
@@ -951,9 +1010,7 @@ class ShiftService(BaseService):
             results=results,
         )
 
-    async def _write_roster_entry(
-        self, org_id: int, actor_id: int, data: RosterUpsertRequest
-    ):
+    async def _write_roster_entry(self, org_id: int, actor_id: int, data: RosterUpsertRequest):
         """Insert-or-update the ``(employee_id, roster_date)`` roster row (validated caller)."""
         existing = await self.rosters.get_for_employee_date(data.employee_id, data.roster_date)
         if existing is not None:
@@ -987,6 +1044,8 @@ class ShiftService(BaseService):
         if row is None:
             raise RosterNotFoundException()
 
+        await self._check_attendance_locked(org_id, row.roster_date, row.employee_id)
+
         updates = data.model_dump(exclude_unset=True)
         new_shift = updates.get("shift_id", row.shift_id)
         new_off = updates.get("is_week_off", row.is_week_off)
@@ -1009,13 +1068,12 @@ class ShiftService(BaseService):
             )
         return RosterEntrySchema.model_validate(row)
 
-    async def delete_roster_entry(
-        self, *, org_id: int, actor_id: int, roster_id: int
-    ) -> None:
+    async def delete_roster_entry(self, *, org_id: int, actor_id: int, roster_id: int) -> None:
         """Hard-delete a roster entry (contract #25 — no soft-delete on this table)."""
         row = await self.rosters.get_by_id_in_org(roster_id, org_id)
         if row is None:
             raise RosterNotFoundException()
+        await self._check_attendance_locked(org_id, row.roster_date, row.employee_id)
         async with self.transaction():
             await self.rosters.delete(row)
             await self._audit(
@@ -1030,9 +1088,7 @@ class ShiftService(BaseService):
     # =====================================================================
     # Weekly offs
     # =====================================================================
-    async def get_weekly_offs(
-        self, *, org_id: int, query: WeeklyOffQuery
-    ) -> WeeklyOffListResponse:
+    async def get_weekly_offs(self, *, org_id: int, query: WeeklyOffQuery) -> WeeklyOffListResponse:
         """Return the active weekly-off configuration for an employee or a department."""
         if query.employee_id is not None:
             await self._get_active_employee(org_id, query.employee_id)
@@ -1061,6 +1117,16 @@ class ShiftService(BaseService):
         """
         effective_from = data.effective_from or utcnow().date()
 
+        if data.employee_id is not None:
+            await self._check_attendance_locked(org_id, effective_from, data.employee_id)
+        else:
+            await self._require_department(org_id, data.department_id)
+            employees = await self._all_employees_by_filter(
+                org_id, department_id=data.department_id
+            )
+            for emp in employees:
+                await self._check_attendance_locked(org_id, effective_from, emp.employee_id)
+
         async with self.transaction():
             if data.employee_id is not None:
                 await self._get_active_employee(org_id, data.employee_id)
@@ -1082,9 +1148,7 @@ class ShiftService(BaseService):
                 org_id, department_id=data.department_id
             )
             if not employees:
-                raise NotFoundException(
-                    "No active employees in the department.", code="not_found"
-                )
+                raise NotFoundException("No active employees in the department.", code="not_found")
             # Batched upsert: one read of existing active rows, one bulk close, one
             # bulk insert — avoids the per-employee N+1 (3 queries instead of 3N).
             employee_ids = [employee.employee_id for employee in employees]
@@ -1119,9 +1183,7 @@ class ShiftService(BaseService):
     ) -> WeeklyOffListResponse:
         """An employee's current weekly-off config; optionally superseded rows too (#11)."""
         await self._require_employee(org_id, employee_id)
-        rows = await self.weekoffs.list_for_employee(
-            employee_id, active_only=not include_history
-        )
+        rows = await self.weekoffs.list_for_employee(employee_id, active_only=not include_history)
         items = [WeeklyOffSchema.model_validate(row) for row in rows]
         return WeeklyOffListResponse.build(
             items=items, page=1, page_size=max(len(items), 1), total_records=len(items)
@@ -1149,6 +1211,11 @@ class ShiftService(BaseService):
             seen.add(day)
 
         default_effective = utcnow().date()
+        await self._check_attendance_locked(org_id, default_effective, employee_id)
+        for item in data.weekoffs:
+            item_effective = item.effective_from or default_effective
+            await self._check_attendance_locked(org_id, item_effective, employee_id)
+
         current = await self.weekoffs.list_for_employee(employee_id, active_only=True)
         current_by_day = {row.day_of_week: row for row in current}
 
@@ -1177,8 +1244,7 @@ class ShiftService(BaseService):
                 action_type=ActionType.UPDATE,
                 title="Weekly-off configured",
                 description=(
-                    f"Configured {len(created)} weekday rule(s) for "
-                    f"'{employee.employee_name}'."
+                    f"Configured {len(created)} weekday rule(s) for " f"'{employee.employee_name}'."
                 ),
                 employee_id=employee_id,
                 employee_name=employee.employee_name,
@@ -1203,12 +1269,18 @@ class ShiftService(BaseService):
         if row is None:
             raise WeekoffNotFoundException()
 
+        await self._check_attendance_locked(org_id, row.effective_from, employee_id)
+        if row.effective_to:
+            await self._check_attendance_locked(org_id, row.effective_to, employee_id)
+
         updates = data.model_dump(exclude_unset=True)
         if updates.get("weekoff_type") is not None:
             updates["weekoff_type"] = WeekoffType(updates["weekoff_type"]).value
 
         if "effective_to" in updates:
             new_to = updates["effective_to"]
+            if new_to:
+                await self._check_attendance_locked(org_id, new_to, employee_id)
             if (
                 new_to is not None
                 and row.effective_from is not None
@@ -1289,9 +1361,7 @@ class ShiftService(BaseService):
         seen: set[int] = set()
         for day in days:
             if day is None:
-                raise ValidationException(
-                    "A per-day shift requires day_of_week on every timing."
-                )
+                raise ValidationException("A per-day shift requires day_of_week on every timing.")
             if int(day) in seen:
                 raise TimingDayDuplicateException()
             seen.add(int(day))
@@ -1301,9 +1371,7 @@ class ShiftService(BaseService):
         """Resolve the validated range form to concrete ``(date_from, date_to)`` dates."""
         if query.month is not None:
             year, month = (int(part) for part in query.month.split("-"))
-            return date(year, month, 1), date(
-                year, month, calendar.monthrange(year, month)[1]
-            )
+            return date(year, month, 1), date(year, month, calendar.monthrange(year, month)[1])
         assert query.date_from is not None and query.date_to is not None  # schema-validated
         return query.date_from, query.date_to
 
@@ -1333,9 +1401,7 @@ class ShiftService(BaseService):
             raise NotFoundException("Shift not found.", code="not_found")
         return ShiftDetailSchema.model_validate(shift)
 
-    async def _create_day_timings(
-        self, shift_id: int, timings: list[ShiftDayTimingInput]
-    ) -> None:
+    async def _create_day_timings(self, shift_id: int, timings: list[ShiftDayTimingInput]) -> None:
         """Persist a shift's day-timing rows (``crosses_midnight`` is not a column)."""
         for timing in timings:
             await self.day_timings.create(

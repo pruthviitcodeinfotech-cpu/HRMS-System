@@ -29,6 +29,7 @@ from app.modules.attendance.models import (
     AttendanceDay,
     AttendancePenalty,
     AttendancePunch,
+    AttendanceLock,
 )
 from app.modules.employee.models.employee import Employee
 from app.modules.shift.models.shift import Shift
@@ -403,3 +404,101 @@ class ShiftLookupRepository(BaseRepository[Shift]):
             Shift.is_deleted.is_(False),
         )
         return (await self.session.execute(stmt.limit(1))).first() is not None
+
+
+class AttendanceLockRepository(BaseRepository[AttendanceLock]):
+    """CRUD and locking operations for ``attendance_locks``."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        super().__init__(session, AttendanceLock)
+
+    async def create_lock(
+        self,
+        org_id: int,
+        month: int,
+        year: int,
+        lock_type: str,
+        status: str,
+        locked_by: int,
+        reason: str | None,
+        branch_id: int | None = None,
+    ) -> AttendanceLock:
+        """Create a new attendance lock record."""
+        lock = AttendanceLock(
+            org_id=org_id,
+            lock_month=month,
+            lock_year=year,
+            lock_type=lock_type,
+            status=status,
+            locked_by=locked_by,
+            reason=reason,
+            branch_id=branch_id,
+        )
+        self.session.add(lock)
+        await self.session.flush()
+        return lock
+
+    async def get_lock(
+        self, org_id: int, month: int, year: int, branch_id: int | None = None
+    ) -> AttendanceLock | None:
+        """Get lock record for period and organization/branch."""
+        stmt = select(AttendanceLock).where(
+            AttendanceLock.org_id == org_id,
+            AttendanceLock.lock_month == month,
+            AttendanceLock.lock_year == year,
+            AttendanceLock.branch_id == branch_id,
+        )
+        return (await self.session.execute(stmt.limit(1))).scalar_one_or_none()
+
+    async def is_locked(self, org_id: int, month: int, year: int, branch_id: int | None = None) -> bool:
+        """Check if attendance period is locked for this organization/branch.
+        
+        A period is locked if there exists a lock with status = 'locked' covering
+        either company-wide or this specific branch.
+        """
+        stmt = select(AttendanceLock).where(
+            AttendanceLock.org_id == org_id,
+            AttendanceLock.lock_month == month,
+            AttendanceLock.lock_year == year,
+            AttendanceLock.status == "locked",
+        )
+        if branch_id is not None:
+            stmt = stmt.where(
+                (AttendanceLock.branch_id.is_(None)) | (AttendanceLock.branch_id == branch_id)
+            )
+        else:
+            stmt = stmt.where(AttendanceLock.branch_id.is_(None))
+        
+        result = (await self.session.execute(stmt.limit(1))).scalar_one_or_none()
+        return result is not None
+
+    async def unlock(
+        self,
+        org_id: int,
+        month: int,
+        year: int,
+        branch_id: int | None = None,
+    ) -> bool:
+        """Deactivate/unlock a locked period by setting status to 'unlocked'."""
+        stmt = select(AttendanceLock).where(
+            AttendanceLock.org_id == org_id,
+            AttendanceLock.lock_month == month,
+            AttendanceLock.lock_year == year,
+            AttendanceLock.branch_id == branch_id,
+            AttendanceLock.status == "locked",
+        )
+        lock = (await self.session.execute(stmt.limit(1))).scalar_one_or_none()
+        if lock:
+            lock.status = "unlocked"
+            await self.session.flush()
+            return True
+        return False
+
+    async def get_locked_periods(self, org_id: int) -> list[AttendanceLock]:
+        """Retrieve list of all active locks for an organization."""
+        stmt = select(AttendanceLock).where(
+            AttendanceLock.org_id == org_id,
+            AttendanceLock.status == "locked",
+        ).order_by(AttendanceLock.lock_year.desc(), AttendanceLock.lock_month.desc())
+        return list((await self.session.execute(stmt)).scalars().all())
+

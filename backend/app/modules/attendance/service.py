@@ -29,15 +29,17 @@ from app.modules.attendance.constants import (
 from app.modules.attendance.exceptions import (
     AttendanceDayExistsException,
     AttendanceDayNotFoundException,
+    AttendancePeriodLockedException,
     EmployeeNotFoundException,
     PenaltyAlreadyWaivedException,
     PenaltyNotFoundException,
     RegularizationDisabledException,
     ShiftNotFoundException,
 )
-from app.modules.attendance.models import AttendanceDay, AttendancePenalty
+from app.modules.attendance.models import AttendanceDay, AttendanceLock, AttendancePenalty
 from app.modules.attendance.repository import (
     AttendanceDayRepository,
+    AttendanceLockRepository,
     AttendancePenaltyRepository,
     AttendancePunchRepository,
     EmployeeLookupRepository,
@@ -61,6 +63,7 @@ from app.modules.attendance.schemas import (
     AttendanceMonthlyDaySchema,
     AttendancePenaltySchema,
     AttendancePunchSchema,
+    AttendanceUnlockRequest,
 )
 from app.modules.audit.constants import ActionType
 from app.modules.audit.service import AuditService
@@ -83,6 +86,7 @@ class AttendanceService(BaseService):
         self.days = AttendanceDayRepository(session)
         self.punches = AttendancePunchRepository(session)
         self.penalties = AttendancePenaltyRepository(session)
+        self.locks = AttendanceLockRepository(session)
 
         # Cross-module lookup readers
         self.employees = EmployeeLookupRepository(session)
@@ -100,9 +104,32 @@ class AttendanceService(BaseService):
     # Helpers & Validations
     # =========================================================================
 
+    async def check_period_locked(
+        self,
+        org_id: int,
+        date_val: date,
+        employee_id: int | None = None,
+        branch_id: int | None = None,
+    ) -> None:
+        """Raise AttendancePeriodLockedException if the period containing date_val is locked."""
+        if branch_id is None and employee_id is not None:
+            emp = await self.employees.get_active_by_id(employee_id, org_id)
+            if emp:
+                branch_id = emp.master_branch_id
+
+        is_locked = await self.locks.is_locked(
+            org_id=org_id,
+            month=date_val.month,
+            year=date_val.year,
+            branch_id=branch_id,
+        )
+        if isinstance(is_locked, bool) and is_locked:
+            raise AttendancePeriodLockedException(month=date_val.month, year=date_val.year)
+
     async def _actor_name(self, org_id: int, actor_id: int) -> str:
         """Resolve the acting user's display name for auditing (best-effort)."""
         from app.modules.rbac.repository import UserRepository
+
         user = await UserRepository(self.session).get_active_by_id(actor_id, org_id)
         name = getattr(user, "name", None)
         return name if isinstance(name, str) and name else f"user #{actor_id}"
@@ -148,7 +175,9 @@ class AttendanceService(BaseService):
         """Ensure an active employee exists in the tenant's context."""
         employee = await self.employees.get_active_by_id(employee_id, org_id)
         if not employee:
-            raise EmployeeNotFoundException(f"Employee {employee_id} not found in this organization.")
+            raise EmployeeNotFoundException(
+                f"Employee {employee_id} not found in this organization."
+            )
         return employee
 
     # =========================================================================
@@ -169,6 +198,7 @@ class AttendanceService(BaseService):
     ) -> AttendanceDayDetailSchema:
         """Directly create/override a daily attendance record without punches."""
         employee = await self._validate_employee(org_id, employee_id)
+        await self.check_period_locked(org_id, attendance_date, employee_id=employee_id)
         if shift_id and not await self.shifts.exists_active(org_id, shift_id):
             raise ShiftNotFoundException(f"Shift {shift_id} not found.")
 
@@ -215,6 +245,7 @@ class AttendanceService(BaseService):
     ) -> AttendanceDayDetailSchema:
         """Mark manual attendance containing a punch-in and punch-out event (onboards a manual entry)."""
         employee = await self._validate_employee(org_id, data.employee_id)
+        await self.check_period_locked(org_id, data.date, employee_id=data.employee_id)
         existing = await self.days.get_by_employee_date(org_id, data.employee_id, data.date)
         if existing:
             raise AttendanceDayExistsException(
@@ -235,9 +266,13 @@ class AttendanceService(BaseService):
                 shift_detail = await self.shifts.get_active_by_id(shift_id, org_id)
                 if shift_detail:
                     weekday = (data.date.weekday() + 1) % 7
-                    timing = next((t for t in shift_detail.day_timings if t.day_of_week == weekday), None)
+                    timing = next(
+                        (t for t in shift_detail.day_timings if t.day_of_week == weekday), None
+                    )
                     if not timing:
-                        timing = next((t for t in shift_detail.day_timings if t.day_of_week is None), None)
+                        timing = next(
+                            (t for t in shift_detail.day_timings if t.day_of_week is None), None
+                        )
                     if timing:
                         expected_start = timing.start_time
                         expected_end = timing.end_time
@@ -315,6 +350,7 @@ class AttendanceService(BaseService):
         if not day:
             raise AttendanceDayNotFoundException()
 
+        await self.check_period_locked(org_id, day.attendance_date, employee_id=day.employee_id)
         employee = await self._validate_employee(org_id, day.employee_id)
 
         clean_updates = {
@@ -475,6 +511,7 @@ class AttendanceService(BaseService):
         """Manually append a raw punch log, triggering lazy recalculation (Endpoint 7)."""
         employee = await self._validate_employee(org_id, employee_id)
         punch_date = punch_time.date()
+        await self.check_period_locked(org_id, punch_date, employee_id=employee_id)
 
         async with self.transaction():
             # Check or create daily summary block
@@ -492,9 +529,13 @@ class AttendanceService(BaseService):
                     shift_detail = await self.shifts.get_active_by_id(shift_id, org_id)
                     if shift_detail:
                         weekday = (punch_date.weekday() + 1) % 7
-                        timing = next((t for t in shift_detail.day_timings if t.day_of_week == weekday), None)
+                        timing = next(
+                            (t for t in shift_detail.day_timings if t.day_of_week == weekday), None
+                        )
                         if not timing:
-                            timing = next((t for t in shift_detail.day_timings if t.day_of_week is None), None)
+                            timing = next(
+                                (t for t in shift_detail.day_timings if t.day_of_week is None), None
+                            )
                         if timing:
                             expected_start = timing.start_time
                             expected_end = timing.end_time
@@ -628,6 +669,8 @@ class AttendanceService(BaseService):
         if not day or day.employee_id != employee_id:
             raise NotFoundException("Attendance day matching employee context not found.")
 
+        await self.check_period_locked(org_id, day.attendance_date, employee_id=employee_id)
+
         payload = {
             "org_id": org_id,
             "employee_id": employee_id,
@@ -710,10 +753,18 @@ class AttendanceService(BaseService):
         if penalty.status == PenaltyStatus.WAIVED.value:
             raise PenaltyAlreadyWaivedException()
 
+        day = await self.days.get_by_id_in_org(penalty.attendance_day_id, org_id)
+        if day:
+            await self.check_period_locked(
+                org_id, day.attendance_date, employee_id=penalty.employee_id
+            )
+
         employee = await self._validate_employee(org_id, penalty.employee_id)
 
         waive_remarks = f"Waived: {remarks}" if remarks else "Waived by administrator"
-        combined_remarks = f"{penalty.remarks} | {waive_remarks}" if penalty.remarks else waive_remarks
+        combined_remarks = (
+            f"{penalty.remarks} | {waive_remarks}" if penalty.remarks else waive_remarks
+        )
 
         async with self.transaction():
             await self.penalties.update(
@@ -987,7 +1038,9 @@ class AttendanceService(BaseService):
         tot_working = tot_overtime = tot_late = tot_early = 0
 
         for emp in employees:
-            rep = await self.get_employee_attendance_report(org_id, emp.employee_id, date_from, date_to)
+            rep = await self.get_employee_attendance_report(
+                org_id, emp.employee_id, date_from, date_to
+            )
             emp_reports.append(rep)
             t = rep["totals"]
             tot_present += t["days_present"]
@@ -1036,7 +1089,9 @@ class AttendanceService(BaseService):
         tot_working = tot_overtime = tot_late = tot_early = 0
 
         for emp in employees:
-            rep = await self.get_employee_attendance_report(org_id, emp.employee_id, date_from, date_to)
+            rep = await self.get_employee_attendance_report(
+                org_id, emp.employee_id, date_from, date_to
+            )
             emp_reports.append(rep)
             t = rep["totals"]
             tot_present += t["days_present"]
@@ -1145,12 +1200,18 @@ class AttendanceService(BaseService):
         if not day:
             raise AttendanceDayNotFoundException()
 
+        await self.check_period_locked(org_id, data.date, employee_id=data.employee_id)
+
         # Build original punch time format representation
         old_time_str = "None"
         if day.first_punch_in and day.last_punch_out:
-            old_time_str = f"{day.first_punch_in.strftime('%H:%M')} - {day.last_punch_out.strftime('%H:%M')}"
+            old_time_str = (
+                f"{day.first_punch_in.strftime('%H:%M')} - {day.last_punch_out.strftime('%H:%M')}"
+            )
 
-        new_time_str = f"{data.requested_in.strftime('%H:%M')} - {data.requested_out.strftime('%H:%M')}"
+        new_time_str = (
+            f"{data.requested_in.strftime('%H:%M')} - {data.requested_out.strftime('%H:%M')}"
+        )
 
         async with self.transaction():
             # Create AttendanceRegularizationRequest
@@ -1207,13 +1268,18 @@ class AttendanceService(BaseService):
             raise NotFoundException("Approval request not found.")
 
         if approval.status != ApprovalStatus.PENDING.value:
-            raise ConflictException("Request is already processed.", code="request_already_processed")
+            raise ConflictException(
+                "Request is already processed.", code="request_already_processed"
+            )
 
         # Find regularization request
         reg_req = await self.regularization_requests.get_by_id(approval.reference_id)
         if not reg_req:
             raise NotFoundException("Regularization request details not found.")
 
+        await self.check_period_locked(
+            org_id, reg_req.attendance_date, employee_id=reg_req.employee_id
+        )
         employee = await self._validate_employee(org_id, reg_req.employee_id)
 
         async with self.transaction():
@@ -1237,7 +1303,9 @@ class AttendanceService(BaseService):
             )
 
             if data.decision == ApprovalStatus.APPROVED:
-                day = await self.days.get_by_employee_date(org_id, reg_req.employee_id, reg_req.attendance_date)
+                day = await self.days.get_by_employee_date(
+                    org_id, reg_req.employee_id, reg_req.attendance_date
+                )
                 if day:
                     # Invalidate existing punches for the day
                     existing_punches = await self.punches.get_for_day(org_id, day.id)
@@ -1377,15 +1445,190 @@ class AttendanceService(BaseService):
         actor_id: int,
         data: AttendanceLockRequest,
     ) -> bool:
-        """Freeze mutations for a specific date range (no-op as there is no DB backing for locks)."""
-        await self._audit(
-            org_id=org_id,
-            actor_id=actor_id,
-            action_type=ActionType.UPDATE,
-            title="Attendance Lock Triggered",
-            description=f"Locked attendance from {data.period_start} to {data.period_end}.",
+        """Freeze mutations for a specific date range."""
+        import calendar
+
+        from sqlalchemy import select
+
+        from app.modules.attendance.constants import LockScope
+        from app.modules.employee.models.organization import Branch, Organization
+        from app.modules.organization.exceptions import (
+            BranchNotFoundException,
+            OrganizationNotFoundException,
         )
-        return True
+
+        scope_str = f"branch {data.branch_id}" if data.scope == LockScope.BRANCH else "company-wide"
+        try:
+            # 1. Validate organization exists
+            org_exists = (
+                await self.session.execute(
+                    select(Organization.org_id).where(Organization.org_id == org_id)
+                )
+            ).scalar() is not None
+            if not org_exists:
+                raise OrganizationNotFoundException()
+
+            # 2. Validate branch exists (if scope is branch)
+            if data.scope == LockScope.BRANCH:
+                if data.branch_id is None:
+                    raise ValidationException("branch_id is required when scope is branch.")
+                branch_exists = (
+                    await self.session.execute(
+                        select(Branch.branch_id).where(
+                            Branch.branch_id == data.branch_id, Branch.org_id == org_id
+                        )
+                    )
+                ).scalar() is not None
+                if not branch_exists:
+                    raise BranchNotFoundException()
+
+            # 3. Determine all (year, month) pairs in the period
+            months_to_lock = []
+            current = data.period_start
+            while current <= data.period_end:
+                pair = (current.year, current.month)
+                if pair not in months_to_lock:
+                    months_to_lock.append(pair)
+                if current.month == 12:
+                    current = date(current.year + 1, 1, 1)
+                else:
+                    current = date(current.year, current.month + 1, 1)
+
+            # 4. Check if any month in the range is already locked
+            for year, month in months_to_lock:
+                is_locked = await self.locks.is_locked(
+                    org_id, month, year, branch_id=data.branch_id
+                )
+                if is_locked:
+                    month_name = calendar.month_name[month]
+                    raise AttendancePeriodLockedException(
+                        month=month,
+                        year=year,
+                        message=f"Attendance for {month_name} {year} is already locked.",
+                    )
+
+            # 5. Store lock record(s)
+            async with self.transaction():
+                for year, month in months_to_lock:
+                    await self.locks.create_lock(
+                        org_id=org_id,
+                        month=month,
+                        year=year,
+                        lock_type=data.scope.value,
+                        status="locked",
+                        locked_by=actor_id,
+                        reason=data.reason,
+                        branch_id=data.branch_id,
+                    )
+
+            # 6. Audit entry (Success)
+            await self._audit(
+                org_id=org_id,
+                actor_id=actor_id,
+                action_type=ActionType.UPDATE,
+                title="Attendance Lock Triggered",
+                description=f"Locked attendance from {data.period_start} to {data.period_end} ({scope_str}).",
+            )
+            return True
+
+        except Exception as e:
+            # Audit entry (Failure)
+            await self._audit(
+                org_id=org_id,
+                actor_id=actor_id,
+                action_type=ActionType.UPDATE,
+                title="Attendance Lock Failed",
+                description=f"Failed to lock attendance from {data.period_start} to {data.period_end} ({scope_str}). Error: {str(e)}",
+            )
+            raise e
+
+    async def unlock_attendance(
+        self,
+        org_id: int,
+        actor_id: int,
+        data: AttendanceUnlockRequest,
+    ) -> bool:
+        """Unfreeze mutations for a specific date range."""
+        from sqlalchemy import select
+
+        from app.modules.attendance.constants import LockScope
+        from app.modules.employee.models.organization import Branch, Organization
+        from app.modules.organization.exceptions import (
+            BranchNotFoundException,
+            OrganizationNotFoundException,
+        )
+
+        scope_str = f"branch {data.branch_id}" if data.scope == LockScope.BRANCH else "company-wide"
+        try:
+            # 1. Validate organization exists
+            org_exists = (
+                await self.session.execute(
+                    select(Organization.org_id).where(Organization.org_id == org_id)
+                )
+            ).scalar() is not None
+            if not org_exists:
+                raise OrganizationNotFoundException()
+
+            # 2. Validate branch exists (if scope is branch)
+            if data.scope == LockScope.BRANCH:
+                if data.branch_id is None:
+                    raise ValidationException("branch_id is required when scope is branch.")
+                branch_exists = (
+                    await self.session.execute(
+                        select(Branch.branch_id).where(
+                            Branch.branch_id == data.branch_id, Branch.org_id == org_id
+                        )
+                    )
+                ).scalar() is not None
+                if not branch_exists:
+                    raise BranchNotFoundException()
+
+            # 3. Determine all (year, month) pairs in the period
+            months_to_unlock = []
+            current = data.period_start
+            while current <= data.period_end:
+                pair = (current.year, current.month)
+                if pair not in months_to_unlock:
+                    months_to_unlock.append(pair)
+                if current.month == 12:
+                    current = date(current.year + 1, 1, 1)
+                else:
+                    current = date(current.year, current.month + 1, 1)
+
+            # 4. Unlock each month in the range
+            async with self.transaction():
+                for year, month in months_to_unlock:
+                    await self.locks.unlock(
+                        org_id=org_id,
+                        month=month,
+                        year=year,
+                        branch_id=data.branch_id,
+                    )
+
+            # 5. Audit entry (Success)
+            await self._audit(
+                org_id=org_id,
+                actor_id=actor_id,
+                action_type=ActionType.UPDATE,
+                title="Attendance Unlock Triggered",
+                description=f"Unlocked attendance from {data.period_start} to {data.period_end} ({scope_str}).",
+            )
+            return True
+
+        except Exception as e:
+            # Audit entry (Failure)
+            await self._audit(
+                org_id=org_id,
+                actor_id=actor_id,
+                action_type=ActionType.UPDATE,
+                title="Attendance Unlock Failed",
+                description=f"Failed to unlock attendance from {data.period_start} to {data.period_end} ({scope_str}). Error: {str(e)}",
+            )
+            raise e
+
+    async def get_locked_periods(self, org_id: int) -> list[AttendanceLock]:
+        """Retrieve list of all active locks for an organization."""
+        return await self.locks.get_locked_periods(org_id)
 
     # =========================================================================
     # Computation Engine
@@ -1400,6 +1643,7 @@ class AttendanceService(BaseService):
     ) -> AttendanceDayDetailSchema:
         """Recompute daily metrics on-demand for a given employee and date."""
         await self._validate_employee(org_id, employee_id)
+        await self.check_period_locked(org_id, date_val, employee_id=employee_id)
         day = await self.days.get_by_employee_date(org_id, employee_id, date_val)
         if not day:
             raise AttendanceDayNotFoundException()
@@ -1411,12 +1655,18 @@ class AttendanceService(BaseService):
                 query=ShiftResolveQuery(employee_id=employee_id, date=date_val),
             )
             if shift_resolve.shift:
-                shift_detail = await self.shifts.get_active_by_id(shift_resolve.shift.shift_id, org_id)
+                shift_detail = await self.shifts.get_active_by_id(
+                    shift_resolve.shift.shift_id, org_id
+                )
                 if shift_detail:
                     weekday = (date_val.weekday() + 1) % 7
-                    timing = next((t for t in shift_detail.day_timings if t.day_of_week == weekday), None)
+                    timing = next(
+                        (t for t in shift_detail.day_timings if t.day_of_week == weekday), None
+                    )
                     if not timing:
-                        timing = next((t for t in shift_detail.day_timings if t.day_of_week is None), None)
+                        timing = next(
+                            (t for t in shift_detail.day_timings if t.day_of_week is None), None
+                        )
                     if timing:
                         await self.days.update(
                             day,
@@ -1487,13 +1737,17 @@ class AttendanceService(BaseService):
 
         if first_in and day.expected_start_time:
             tz = first_in.tzinfo
-            expected_start = datetime.combine(day.attendance_date, day.expected_start_time).replace(tzinfo=tz)
+            expected_start = datetime.combine(day.attendance_date, day.expected_start_time).replace(
+                tzinfo=tz
+            )
             if first_in > expected_start:
                 late_min = int((first_in - expected_start).total_seconds() / 60)
 
         if last_out and day.expected_end_time:
             tz = last_out.tzinfo
-            expected_end = datetime.combine(day.attendance_date, day.expected_end_time).replace(tzinfo=tz)
+            expected_end = datetime.combine(day.attendance_date, day.expected_end_time).replace(
+                tzinfo=tz
+            )
             if day.expected_end_time < day.expected_start_time:
                 expected_end += timedelta(days=1)
 
@@ -1514,7 +1768,11 @@ class AttendanceService(BaseService):
                     query=ShiftResolveQuery(employee_id=day.employee_id, date=day.attendance_date),
                 )
                 if shift_resolve.is_weekly_off:
-                    status = AttendanceDayStatus.WEEK_OFF.value if not valid_punches else AttendanceDayStatus.PRESENT.value
+                    status = (
+                        AttendanceDayStatus.WEEK_OFF.value
+                        if not valid_punches
+                        else AttendanceDayStatus.PRESENT.value
+                    )
                 else:
                     if not valid_punches:
                         status = AttendanceDayStatus.ABSENT.value

@@ -86,9 +86,7 @@ class AttendanceDay(Base):
     total_break_minutes: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("0")
     )
-    overtime_minutes: Mapped[int] = mapped_column(
-        Integer, nullable=False, server_default=text("0")
-    )
+    overtime_minutes: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     late_minutes: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     early_leaving_minutes: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("0")
@@ -100,9 +98,7 @@ class AttendanceDay(Base):
     is_regularized: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("false")
     )
-    source: Mapped[str] = mapped_column(
-        String(20), nullable=False, server_default=text("'system'")
-    )
+    source: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'system'"))
     marked_by: Mapped[int | None] = mapped_column(
         BigInteger,
         ForeignKey("users.id", name="fk_attendance_days_marked_by_users"),
@@ -268,9 +264,7 @@ class AttendancePenalty(Base):
     penalty_type: Mapped[str] = mapped_column(String(30), nullable=False)
     penalty_unit: Mapped[str] = mapped_column(String(10), nullable=False)
     penalty_value: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
-    status: Mapped[str] = mapped_column(
-        String(10), nullable=False, server_default=text("'active'")
-    )
+    status: Mapped[str] = mapped_column(String(10), nullable=False, server_default=text("'active'"))
     applied_by: Mapped[int] = mapped_column(
         BigInteger,
         ForeignKey("users.id", name="fk_attendance_penalties_applied_by_users"),
@@ -313,3 +307,76 @@ class AttendancePenalty(Base):
     )
 
     attendance_day: Mapped["AttendanceDay"] = relationship(back_populates="penalties")
+
+
+class AttendanceLock(Base):
+    """Attendance period lock — freezes attendance mutations for a given month/year."""
+
+    __tablename__ = "attendance_locks"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    org_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("organizations.org_id", name="fk_attendance_locks_org_id_organizations"),
+        nullable=False,
+    )
+    lock_month: Mapped[int] = mapped_column(Integer, nullable=False)
+    lock_year: Mapped[int] = mapped_column(Integer, nullable=False)
+    lock_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    branch_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("branches.branch_id", name="fk_attendance_locks_branch_id_branches"),
+        nullable=True,
+    )
+    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'locked'"))
+    locked_by: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", name="fk_attendance_locks_locked_by_users"),
+        nullable=False,
+    )
+    locked_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+    reason: Mapped[str | None] = mapped_column(String(500))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "lock_type IN ('company', 'branch')",
+            name="ck_attendance_locks_lock_type",
+        ),
+        CheckConstraint(
+            "status IN ('locked', 'unlocked')",
+            name="ck_attendance_locks_status",
+        ),
+        CheckConstraint(
+            "lock_month >= 1 AND lock_month <= 12",
+            name="ck_attendance_locks_lock_month_valid",
+        ),
+        CheckConstraint(
+            "lock_year >= 1900 AND lock_year <= 2100",
+            name="ck_attendance_locks_lock_year_valid",
+        ),
+        Index(
+            "uq_attendance_locks_company_lock",
+            "org_id",
+            "lock_year",
+            "lock_month",
+            unique=True,
+            postgresql_where=text("branch_id IS NULL"),
+        ),
+        Index(
+            "uq_attendance_locks_branch_lock",
+            "org_id",
+            "lock_year",
+            "lock_month",
+            "branch_id",
+            unique=True,
+            postgresql_where=text("branch_id IS NOT NULL"),
+        ),
+    )

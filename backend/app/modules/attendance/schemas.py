@@ -181,6 +181,28 @@ class AttendanceLockRequest(BaseSchema):
         return self
 
 
+class AttendanceUnlockRequest(BaseSchema):
+    """Body for ``POST /attendance/unlock`` (unfreeze attendance period).body"""
+
+    period_start: date = Field(..., description="Start of the freeze range to unlock.")
+    period_end: date = Field(..., description="End of the freeze range to unlock.")
+    scope: LockScope = Field(..., description="Lock scope: company or branch.")
+    branch_id: int | None = Field(
+        default=None, description="Branch ID (required if scope is branch)."
+    )
+    reason: str | None = Field(default=None, max_length=500, description="Reason for unfreeze.")
+
+    @model_validator(mode="after")
+    def _validate_period(self) -> AttendanceUnlockRequest:
+        """Validate that period end does not precede period start, and scope matches."""
+        if self.period_end < self.period_start:
+            raise ValueError("period_end must be on or after period_start")
+        if self.scope == LockScope.BRANCH and self.branch_id is None:
+            raise ValueError("branch_id is required when scope is branch")
+        return self
+
+
+
 class AttendanceRecomputeRequest(BaseSchema):
     """Body for ``POST /attendance/{employee_id}/recompute``."""
 
@@ -433,6 +455,23 @@ class AttendanceMissingPunchesResponse(PaginatedResponse[AttendanceMissingPunchS
     """Paginated missing punches list response."""
 
 
+class AttendanceLockSchema(BaseSchema):
+    """Response schema representing an attendance lock record."""
+
+    id: int
+    org_id: int
+    lock_month: int
+    lock_year: int
+    lock_type: str
+    branch_id: int | None
+    status: str
+    locked_by: int
+    locked_at: datetime
+    reason: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
 __all__ = [
     # requests/queries
     "AttendanceLiveQuery",
@@ -444,6 +483,7 @@ __all__ = [
     "AttendanceCorrectionApproveRequest",
     "AttendanceMissingPunchesQuery",
     "AttendanceLockRequest",
+    "AttendanceUnlockRequest",
     "AttendanceRecomputeRequest",
     # responses/DTOs
     "AttendanceLiveMessageSchema",
@@ -454,8 +494,10 @@ __all__ = [
     "AttendanceDayDetailSchema",
     "AttendanceCorrectionSchema",
     "AttendanceMissingPunchSchema",
+    "AttendanceLockSchema",
     # paginated envelopes
     "AttendanceDailyListResponse",
     "AttendanceLogsResponse",
     "AttendanceMissingPunchesResponse",
 ]
+

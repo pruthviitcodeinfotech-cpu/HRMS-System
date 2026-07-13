@@ -57,3 +57,17 @@ class ShiftNotFoundException(NotFoundException):
 
     code = "SHIFT_NOT_FOUND"
     message = "The requested shift was not found."
+
+
+class AttendancePeriodLockedException(ConflictException):
+    """The attendance period is locked for mutations."""
+
+    code = "ATTENDANCE_PERIOD_LOCKED"
+    message = "Attendance period is locked."
+
+    def __init__(self, month: int, year: int, message: str | None = None, **kwargs) -> None:
+        import calendar
+        month_name = calendar.month_name[month]
+        msg = message or f"Attendance for {month_name} {year} is locked."
+        super().__init__(message=msg, **kwargs)
+

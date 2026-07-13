@@ -174,9 +174,11 @@ def shift_service():
         "users",
         "audit",
         "org_settings",
+        "locks",
     ):
         setattr(svc, attr, AsyncMock())
     # Sensible defaults.
+    svc.locks.is_locked.return_value = False
     svc.shifts.name_exists.return_value = False
     svc.shifts.get_active_by_id.return_value = _shift()
     svc.shifts.get_any_by_id.return_value = _shift(is_deleted=True)

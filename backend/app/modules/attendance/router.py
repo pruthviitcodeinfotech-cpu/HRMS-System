@@ -38,6 +38,7 @@ from app.modules.attendance.schemas import (
     AttendanceDailyQuery,
     AttendanceDayDetailSchema,
     AttendanceLockRequest,
+    AttendanceLockSchema,
     AttendanceLogsQuery,
     AttendanceLogsResponse,
     AttendanceManualCreateRequest,
@@ -47,6 +48,7 @@ from app.modules.attendance.schemas import (
     AttendancePenaltySchema,
     AttendancePunchSchema,
     AttendanceRecomputeRequest,
+    AttendanceUnlockRequest,
 )
 from app.modules.attendance.service import AttendanceService
 from app.shared.schemas.pagination import PaginatedResponse
@@ -416,7 +418,9 @@ async def list_penalties(
     service: ServiceDep,
     org_id: OrgIdDep,
     employee_id: Annotated[int | None, Query(description="Filter by employee.")] = None,
-    status_val: Annotated[PenaltyStatus | None, Query(alias="status", description="Filter by status.")] = None,
+    status_val: Annotated[
+        PenaltyStatus | None, Query(alias="status", description="Filter by status.")
+    ] = None,
     pagination: Annotated[PaginationParams, Depends(pagination_params)] = None,
 ) -> dict[str, Any]:
     """Search and filter applied penalties."""
@@ -763,3 +767,39 @@ async def recompute_attendance(
         date_val=payload.date,
     )
     return _ok(result, "Recomputation completed.")
+
+
+@router.post(
+    "/attendance/unlock",
+    response_model=SuccessResponse[bool],
+    summary="Unfreeze Attendance Period",
+    dependencies=[Depends(require_permission(_ATTENDANCE, A.EDIT))],
+)
+async def unlock_attendance(
+    payload: AttendanceUnlockRequest,
+    service: ServiceDep,
+    current_user: CurrentUserDep,
+    org_id: OrgIdDep,
+) -> dict[str, Any]:
+    """Unfreeze mutations for a specific date range."""
+    result = await service.unlock_attendance(
+        org_id=org_id,
+        actor_id=current_user.user_id,
+        data=payload,
+    )
+    return _ok(result, "Period unlocked successfully.")
+
+
+@router.get(
+    "/attendance/locks",
+    response_model=SuccessResponse[list[AttendanceLockSchema]],
+    summary="List Attendance Locks",
+    dependencies=[Depends(require_permission(_ATTENDANCE, A.READ))],
+)
+async def list_attendance_locks(
+    service: ServiceDep,
+    org_id: OrgIdDep,
+) -> dict[str, Any]:
+    """List all locked attendance periods for the organization."""
+    result = await service.get_locked_periods(org_id=org_id)
+    return _ok(result)
