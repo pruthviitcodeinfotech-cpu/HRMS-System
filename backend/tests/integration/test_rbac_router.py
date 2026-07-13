@@ -225,3 +225,84 @@ async def test_create_role_missing_name_422(
         f"{API_PREFIX}/rights-templates", json={}, headers=super_admin_headers
     )
     assert resp.status_code == 422
+
+
+# --- Integration Tests for Cross-tenant & Validation paths --------------------
+async def test_assign_branch_access_cross_tenant_404(
+    client: AsyncClient, mock_rbac_service: AsyncMock, super_admin_headers: dict[str, str]
+) -> None:
+    from app.modules.organization.exceptions import BranchNotFoundException
+    mock_rbac_service.assign_branch_access.side_effect = BranchNotFoundException()
+    resp = await client.post(
+        f"{API_PREFIX}/users/1/branch-access", json={"branch_id": 99}, headers=super_admin_headers
+    )
+    assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "BRANCH_NOT_FOUND"
+
+async def test_assign_branch_access_inactive_404(
+    client: AsyncClient, mock_rbac_service: AsyncMock, super_admin_headers: dict[str, str]
+) -> None:
+    from app.modules.organization.exceptions import BranchNotFoundException
+    mock_rbac_service.assign_branch_access.side_effect = BranchNotFoundException()
+    resp = await client.post(
+        f"{API_PREFIX}/users/1/branch-access", json={"branch_id": 3}, headers=super_admin_headers
+    )
+    assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "BRANCH_NOT_FOUND"
+
+async def test_assign_branch_access_unauthorized_403(
+    client: AsyncClient, make_access_token: Callable[..., str]
+) -> None:
+    token = make_access_token(is_super_admin=False, permissions=[])
+    resp = await client.post(
+        f"{API_PREFIX}/users/1/branch-access",
+        json={"branch_id": 3},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 403
+    assert resp.json()["error"]["code"] == "AUTH_FORBIDDEN"
+
+async def test_assign_department_access_201(
+    client: AsyncClient, mock_rbac_service: AsyncMock, super_admin_headers: dict[str, str]
+) -> None:
+    from app.modules.rbac.schemas import DepartmentAccessSchema
+    mock_rbac_service.assign_department_access.return_value = DepartmentAccessSchema(department_id=5)
+    resp = await client.post(
+        f"{API_PREFIX}/users/1/department-access", json={"department_id": 5}, headers=super_admin_headers
+    )
+    assert resp.status_code == 201
+    assert resp.json()["data"]["department_id"] == 5
+
+async def test_assign_department_access_cross_tenant_404(
+    client: AsyncClient, mock_rbac_service: AsyncMock, super_admin_headers: dict[str, str]
+) -> None:
+    from app.modules.organization.exceptions import DepartmentNotFoundException
+    mock_rbac_service.assign_department_access.side_effect = DepartmentNotFoundException()
+    resp = await client.post(
+        f"{API_PREFIX}/users/1/department-access", json={"department_id": 99}, headers=super_admin_headers
+    )
+    assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "DEPARTMENT_NOT_FOUND"
+
+async def test_assign_department_access_inactive_404(
+    client: AsyncClient, mock_rbac_service: AsyncMock, super_admin_headers: dict[str, str]
+) -> None:
+    from app.modules.organization.exceptions import DepartmentNotFoundException
+    mock_rbac_service.assign_department_access.side_effect = DepartmentNotFoundException()
+    resp = await client.post(
+        f"{API_PREFIX}/users/1/department-access", json={"department_id": 5}, headers=super_admin_headers
+    )
+    assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "DEPARTMENT_NOT_FOUND"
+
+async def test_assign_department_access_unauthorized_403(
+    client: AsyncClient, make_access_token: Callable[..., str]
+) -> None:
+    token = make_access_token(is_super_admin=False, permissions=[])
+    resp = await client.post(
+        f"{API_PREFIX}/users/1/department-access",
+        json={"department_id": 5},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 403
+    assert resp.json()["error"]["code"] == "AUTH_FORBIDDEN"

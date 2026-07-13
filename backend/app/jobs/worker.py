@@ -31,9 +31,11 @@ from app.core.logging import configure_logging, get_logger
 from app.jobs.queue import close_queue_pool, get_redis_settings
 from app.jobs.scheduler import build_cron_jobs
 from app.jobs.tasks import (
+    deliver_notification,
     generate_report_export,
     run_leave_accrual,
     run_leave_accrual_all_orgs,
+    send_email,
     send_payslip_email,
     sync_all_devices,
     sync_device,
@@ -52,6 +54,8 @@ FUNCTIONS: list[WorkerCoroutine] = [
     generate_report_export,
     run_leave_accrual_all_orgs,
     sync_all_devices,
+    deliver_notification,
+    send_email,
 ]
 
 
@@ -82,6 +86,93 @@ async def shutdown(ctx: dict[str, Any]) -> None:
     _logger.info("worker_stopped")
 
 
+async def on_job_start(ctx: dict[str, Any]) -> None:
+    """Hook run by the worker when a job starts execution."""
+    import json
+    import datetime
+    from arq.jobs import Job
+
+    job_id = ctx["job_id"]
+    redis = ctx["redis"]
+    job = Job(job_id, redis)
+    try:
+        job_info = await job.info()
+        if job_info:
+            raw_status = await redis.get(f"job_status:{job_id}")
+            if raw_status:
+                status_data = json.loads(raw_status)
+            else:
+                status_data = {
+                    "job_id": job_id,
+                    "job_name": job_info.function,
+                    "enqueue_time": job_info.enqueue_time.isoformat(),
+                }
+
+            status_data.update({
+                "status": "running",
+                "start_time": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                "try_count": ctx["job_try"],
+            })
+            await redis.setex(f"job_status:{job_id}", 86400, json.dumps(status_data))
+            _logger.info("job_started", job_id=job_id, job_name=job_info.function, try_count=ctx["job_try"])
+    except Exception as exc:
+        _logger.error("on_job_start_tracking_failed", job_id=job_id, error=str(exc))
+
+
+async def after_job_end(ctx: dict[str, Any]) -> None:
+    """Hook run by the worker after a job finishes execution."""
+    import json
+    import datetime
+    from arq.jobs import Job
+
+    job_id = ctx["job_id"]
+    redis = ctx["redis"]
+    job = Job(job_id, redis)
+    try:
+        res_info = await job.result_info()
+        if res_info:
+            raw_status = await redis.get(f"job_status:{job_id}")
+            if raw_status:
+                status_data = json.loads(raw_status)
+            else:
+                status_data = {
+                    "job_id": job_id,
+                    "job_name": res_info.function,
+                    "enqueue_time": res_info.enqueue_time.isoformat(),
+                }
+
+            if res_info.success:
+                status_data.update({
+                    "status": "completed",
+                    "complete_time": res_info.finish_time.isoformat(),
+                    "try_count": res_info.job_try,
+                    "error": None,
+                })
+                _logger.info(
+                    "job_completed",
+                    job_id=job_id,
+                    job_name=res_info.function,
+                    duration=(res_info.finish_time - res_info.start_time).total_seconds(),
+                )
+            else:
+                status_data.update({
+                    "status": "failed",
+                    "complete_time": res_info.finish_time.isoformat(),
+                    "try_count": res_info.job_try,
+                    "error": str(res_info.result),
+                })
+                _logger.error(
+                    "job_failed",
+                    job_id=job_id,
+                    job_name=res_info.function,
+                    error=str(res_info.result),
+                )
+
+            await redis.setex(f"job_status:{job_id}", 86400, json.dumps(status_data))
+    except Exception as exc:
+        _logger.error("after_job_end_tracking_failed", job_id=job_id, error=str(exc))
+
+
 class WorkerSettings:
     """arq worker configuration (``arq app.jobs.worker.WorkerSettings``)."""
 
@@ -94,6 +185,8 @@ class WorkerSettings:
     keep_result: int = settings.job_result_ttl_seconds
     on_startup = startup
     on_shutdown = shutdown
+    on_job_start = on_job_start
+    after_job_end = after_job_end
 
 
 def main() -> None:

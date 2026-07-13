@@ -115,7 +115,7 @@ class NotificationService(BaseService):
                             "org_id": org_id,
                             "notification_id": notification.id,
                             "user_id": uid,
-                            "delivered_at": datetime.datetime.now(timezone.utc),  # noqa: UP017
+                            "delivered_at": None,
                         }
                     )
 
@@ -134,7 +134,20 @@ class NotificationService(BaseService):
                 performed_by_name=f"User {caller_user_id}",
             )
 
-            return notification
+        # 5. Enqueue delivery job
+        if recipient_user_ids:
+            try:
+                from app.jobs.queue import enqueue, JobName
+                await enqueue(JobName.DELIVER_NOTIFICATION, org_id=org_id, notification_id=notification.id)
+            except Exception as exc:
+                from app.core.logging import get_logger
+                get_logger("notifications").warning(
+                    "failed_to_enqueue_notification_delivery",
+                    notification_id=notification.id,
+                    error=str(exc),
+                )
+
+        return notification
 
     async def list_notifications(
         self,
@@ -259,7 +272,7 @@ class NotificationService(BaseService):
                             "org_id": org_id,
                             "notification_id": notification_id,
                             "user_id": uid,
-                            "delivered_at": datetime.datetime.now(timezone.utc),  # noqa: UP017
+                            "delivered_at": None,
                         }
                     )
                     results.append(
@@ -286,6 +299,19 @@ class NotificationService(BaseService):
                     ),
                     performed_by_user_id=caller_user_id,
                     performed_by_name=f"User {caller_user_id}",
+                )
+
+        # Enqueue delivery job if any new recipient was assigned
+        if new_success_count > 0:
+            try:
+                from app.jobs.queue import enqueue, JobName
+                await enqueue(JobName.DELIVER_NOTIFICATION, org_id=org_id, notification_id=notification_id)
+            except Exception as exc:
+                from app.core.logging import get_logger
+                get_logger("notifications").warning(
+                    "failed_to_enqueue_notification_delivery",
+                    notification_id=notification_id,
+                    error=str(exc),
                 )
 
         return results
@@ -630,14 +656,25 @@ class NotificationService(BaseService):
             }
         )
 
-        delivered_at = utcnow()
         for uid in dict.fromkeys(recipient_user_ids):  # dedupe, preserving order
             await self.recipients.create(
                 {
                     "org_id": org_id,
                     "notification_id": notification.id,
                     "user_id": uid,
-                    "delivered_at": delivered_at,
+                    "delivered_at": None,
                 }
             )
+
+        try:
+            from app.jobs.queue import enqueue, JobName
+            await enqueue(JobName.DELIVER_NOTIFICATION, org_id=org_id, notification_id=notification.id)
+        except Exception as exc:
+            from app.core.logging import get_logger
+            get_logger("notifications").warning(
+                "failed_to_enqueue_system_notification_delivery",
+                notification_id=notification.id,
+                error=str(exc),
+            )
+
         return notification

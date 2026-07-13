@@ -98,6 +98,11 @@ class RBACService(BaseService):
         self.sessions = UserSessionRepository(session)
         self._resolver = PermissionResolver(session)
         self.audit = AuditService(session)
+        
+        # Cross-tenant validation repositories
+        from app.modules.organization.repository import BranchRepository, DepartmentRepository
+        self.branches = BranchRepository(session)
+        self.departments = DepartmentRepository(session)
 
     # =====================================================================
     # Audit helpers
@@ -861,6 +866,7 @@ class RBACService(BaseService):
     ) -> BranchAccessSchema:
         """Grant branch access to a user."""
         await self._get_active_user(org_id, user_id)
+        await self._validate_branches(org_id, [branch_id])
         if await self.branch_access.exists(user_id, branch_id):
             raise ConflictException("Branch access already granted.", code="BRANCH_ACCESS_EXISTS")
         async with self.transaction():
@@ -901,6 +907,7 @@ class RBACService(BaseService):
     ) -> list[BranchAccessSchema]:
         """Replace a user's entire branch-access set atomically."""
         await self._get_active_user(org_id, user_id)
+        await self._validate_branches(org_id, branch_ids)
         async with self.transaction():
             await self.branch_access.delete_all_for_user(user_id)
             rows = [
@@ -939,6 +946,7 @@ class RBACService(BaseService):
     ) -> DepartmentAccessSchema:
         """Grant department access to a user."""
         await self._get_active_user(org_id, user_id)
+        await self._validate_departments(org_id, [department_id])
         if await self.dept_access.exists(user_id, department_id):
             raise ConflictException(
                 "Department access already granted.", code="DEPARTMENT_ACCESS_EXISTS"
@@ -985,6 +993,7 @@ class RBACService(BaseService):
     ) -> list[DepartmentAccessSchema]:
         """Replace a user's entire department-access set atomically."""
         await self._get_active_user(org_id, user_id)
+        await self._validate_departments(org_id, department_ids)
         async with self.transaction():
             await self.dept_access.delete_all_for_user(user_id)
             rows = [
@@ -1100,6 +1109,26 @@ class RBACService(BaseService):
         if user is None:
             raise NotFoundException("User not found.", code="USER_NOT_FOUND")
         return user
+
+    async def _validate_branches(self, org_id: int, branch_ids: list[int]) -> None:
+        if not branch_ids:
+            return
+        from app.modules.organization.exceptions import BranchNotFoundException
+        
+        for bid in set(branch_ids):
+            branch = await self.branches.get_by_id_in_org(org_id, bid)
+            if branch is None or not branch.is_active:
+                raise BranchNotFoundException()
+
+    async def _validate_departments(self, org_id: int, department_ids: list[int]) -> None:
+        if not department_ids:
+            return
+        from app.modules.organization.exceptions import DepartmentNotFoundException
+        
+        for did in set(department_ids):
+            dept = await self.departments.get_by_id_in_org(org_id, did)
+            if dept is None or not dept.is_active:
+                raise DepartmentNotFoundException()
 
     async def _get_any_user(self, org_id: int, user_id: int) -> User:
         user = await self.users.get_by_id(user_id)

@@ -286,6 +286,14 @@ class BiometricDeviceSchema(BaseSchema):
     created_at: datetime = Field(..., description="Registry creation timestamp.")
     updated_at: datetime = Field(..., description="Last registry update timestamp.")
 
+    @field_validator("ip_address", mode="before")
+    @classmethod
+    def _stringify_ip(cls, value: object) -> str | None:
+        # The ``INET`` column deserialises to an ``ipaddress`` object under asyncpg;
+        # coerce it to its string form for the response.
+        return None if value is None else str(value)
+
+
 
 class BiometricDeviceListResponse(PaginatedResponse[BiometricDeviceSchema]):
     """Paginated list response for biometric devices."""
@@ -350,6 +358,14 @@ class BiometricDeviceConfigurationSchema(BaseSchema):
         values["communication_key_set"] = bool(values.get("communication_key"))
         values["sync_key_set"] = bool(values.get("sync_key"))
         return values
+
+    @field_validator("ip_address", mode="before")
+    @classmethod
+    def _stringify_ip(cls, value: object) -> str | None:
+        # The ``INET`` column deserialises to an ``ipaddress`` object under asyncpg;
+        # coerce it to its string form for the response.
+        return None if value is None else str(value)
+
 
 
 class BiometricDeviceStatusSchema(BaseSchema):

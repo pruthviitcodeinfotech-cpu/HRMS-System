@@ -65,6 +65,8 @@ class JobName(StrEnum):
     RUN_LEAVE_ACCRUAL = "run_leave_accrual"
     SYNC_DEVICE = "sync_device"
     GENERATE_REPORT_EXPORT = "generate_report_export"
+    DELIVER_NOTIFICATION = "deliver_notification"
+    SEND_EMAIL = "send_email"
 
 
 def get_redis_settings() -> RedisSettings:
@@ -107,6 +109,8 @@ async def enqueue(job_name: JobName | str, **kwargs: Any) -> str:
     Raises:
         QueueUnavailableException: Redis is unreachable, or the job was not accepted.
     """
+    import json
+    import datetime
     name = str(job_name)
     pool = await get_queue_pool()
     try:
@@ -123,6 +127,20 @@ async def enqueue(job_name: JobName | str, **kwargs: Any) -> str:
         raise QueueUnavailableException(
             "The background job could not be queued. Please retry in a moment."
         )
+
+    # Track pending status in Redis
+    status_data = {
+        "job_id": job.job_id,
+        "job_name": name,
+        "status": "pending",
+        "enqueue_time": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "try_count": 0,
+        "error": None,
+    }
+    try:
+        await pool.setex(f"job_status:{job.job_id}", 86400, json.dumps(status_data))
+    except Exception as exc:
+        _logger.error("queue_status_tracking_failed", job_id=job.job_id, error=str(exc))
 
     _logger.info("job_enqueued", job=name, job_id=job.job_id)
     return job.job_id

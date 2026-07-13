@@ -351,3 +351,187 @@ async def test_list_devices_branch_scoped(
     mock_hardware_service.list_devices.assert_awaited_once()
     assert mock_hardware_service.list_devices.call_args[1]["allowed_branch_ids"] == [2]
 
+
+# ===========================================================================
+# IP Address & INET Serialization Integration Tests
+# ===========================================================================
+
+def _device_db_mock(ip_address=None, **overrides) -> object:
+    from types import SimpleNamespace
+    base = {
+        "id": 1,
+        "org_id": 10,
+        "branch_id": None,
+        "device_name": "Device A",
+        "device_code": "CODE-A",
+        "serial_number": "SN123",
+        "model": "K90",
+        "manufacturer": "eSSL",
+        "ip_address": ip_address,
+        "port": 5005,
+        "protocol": DeviceProtocol.TCP_IP,
+        "domain": None,
+        "mac_address": "00:11:22:33:44:55",
+        "adms_enabled": False,
+        "adms_server": None,
+        "adms_port": None,
+        "cloud_id": None,
+        "timezone": "UTC",
+        "status": DeviceStatus.OFFLINE,
+        "last_seen_at": _NOW,
+        "last_sync_at": _NOW,
+        "firmware_version": "v1.0",
+        "software_version": "v2.0",
+        "total_users": 0,
+        "total_fingerprints": 0,
+        "total_faces": 0,
+        "total_cards": 0,
+        "total_logs": 0,
+        "installation_location": "Main Entrance",
+        "remarks": "N/A",
+        "is_active": True,
+        "created_by": 1,
+        "updated_by": 1,
+        "created_at": _NOW,
+        "updated_at": _NOW,
+    }
+    base.update(overrides)
+    return SimpleNamespace(**base)
+
+
+@pytest.mark.asyncio
+async def test_register_device_with_ip(
+    hardware_client: AsyncClient, mock_hardware_service: AsyncMock, super_admin_headers
+) -> None:
+    """Verify that registering a device accepts and serializes IP addresses correctly."""
+    import ipaddress
+    
+    # 1. Register with IPv4 Address object returned from database
+    db_row = _device_db_mock(ip_address=ipaddress.IPv4Address("192.168.1.100"))
+    mock_hardware_service.register_device.return_value = BiometricDeviceSchema.model_validate(db_row)
+    
+    payload = {
+        "device_name": "Device IPv4",
+        "device_code": "CODE-IPV4",
+        "serial_number": "SN-IPV4",
+        "ip_address": "192.168.1.100",
+    }
+    
+    resp = await hardware_client.post(
+        f"{API_PREFIX}/devices", json=payload, headers=super_admin_headers
+    )
+    assert resp.status_code == 201
+    assert resp.json()["data"]["ip_address"] == "192.168.1.100"
+
+    # 2. Register with IPv6 Address object returned from database
+    db_row_v6 = _device_db_mock(ip_address=ipaddress.IPv6Address("2001:db8::1"))
+    mock_hardware_service.register_device.return_value = BiometricDeviceSchema.model_validate(db_row_v6)
+    
+    payload_v6 = {
+        "device_name": "Device IPv6",
+        "device_code": "CODE-IPV6",
+        "serial_number": "SN-IPV6",
+        "ip_address": "2001:db8::1",
+    }
+    
+    resp = await hardware_client.post(
+        f"{API_PREFIX}/devices", json=payload_v6, headers=super_admin_headers
+    )
+    assert resp.status_code == 201
+    assert resp.json()["data"]["ip_address"] == "2001:db8::1"
+
+
+@pytest.mark.asyncio
+async def test_get_device_ip_serialization(
+    hardware_client: AsyncClient, mock_hardware_service: AsyncMock, super_admin_headers
+) -> None:
+    """Verify that GET /devices/{id} serializes None, IPv4Address, and IPv6Address correctly."""
+    import ipaddress
+
+    # 1. Null ip_address
+    db_row_null = _device_db_mock(ip_address=None)
+    mock_hardware_service.get_device.return_value = BiometricDeviceSchema.model_validate(db_row_null)
+    
+    resp = await hardware_client.get(f"{API_PREFIX}/devices/1", headers=super_admin_headers)
+    assert resp.status_code == 200
+    assert resp.json()["data"]["ip_address"] is None
+
+    # 2. IPv4 Address object
+    db_row_v4 = _device_db_mock(ip_address=ipaddress.IPv4Address("192.168.1.100"))
+    mock_hardware_service.get_device.return_value = BiometricDeviceSchema.model_validate(db_row_v4)
+    
+    resp = await hardware_client.get(f"{API_PREFIX}/devices/1", headers=super_admin_headers)
+    assert resp.status_code == 200
+    assert resp.json()["data"]["ip_address"] == "192.168.1.100"
+
+    # 3. IPv6 Address object
+    db_row_v6 = _device_db_mock(ip_address=ipaddress.IPv6Address("2001:db8::1"))
+    mock_hardware_service.get_device.return_value = BiometricDeviceSchema.model_validate(db_row_v6)
+    
+    resp = await hardware_client.get(f"{API_PREFIX}/devices/1", headers=super_admin_headers)
+    assert resp.status_code == 200
+    assert resp.json()["data"]["ip_address"] == "2001:db8::1"
+
+
+@pytest.mark.asyncio
+async def test_list_devices_ip_serialization(
+    hardware_client: AsyncClient, mock_hardware_service: AsyncMock, super_admin_headers
+) -> None:
+    """Verify that GET /devices serializes list of devices with various IP addresses correctly."""
+    import ipaddress
+    
+    db_v4 = _device_db_mock(ip_address=ipaddress.IPv4Address("192.168.1.100"))
+    db_v6 = _device_db_mock(id=2, ip_address=ipaddress.IPv6Address("2001:db8::1"))
+
+    item_v4 = BiometricDeviceSchema.model_validate(db_v4)
+    item_v6 = BiometricDeviceSchema.model_validate(db_v6)
+
+    mock_hardware_service.list_devices.return_value = BiometricDeviceListResponse.build(
+        items=[item_v4, item_v6], page=1, page_size=25, total_records=2
+    )
+
+    resp = await hardware_client.get(f"{API_PREFIX}/devices", headers=super_admin_headers)
+    assert resp.status_code == 200
+    items = resp.json()["data"]["items"]
+    assert len(items) == 2
+    assert items[0]["ip_address"] == "192.168.1.100"
+    assert items[1]["ip_address"] == "2001:db8::1"
+
+
+@pytest.mark.asyncio
+async def test_regression_hardware_apis(
+    hardware_client: AsyncClient, mock_hardware_service: AsyncMock, super_admin_headers
+) -> None:
+    """Verify that configuration, update, and other write endpoints also serialize IP addresses correctly."""
+    import ipaddress
+    
+    # 1. Update device returning IPv4 Address object
+    db_v4 = _device_db_mock(ip_address=ipaddress.IPv4Address("192.168.1.100"))
+    mock_hardware_service.update_device.return_value = BiometricDeviceSchema.model_validate(db_v4)
+    
+    resp = await hardware_client.patch(
+        f"{API_PREFIX}/devices/1", json={"ip_address": "192.168.1.100"}, headers=super_admin_headers
+    )
+    assert resp.status_code == 200
+    assert resp.json()["data"]["ip_address"] == "192.168.1.100"
+
+    # 2. Get device configuration returning IPv6 Address object
+    db_v6 = _device_db_mock(ip_address=ipaddress.IPv6Address("2001:db8::1"))
+    config = BiometricDeviceConfigurationSchema.model_validate(db_v6)
+    mock_hardware_service.get_device_configuration.return_value = config
+    
+    resp = await hardware_client.get(
+        f"{API_PREFIX}/devices/1/configuration", headers=super_admin_headers
+    )
+    assert resp.status_code == 200
+    assert resp.json()["data"]["ip_address"] == "2001:db8::1"
+
+    # 3. Update configuration returning IPv4 Address object
+    mock_hardware_service.update_device_configuration.return_value = config
+    resp = await hardware_client.patch(
+        f"{API_PREFIX}/devices/1/configuration", json={"ip_address": "2001:db8::1"}, headers=super_admin_headers
+    )
+    assert resp.status_code == 200
+    assert resp.json()["data"]["ip_address"] == "2001:db8::1"
+
+

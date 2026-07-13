@@ -476,3 +476,68 @@ async def test_get_hardware_service_dependency() -> None:
     service = await get_hardware_service(db_mock)
     assert service.session == db_mock
 
+
+# ===========================================================================
+# INET Serialization Schema Tests
+# ===========================================================================
+
+def test_device_schema_ip_address_serialization() -> None:
+    """Verify that BiometricDeviceSchema and BiometricDeviceConfigurationSchema correctly serialize all ipaddress types."""
+    import ipaddress
+    from app.modules.hardware.schemas import BiometricDeviceSchema, BiometricDeviceConfigurationSchema
+    
+    base_data = {
+        "id": 1,
+        "org_id": 10,
+        "branch_id": None,
+        "device_name": "Device A",
+        "device_code": "CODE-A",
+        "serial_number": "SN123",
+        "protocol": DeviceProtocol.TCP_IP,
+        "adms_enabled": False,
+        "status": DeviceStatus.OFFLINE,
+        "total_users": 0,
+        "total_fingerprints": 0,
+        "total_faces": 0,
+        "total_cards": 0,
+        "total_logs": 0,
+        "is_active": True,
+        "created_at": _NOW,
+        "updated_at": _NOW,
+    }
+
+    # Test cases for ip_address values
+    test_cases = [
+        (None, None),
+        ("192.168.1.100", "192.168.1.100"),
+        (ipaddress.IPv4Address("192.168.1.100"), "192.168.1.100"),
+        (ipaddress.IPv6Address("2001:db8::1"), "2001:db8::1"),
+        (ipaddress.IPv4Interface("192.168.1.100/24"), "192.168.1.100/24"),
+        (ipaddress.IPv6Interface("2001:db8::1/64"), "2001:db8::1/64"),
+    ]
+
+    for ip_val, expected_str in test_cases:
+        # Test BiometricDeviceSchema
+        device_data = {**base_data, "ip_address": ip_val}
+        schema = BiometricDeviceSchema.model_validate(device_data)
+        assert schema.ip_address == expected_str
+
+        # Test BiometricDeviceConfigurationSchema
+        config_data = {
+            "ip_address": ip_val,
+            "port": 5005,
+            "protocol": DeviceProtocol.TCP_IP,
+            "domain": None,
+            "mac_address": "00:11:22:33:44:55",
+            "adms_enabled": False,
+            "adms_server": None,
+            "adms_port": None,
+            "cloud_id": None,
+            "timezone": "UTC",
+            "communication_key": None,
+            "sync_key": None,
+        }
+        config_schema = BiometricDeviceConfigurationSchema.model_validate(config_data)
+        assert config_schema.ip_address == expected_str
+
+

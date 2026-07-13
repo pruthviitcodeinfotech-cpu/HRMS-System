@@ -389,3 +389,131 @@ async def generate_report_export(
             format_type=format_type,
         )
         return {"export_job_id": job_id, "org_id": org_id}
+
+
+# ===========================================================================
+# 5. Notification delivery
+# ===========================================================================
+
+
+async def deliver_notification(
+    ctx: dict[str, Any],
+    org_id: int,
+    notification_id: int,
+) -> dict[str, Any]:
+    """Background job to deliver a notification to its recipients."""
+    from app.modules.notifications.service import NotificationService
+    from datetime import datetime, timezone
+
+    async with _session_factory(ctx)() as session:
+        service = NotificationService(session)
+        notification = await service.notifications.get_by_id_in_org(notification_id, org_id)
+        if not notification:
+            # Raise exception to trigger arq retry
+            raise ValueError(f"Notification {notification_id} not found in org {org_id} yet.")
+
+        # Search for recipients where delivered_at is None
+        recipients = await service.recipients.search(
+            notification_id=notification_id,
+            org_id=org_id,
+            delivered=False,
+            page=1,
+            page_size=10000,
+        )
+
+        if not recipients:
+            return {"delivered_count": 0, "status": "already_processed"}
+
+        delivered_count = 0
+        client = get_email_client()
+
+        for r in recipients:
+            await service.recipients.update(r, {"delivered_at": datetime.now(timezone.utc)})
+            delivered_count += 1
+
+            # Email delivery logic if configured
+            user = await service.users.get_active_by_id(r.user_id, org_id)
+            if user and user.email and client.is_configured:
+                try:
+                    subject = f"New Notification: {notification.title}"
+                    text_body = (
+                        f"Hello,\n\n"
+                        f"You have received a new notification:\n\n"
+                        f"Title: {notification.title}\n"
+                        f"Priority: {notification.priority}\n"
+                        f"Message:\n{notification.message}\n\n"
+                        f"This is an automated message."
+                    )
+                    html_body = (
+                        f"<p>Hello,</p>"
+                        f"<p>You have received a new notification:</p>"
+                        f"<p><strong>Title:</strong> {notification.title}<br/>"
+                        f"<strong>Priority:</strong> {notification.priority}</p>"
+                        f"<p><strong>Message:</strong><br/>{notification.message}</p>"
+                    )
+                    await client.send(
+                        to=user.email,
+                        subject=subject,
+                        text_body=text_body,
+                        html_body=html_body,
+                    )
+                except Exception as email_exc:
+                    _logger.warning(
+                        "notification_email_delivery_failed",
+                        user_id=r.user_id,
+                        error=str(email_exc),
+                    )
+
+        await _audit(
+            session,
+            org_id=org_id,
+            module="notifications",
+            sub_module="recipient",
+            action_type=ActionType.UPDATE,
+            title="Notification Delivered",
+            description=f"Delivered notification ID {notification_id} to {delivered_count} recipients.",
+        )
+        return {"notification_id": notification_id, "delivered_count": delivered_count}
+
+
+# ===========================================================================
+# 6. Email sending
+# ===========================================================================
+
+
+async def send_email(
+    ctx: dict[str, Any],
+    to: str,
+    subject: str,
+    text_body: str,
+    html_body: str | None = None,
+    attachments: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Background task to send a generic email via SmtpEmailClient."""
+    import base64
+
+    client = get_email_client()
+    if not client.is_configured:
+        _logger.warning("email_skipped_smtp_unconfigured", to=to, subject=subject)
+        return {"sent": False, "reason": "smtp_not_configured"}
+
+    email_attachments = []
+    if attachments:
+        for att in attachments:
+            content_bytes = base64.b64decode(att["content_b64"])
+            email_attachments.append(
+                EmailAttachment(filename=att["filename"], content=content_bytes)
+            )
+
+    try:
+        sent = await client.send(
+            to=to,
+            subject=subject,
+            text_body=text_body,
+            html_body=html_body,
+            attachments=email_attachments,
+        )
+        return {"sent": sent, "to": to}
+    except Exception as exc:
+        _logger.error("email_sending_failed", to=to, error=str(exc))
+        raise

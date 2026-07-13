@@ -304,7 +304,7 @@ class FinalizedPayrollRunListResponse(PaginatedResponse[FinalizedPayrollRunRespo
 class PayrollComputedRowSchema(BaseSchema):
     """Response schema for a single employee's computed payroll metrics row."""
 
-    id: int = Field(..., description="Unique row ID.")
+    id: int | None = Field(default=None, description="Unique row ID.")
     payroll_group_id: int = Field(..., description="Associated payroll group ID.")
     employee_id: int = Field(..., description="Employee ID.")
     cycle_from: date = Field(..., description="Calculated period start.")

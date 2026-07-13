@@ -888,3 +888,181 @@ async def test_add_extra_hours(payroll_service) -> None:
 
     await payroll_service.add_extra_hours(org_id=1, payload=payload, user_id=9)
     payroll_service.extra_hours.create.assert_awaited_once()
+
+
+# ===========================================================================
+# 7. Preview & Serialization tests
+# ===========================================================================
+
+async def test_preview_payroll_schema_serialization_null_id(payroll_service) -> None:
+    """Verify that a transient preview row (with id=None) serializes correctly using schemas."""
+    from app.modules.payroll.schemas import PayrollPreviewResponseSchema, PayrollComputedRowSchema
+    from app.modules.payroll.models.run import PayrollComputedRow
+
+    payload = PayrollProcessRequestSchema(
+        payroll_group_id=2,
+        cycle_from=date(2026, 1, 1),
+        cycle_to=date(2026, 1, 31),
+        employee_ids=[5],
+    )
+    employee = _employee(monthly_salary=Decimal("3100.00"))
+    payroll_service.session.execute = AsyncMock(
+        side_effect=[_result([employee]), *_batch_results(att_days=_FULL_MONTH)]
+    )
+
+    rows = await payroll_service.preview_payroll(org_id=1, payload=payload)
+    assert len(rows) == 1
+    assert rows[0].id is None
+
+    # Validate with Pydantic schema
+    schema_row = PayrollComputedRowSchema.model_validate(rows[0])
+    assert schema_row.id is None
+    assert schema_row.employee_id == 5
+
+    preview_schema = PayrollPreviewResponseSchema(items=rows)
+    serialized = preview_schema.model_dump()
+    assert len(serialized["items"]) == 1
+    assert serialized["items"][0]["id"] is None
+    assert serialized["items"][0]["employee_id"] == 5
+
+
+async def test_preview_payroll_empty(payroll_service) -> None:
+    """Verify that previewing payroll with no employees returns an empty list."""
+    payload = PayrollProcessRequestSchema(
+        payroll_group_id=2,
+        cycle_from=date(2026, 1, 1),
+        cycle_to=date(2026, 1, 31),
+        employee_ids=[],
+    )
+    # Return no employees matching the group
+    payroll_service.session.execute = AsyncMock(
+        side_effect=[_result([]), *_batch_results()]
+    )
+
+    rows = await payroll_service.preview_payroll(org_id=1, payload=payload)
+    assert len(rows) == 0
+
+
+async def test_preview_payroll_multiple(payroll_service) -> None:
+    """Verify that previewing payroll with multiple employees computes correctly for all."""
+    payload = PayrollProcessRequestSchema(
+        payroll_group_id=2,
+        cycle_from=date(2026, 1, 1),
+        cycle_to=date(2026, 1, 31),
+        employee_ids=[5, 6],
+    )
+    employee1 = _employee(employee_id=5, monthly_salary=Decimal("3100.00"))
+    employee2 = _employee(employee_id=6, monthly_salary=Decimal("6200.00"))
+    
+    # Mock assignments for both employees
+    payroll_service.assignments.get_by_employees.return_value = [
+        _assignment(employee_id=5),
+        _assignment(employee_id=6),
+    ]
+
+    # Mock attendance for both employees
+    att_days = (
+        [_attendance_day(d, employee_id=5) for d in range(1, 32)] +
+        [_attendance_day(d, employee_id=6) for d in range(1, 32)]
+    )
+
+    payroll_service.session.execute = AsyncMock(
+        side_effect=[
+            _result([employee1, employee2]),
+            *_batch_results(att_days=att_days)
+        ]
+    )
+
+    rows = await payroll_service.preview_payroll(org_id=1, payload=payload)
+    assert len(rows) == 2
+    assert {row.employee_id for row in rows} == {5, 6}
+    
+    # Check individual computations
+    row5 = next(r for r in rows if r.employee_id == 5)
+    row6 = next(r for r in rows if r.employee_id == 6)
+    
+    assert row5.id is None
+    assert row5.gross_wages == Decimal("3100.00")
+    
+    assert row6.id is None
+    assert row6.gross_wages == Decimal("6200.00")
+
+
+async def test_preview_payroll_validation_errors(payroll_service) -> None:
+    """Verify that validation errors are handled correctly for preview."""
+    from pydantic import ValidationError
+    from app.core.exceptions.base import ValidationException
+
+    # 1. Pydantic level validation error (cycle_to before cycle_from)
+    with pytest.raises(ValidationError):
+        PayrollProcessRequestSchema(
+            payroll_group_id=2,
+            cycle_from=date(2026, 1, 31),
+            cycle_to=date(2026, 1, 1),
+            employee_ids=[5],
+        )
+
+    # 2. Service level validation (e.g. employee not assigned to payroll group)
+    payload = PayrollProcessRequestSchema(
+        payroll_group_id=2,
+        cycle_from=date(2026, 1, 1),
+        cycle_to=date(2026, 1, 31),
+        employee_ids=[5],
+    )
+    employee = _employee(monthly_salary=Decimal("3100.00"))
+    
+    # Return empty assignment list so _calculate_employee_payroll raises ValidationException
+    payroll_service.assignments.get_by_employees.return_value = []
+    
+    payroll_service.session.execute = AsyncMock(
+        side_effect=[_result([employee]), *_batch_results(att_days=_FULL_MONTH)]
+    )
+
+    rows = await payroll_service.preview_payroll(org_id=1, payload=payload)
+    # The employee should be skipped due to the ValidationException
+    assert len(rows) == 0
+
+
+
+async def test_finalized_payroll_schema_serialization_id(payroll_service) -> None:
+    """Verify that finalized payroll rows (with non-null id) serialize correctly."""
+    from app.modules.payroll.schemas import PayrollComputedRowSchema
+    from app.modules.payroll.models.run import PayrollComputedRow
+
+    # Create a mock or real DB model instance of a finalized row
+    finalized_row = PayrollComputedRow(
+        id=123,
+        payroll_group_id=2,
+        employee_id=5,
+        cycle_from=date(2026, 1, 1),
+        cycle_to=date(2026, 1, 31),
+        total_days=31,
+        full_day_count=31,
+        half_day_count=0,
+        off_day_count=0,
+        paid_leave_count=Decimal("0"),
+        paid_day_count=Decimal("31"),
+        unpaid_day_count=Decimal("0"),
+        daily_wage=Decimal("100.00"),
+        gross_wages=Decimal("3100.00"),
+        overtime_amount=Decimal("0.00"),
+        penalties_amount=Decimal("0.00"),
+        extras_amount=Decimal("0.00"),
+        gross_earnings=Decimal("3100.00"),
+        loan_advance_deduction=Decimal("0.00"),
+        arrears_amount=Decimal("0.00"),
+        to_pay=Decimal("3100.00"),
+        balance_arrears=Decimal("0.00"),
+        payment_method="bank_transfer",
+        is_finalized=True,
+        finalized_run_id=45,
+        computed_by=9,
+        computed_at=datetime.now()
+    )
+
+    schema_row = PayrollComputedRowSchema.model_validate(finalized_row)
+    assert schema_row.id == 123
+    assert schema_row.employee_id == 5
+    assert schema_row.is_finalized is True
+    assert schema_row.finalized_run_id == 45
+

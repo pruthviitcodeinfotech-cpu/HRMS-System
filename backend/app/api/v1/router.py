@@ -21,6 +21,7 @@ from app.modules.auth.router import router as auth_router
 from app.modules.dashboard.router import router as dashboard_router
 from app.modules.employee.router import router as employee_router
 from app.modules.hardware.router import router as hardware_router
+from app.modules.jobs.router import router as jobs_router
 from app.modules.leave.router import router as leave_router
 from app.modules.notifications.router import router as notifications_router
 from app.modules.organization.router import router as organization_router
@@ -48,5 +49,6 @@ api_router.include_router(settings_router)
 api_router.include_router(audit_router)
 api_router.include_router(dashboard_router)
 api_router.include_router(reports_router)
+api_router.include_router(jobs_router)
 
 __all__ = ["api_router"]

@@ -338,6 +338,8 @@ def rbac_service() -> object:
         "branch_access",
         "dept_access",
         "sessions",
+        "branches",
+        "departments",
     ):
         setattr(svc, attr, AsyncMock())
     svc.audit = AsyncMock()

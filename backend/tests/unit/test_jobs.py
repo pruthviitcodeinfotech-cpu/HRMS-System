@@ -31,8 +31,10 @@ from app.jobs import tasks as tasks_module
 from app.jobs import worker as worker_module
 from app.jobs.queue import JobName, QueueUnavailableException, enqueue
 from app.jobs.tasks import (
+    deliver_notification,
     generate_report_export,
     run_leave_accrual,
+    send_email,
     send_payslip_email,
     sync_device,
 )
@@ -41,6 +43,7 @@ from app.modules.reports.service import ReportsService
 # ===========================================================================
 # Fakes
 # ===========================================================================
+
 
 
 class FakeSession:
@@ -213,7 +216,14 @@ async def test_generate_report_export_opens_its_own_session(
 
 @pytest.mark.parametrize(
     "job",
-    [send_payslip_email, run_leave_accrual, sync_device, generate_report_export],
+    [
+        send_payslip_email,
+        run_leave_accrual,
+        sync_device,
+        generate_report_export,
+        deliver_notification,
+        send_email,
+    ],
 )
 def test_no_job_accepts_a_session_argument(job: Any) -> None:
     """A job can never be *handed* a session — it only ever makes its own.
@@ -683,3 +693,119 @@ async def test_worker_startup_publishes_the_session_factory(
 
     assert worker_ctx["session_factory"] is factory
     assert not any(isinstance(value, FakeSession) for value in worker_ctx.values())
+
+
+@pytest.mark.asyncio
+async def test_deliver_notification_task(
+    ctx: dict[str, Any], factory: FakeSessionFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """deliver_notification queries undelivered recipients and sends them emails."""
+    from app.modules.notifications.models import Notification, NotificationRecipient
+
+    notif = Notification(
+        id=7, org_id=1, title="Test Notification", message="Msg", priority="high"
+    )
+    recipient = NotificationRecipient(id=12, notification_id=7, org_id=1, user_id=42, delivered_at=None)
+
+    mock_service = AsyncMock()
+    mock_service.notifications.get_by_id_in_org.return_value = notif
+    mock_service.recipients.search.return_value = [recipient]
+    mock_service.users.get_active_by_id.return_value = SimpleNamespace(email="test@example.com")
+
+    mock_email_client = AsyncMock()
+    mock_email_client.is_configured = True
+
+    # Patch the dynamic import inside tasks.py by patching the service module
+    monkeypatch.setattr("app.modules.notifications.service.NotificationService", lambda session: mock_service)
+    monkeypatch.setattr(tasks_module, "get_email_client", lambda: mock_email_client)
+
+    result = await deliver_notification(ctx, org_id=1, notification_id=7)
+
+    assert result == {"notification_id": 7, "delivered_count": 1}
+    mock_service.recipients.update.assert_called_once()
+    mock_email_client.send.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_send_email_task(monkeypatch: pytest.MonkeyPatch) -> None:
+    """send_email parses attachments and calls SmtpEmailClient.send."""
+    mock_email_client = AsyncMock()
+    mock_email_client.is_configured = True
+    monkeypatch.setattr(tasks_module, "get_email_client", lambda: mock_email_client)
+
+    # With base64 attachments
+    attachments = [
+        {"filename": "test.txt", "content_b64": "SGVsbG8gV29ybGQ="}  # "Hello World"
+    ]
+    result = await send_email(
+        {},
+        to="user@example.com",
+        subject="Hello",
+        text_body="Body",
+        attachments=attachments,
+    )
+    assert result == {"sent": mock_email_client.send.return_value, "to": "user@example.com"}
+    mock_email_client.send.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_worker_hooks_status_tracking() -> None:
+    """Worker on_job_start and after_job_end hooks update status in Redis."""
+    from arq.jobs import JobDef, JobResult
+    from datetime import datetime, timezone
+
+    mock_redis = AsyncMock()
+    mock_redis.get.return_value = None  # no previous status
+
+    # Mock JobDef for info()
+    job_info = JobDef(
+        function="deliver_notification",
+        args=(1, 7),
+        kwargs={},
+        job_try=1,
+        enqueue_time=datetime.now(timezone.utc),
+        score=0,
+        job_id="test_job_123",
+    )
+
+    # Mock JobResult for result_info()
+    job_result = JobResult(
+        function="deliver_notification",
+        args=(1, 7),
+        kwargs={},
+        job_try=1,
+        enqueue_time=datetime.now(timezone.utc),
+        score=0,
+        job_id="test_job_123",
+        success=True,
+        result={"delivered_count": 1},
+        start_time=datetime.now(timezone.utc),
+        finish_time=datetime.now(timezone.utc),
+        queue_name="arq:queue",
+    )
+
+    # Mock arq.jobs.Job methods
+    mock_job = AsyncMock()
+    mock_job.info.return_value = job_info
+    mock_job.result_info.return_value = job_result
+
+    # Patch Job constructor inside worker_module
+    from unittest.mock import patch
+    with patch("arq.jobs.Job", return_value=mock_job):
+        ctx = {"job_id": "test_job_123", "redis": mock_redis, "job_try": 1}
+        await worker_module.on_job_start(ctx)
+
+        # Verify setex was called to set status to 'running'
+        mock_redis.setex.assert_called_once()
+        args, kwargs = mock_redis.setex.call_args
+        assert args[0] == "job_status:test_job_123"
+        assert "running" in args[2]
+
+        mock_redis.setex.reset_mock()
+        await worker_module.after_job_end(ctx)
+
+        # Verify setex was called to set status to 'completed'
+        mock_redis.setex.assert_called_once()
+        args, kwargs = mock_redis.setex.call_args
+        assert args[0] == "job_status:test_job_123"
+        assert "completed" in args[2]

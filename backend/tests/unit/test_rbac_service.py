@@ -407,3 +407,99 @@ async def test_revoke_all_user_sessions_counts_and_audits(rbac_service, make_use
     result = await rbac_service.revoke_all_user_sessions(org_id=1, actor_id=9, user_id=2)
     assert result.revoked_count == 3
     rbac_service.audit.record.assert_awaited_once()
+
+
+# --- Cross-tenant Access Validation Tests -------------------------------------
+async def test_assign_branch_access_valid(rbac_service, make_user) -> None:
+    rbac_service.users.get_active_by_id.return_value = make_user(id=2)
+    rbac_service.branches.get_by_id_in_org.return_value = SimpleNamespace(branch_id=3, org_id=1, is_active=True)
+    rbac_service.branch_access.exists.return_value = False
+    rbac_service.branch_access.create.return_value = SimpleNamespace(branch_id=3, granted_by=1, granted_at=None)
+
+    result = await rbac_service.assign_branch_access(org_id=1, actor_id=1, user_id=2, branch_id=3)
+    assert result.branch_id == 3
+    rbac_service.branches.get_by_id_in_org.assert_awaited_once_with(1, 3)
+
+async def test_assign_branch_access_cross_tenant(rbac_service, make_user) -> None:
+    from app.modules.organization.exceptions import BranchNotFoundException
+    rbac_service.users.get_active_by_id.return_value = make_user(id=2)
+    rbac_service.branches.get_by_id_in_org.return_value = None  # branch from another org / not found
+
+    with pytest.raises(BranchNotFoundException) as exc:
+        await rbac_service.assign_branch_access(org_id=1, actor_id=1, user_id=2, branch_id=99)
+    assert exc.value.code == "BRANCH_NOT_FOUND"
+
+async def test_assign_branch_access_inactive(rbac_service, make_user) -> None:
+    from app.modules.organization.exceptions import BranchNotFoundException
+    rbac_service.users.get_active_by_id.return_value = make_user(id=2)
+    rbac_service.branches.get_by_id_in_org.return_value = SimpleNamespace(branch_id=3, org_id=1, is_active=False)
+
+    with pytest.raises(BranchNotFoundException) as exc:
+        await rbac_service.assign_branch_access(org_id=1, actor_id=1, user_id=2, branch_id=3)
+    assert exc.value.code == "BRANCH_NOT_FOUND"
+
+async def test_assign_branch_access_user_not_found(rbac_service) -> None:
+    rbac_service.users.get_active_by_id.return_value = None  # User doesn't exist or is in another org
+
+    with pytest.raises(NotFoundException) as exc:
+        await rbac_service.assign_branch_access(org_id=1, actor_id=1, user_id=99, branch_id=3)
+    assert exc.value.code == "USER_NOT_FOUND"
+
+async def test_assign_department_access_valid(rbac_service, make_user) -> None:
+    rbac_service.users.get_active_by_id.return_value = make_user(id=2)
+    rbac_service.departments.get_by_id_in_org.return_value = SimpleNamespace(dept_id=5, org_id=1, is_active=True)
+    rbac_service.dept_access.exists.return_value = False
+    rbac_service.dept_access.create.return_value = SimpleNamespace(department_id=5, granted_by=1, granted_at=None)
+
+    result = await rbac_service.assign_department_access(org_id=1, actor_id=1, user_id=2, department_id=5)
+    assert result.department_id == 5
+    rbac_service.departments.get_by_id_in_org.assert_awaited_once_with(1, 5)
+
+async def test_assign_department_access_cross_tenant(rbac_service, make_user) -> None:
+    from app.modules.organization.exceptions import DepartmentNotFoundException
+    rbac_service.users.get_active_by_id.return_value = make_user(id=2)
+    rbac_service.departments.get_by_id_in_org.return_value = None
+
+    with pytest.raises(DepartmentNotFoundException) as exc:
+        await rbac_service.assign_department_access(org_id=1, actor_id=1, user_id=2, department_id=99)
+    assert exc.value.code == "DEPARTMENT_NOT_FOUND"
+
+async def test_assign_department_access_inactive(rbac_service, make_user) -> None:
+    from app.modules.organization.exceptions import DepartmentNotFoundException
+    rbac_service.users.get_active_by_id.return_value = make_user(id=2)
+    rbac_service.departments.get_by_id_in_org.return_value = SimpleNamespace(dept_id=5, org_id=1, is_active=False)
+
+    with pytest.raises(DepartmentNotFoundException) as exc:
+        await rbac_service.assign_department_access(org_id=1, actor_id=1, user_id=2, department_id=5)
+    assert exc.value.code == "DEPARTMENT_NOT_FOUND"
+
+async def test_assign_department_access_user_not_found(rbac_service) -> None:
+    rbac_service.users.get_active_by_id.return_value = None
+
+    with pytest.raises(NotFoundException) as exc:
+        await rbac_service.assign_department_access(org_id=1, actor_id=1, user_id=99, department_id=5)
+    assert exc.value.code == "USER_NOT_FOUND"
+
+async def test_replace_branch_access_cross_tenant(rbac_service, make_user) -> None:
+    from app.modules.organization.exceptions import BranchNotFoundException
+    rbac_service.users.get_active_by_id.return_value = make_user(id=2)
+    rbac_service.branches.get_by_id_in_org.side_effect = [
+        SimpleNamespace(branch_id=3, org_id=1, is_active=True),
+        None  # second branch is cross-tenant / not found
+    ]
+
+    with pytest.raises(BranchNotFoundException) as exc:
+        await rbac_service.replace_branch_access(org_id=1, actor_id=1, user_id=2, branch_ids=[3, 99])
+    assert exc.value.code == "BRANCH_NOT_FOUND"
+
+async def test_replace_department_access_cross_tenant(rbac_service, make_user) -> None:
+    from app.modules.organization.exceptions import DepartmentNotFoundException
+    rbac_service.users.get_active_by_id.return_value = make_user(id=2)
+    rbac_service.departments.get_by_id_in_org.side_effect = [
+        SimpleNamespace(dept_id=5, org_id=1, is_active=True),
+        None  # second dept is cross-tenant / not found
+    ]
+
+    with pytest.raises(DepartmentNotFoundException) as exc:
+        await rbac_service.replace_department_access(org_id=1, actor_id=1, user_id=2, department_ids=[5, 99])
+    assert exc.value.code == "DEPARTMENT_NOT_FOUND"

@@ -32,7 +32,7 @@ services:
     build:
       context: .
       target: runtime
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
     # `.env` is developer-local and never committed. Without `required: false` the whole
     # stack refuses to start on a fresh clone, so the defaults below stand in until a
     # developer copies `.env.example` to `.env`.
