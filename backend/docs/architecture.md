@@ -57,6 +57,27 @@ Errors bubble to `core/exceptions/handlers.py` → standard error envelope + rol
 Every table carries `org_id`. Tenancy is enforced centrally via the tenant
 middleware + `TenantMixin` + base-repository scoping so queries cannot cross orgs.
 
+### Multi-Organization Membership (Phase 2)
+
+A user may belong to more than one organization. The canonical source of truth
+for all org memberships is the `user_organization_memberships` junction table
+(`app/modules/rbac/models/membership.py`).
+
+Key design decisions:
+
+- `users.org_id` (the home-org column) is **not removed**. It defines the user's
+  primary / home organization and is still used for login scoping and identity.
+- `user_organization_memberships` has one row per `(user, org)` pair. The
+  `is_primary=true` row corresponds to `users.org_id`.
+- `is_active=false` means the membership was revoked; the row is kept for audit.
+- Permission data for a non-primary org (rights-template assignment, custom
+  permissions, branch/department scope) is provisioned via the existing RBAC
+  tables, keyed by `user_id`. A target-org admin must configure those records.
+- Auth-context queries (`get_template_permissions`, `get_branch_ids`,
+  `get_department_ids`) in `auth/repository.py` now accept an explicit `org_id`
+  parameter and join through the org-scoped parent tables so only the *active*
+  org's permissions are embedded in the JWT.
+
 ## RBAC
 
 Two-layer authorization: feature-level CRUD permissions (rights templates +

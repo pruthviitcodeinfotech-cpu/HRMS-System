@@ -36,7 +36,11 @@ from app.core.security.jwt import create_access_token
 from app.core.security.password import hash_password
 from app.jobs import queue as job_queue
 from app.main import create_app
-from app.modules.auth.dependencies import get_auth_service
+from app.modules.auth.dependencies import (
+    get_auth_service,
+    get_org_membership_service,
+    get_org_switch_service,
+)
 from app.modules.auth.router import router as auth_router
 from app.modules.rbac.router import get_rbac_service
 from app.modules.rbac.router import router as rbac_router
@@ -174,6 +178,18 @@ def mock_auth_service() -> AsyncMock:
 
 
 @pytest.fixture
+def mock_org_membership_service() -> AsyncMock:
+    """An ``AsyncMock`` used to stub :class:`OrganizationMembershipService` in integration tests."""
+    return AsyncMock()
+
+
+@pytest.fixture
+def mock_org_switch_service() -> AsyncMock:
+    """An ``AsyncMock`` used to stub :class:`OrganizationSwitchService` in integration tests."""
+    return AsyncMock()
+
+
+@pytest.fixture
 def mock_rbac_service() -> AsyncMock:
     """An ``AsyncMock`` used to stub :class:`RBACService` in integration tests."""
     return AsyncMock()
@@ -181,13 +197,19 @@ def mock_rbac_service() -> AsyncMock:
 
 @pytest_asyncio.fixture
 async def client(
-    app, mock_auth_service: AsyncMock, mock_rbac_service: AsyncMock
+    app,
+    mock_auth_service: AsyncMock,
+    mock_org_membership_service: AsyncMock,
+    mock_org_switch_service: AsyncMock,
+    mock_rbac_service: AsyncMock,
 ) -> AsyncIterator[AsyncClient]:
     """An async HTTP client bound to the app, with the module services mocked."""
     # The auth dependency re-validates the session against the DB on every request;
     # router tests exercise the HTTP layer without a database, so stub that check.
     app.dependency_overrides[assert_session_live] = lambda: None
     app.dependency_overrides[get_auth_service] = lambda: mock_auth_service
+    app.dependency_overrides[get_org_membership_service] = lambda: mock_org_membership_service
+    app.dependency_overrides[get_org_switch_service] = lambda: mock_org_switch_service
     app.dependency_overrides[get_rbac_service] = lambda: mock_rbac_service
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as http_client:
@@ -282,6 +304,8 @@ def service() -> object:
     svc.users = AsyncMock()
     svc.sessions = AsyncMock()
     svc.audit = AsyncMock()
+    svc.membership_svc = AsyncMock()
+    svc.membership_svc.list_organizations.return_value = []
     svc.users.get_template_permissions.return_value = []
     svc.users.get_custom_permissions.return_value = []
     svc.users.get_branch_ids.return_value = []

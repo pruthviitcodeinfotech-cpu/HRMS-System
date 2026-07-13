@@ -54,6 +54,7 @@ class Settings(BaseSettings):
     # --- Redis ---------------------------------------------------------------
     redis_url: str = Field(default="redis://localhost:6379/0")
     cache_ttl_seconds: int = Field(default=300, ge=0)
+    require_redis_in_production: bool = Field(default=True)
 
     # --- Auth / JWT ----------------------------------------------------------
     jwt_secret: str = Field(default="change-me")

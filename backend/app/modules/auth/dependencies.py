@@ -31,6 +31,8 @@ from app.core.dependencies.rate_limit import client_ip, rate_limit, read_body_fi
 from app.core.exceptions.base import AppException, RateLimitException
 from app.core.logging.config import get_logger
 from app.modules.auth.service import AuthService
+from app.modules.auth.org_membership_service import OrganizationMembershipService
+from app.modules.auth.org_switch_service import OrganizationSwitchService
 
 _logger = get_logger("auth.rate_limit")
 
@@ -38,6 +40,20 @@ _logger = get_logger("auth.rate_limit")
 async def get_auth_service(db: Annotated[AsyncSession, Depends(get_db)]) -> AuthService:
     """Provide an :class:`AuthService` bound to the request-scoped DB session."""
     return AuthService(db)
+
+
+async def get_org_membership_service(
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> OrganizationMembershipService:
+    """Provide an :class:`OrganizationMembershipService` bound to the request-scoped DB session."""
+    return OrganizationMembershipService(db)
+
+
+async def get_org_switch_service(
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> OrganizationSwitchService:
+    """Provide an :class:`OrganizationSwitchService` bound to the request-scoped DB session."""
+    return OrganizationSwitchService(db)
 
 
 async def resolve_org_id(
@@ -144,17 +160,23 @@ def get_current_session_id(
 
 # --- Convenience annotated dependency aliases (for thin controllers) ---------
 AuthServiceDep = Annotated[AuthService, Depends(get_auth_service)]
+OrgMembershipServiceDep = Annotated[OrganizationMembershipService, Depends(get_org_membership_service)]
+OrgSwitchServiceDep = Annotated[OrganizationSwitchService, Depends(get_org_switch_service)]
 CurrentUserDep = Annotated[CurrentUser, Depends(get_current_active_user)]
 OrgIdDep = Annotated[int, Depends(resolve_org_id)]
 CurrentSessionIdDep = Annotated[int | None, Depends(get_current_session_id)]
 
 __all__ = [
     "get_auth_service",
+    "get_org_membership_service",
+    "get_org_switch_service",
     "resolve_org_id",
     "get_current_session_id",
     "enforce_login_rate_limit",
     "enforce_refresh_rate_limit",
     "AuthServiceDep",
+    "OrgMembershipServiceDep",
+    "OrgSwitchServiceDep",
     "CurrentUserDep",
     "OrgIdDep",
     "CurrentSessionIdDep",

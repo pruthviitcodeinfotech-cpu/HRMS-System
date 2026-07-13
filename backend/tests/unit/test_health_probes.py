@@ -92,19 +92,18 @@ async def test_not_ready_without_redis_in_production(production) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_redis_is_required_in_production(production) -> None:
+def test_redis_is_required_in_production_if_enforced(production) -> None:
     assert redis_is_required() is True
 
 
-def test_redis_is_not_required_in_development() -> None:
+def test_redis_is_not_required_in_production_if_not_enforced(
+    production, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "require_redis_in_production", False)
     assert redis_is_required() is False
 
 
-def test_redis_is_not_required_if_rate_limiting_is_off(
-    production, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Redis is mandatory *because* it backs rate limiting — not as dogma."""
-    monkeypatch.setattr(settings, "rate_limit_enabled", False)
+def test_redis_is_not_required_in_development() -> None:
     assert redis_is_required() is False
 
 
@@ -118,7 +117,25 @@ async def test_production_refuses_to_start_without_redis(production) -> None:
         with pytest.raises(DependencyUnavailableError) as exc:
             await validate_startup_dependencies()
     assert "redis is unreachable" in str(exc.value)
-    assert "rate limiting" in str(exc.value)
+    assert "require_redis_in_production is enabled" in str(exc.value)
+
+
+async def test_production_starts_without_redis_if_not_enforced(
+    production, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "require_redis_in_production", False)
+    with _db(True), _redis(False):
+        await validate_startup_dependencies()  # must not raise
+
+
+async def test_production_refuses_to_start_with_invalid_redis_url(
+    production, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "redis_url", "invalid-url-scheme")
+    with _db(True), _redis(True):
+        with pytest.raises(DependencyUnavailableError) as exc:
+            await validate_startup_dependencies()
+    assert "Invalid REDIS_URL scheme" in str(exc.value)
 
 
 async def test_production_refuses_to_start_without_a_database(production) -> None:
@@ -136,3 +153,11 @@ async def test_development_starts_without_redis() -> None:
     """`make run` must work on a laptop with no Redis — warn, do not crash."""
     with _db(True), _redis(False):
         await validate_startup_dependencies()  # must not raise
+
+
+async def test_development_starts_with_invalid_redis_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "redis_url", "invalid-url-scheme")
+    with _db(True), _redis(True):
+        await validate_startup_dependencies()  # must not raise in dev

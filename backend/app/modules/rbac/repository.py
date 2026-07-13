@@ -6,6 +6,12 @@ RBAC models. **Database operations only** — no business rules, no permission
 merging, no password/token handling. Methods run queries and flush writes; the
 **service owns the commit boundary**. Every query is org-scoped where the table
 carries ``org_id``.
+
+Phase 2 addition
+────────────────
+:class:`UserOrganizationMembershipRepository` — data access for the new
+``user_organization_memberships`` junction table.  All existing repositories
+and their public APIs are unchanged.
 """
 
 from __future__ import annotations
@@ -21,6 +27,7 @@ from app.modules.rbac.models import (
     UserBranchAccess,
     UserCustomPermission,
     UserDepartmentAccess,
+    UserOrganizationMembership,
     UserTemplateAssignment,
 )
 from app.shared.base.repository import BaseRepository
@@ -456,3 +463,133 @@ class UserDepartmentAccessRepository(BaseRepository[UserDepartmentAccess]):
         result = await self.session.execute(stmt.execution_options(synchronize_session=False))
         await self.session.flush()
         return int(result.rowcount or 0)
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 — Multi-organization membership
+# ---------------------------------------------------------------------------
+
+
+class UserOrganizationMembershipRepository(BaseRepository[UserOrganizationMembership]):
+    """Data-access operations for ``user_organization_memberships``.
+
+    This repository is the *only* layer allowed to query the new junction table.
+    All methods are read-biased (hot paths are ``get_org_ids_for_user`` and
+    ``get_membership``); writes happen during org-invitation and deactivation
+    flows (Phase 3 business logic).
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        super().__init__(session, UserOrganizationMembership)
+
+    # --- Membership lookup ---------------------------------------------------
+
+    async def get_membership(
+        self, user_id: int, org_id: int
+    ) -> UserOrganizationMembership | None:
+        """Return the membership row for ``(user_id, org_id)``, or ``None``."""
+        stmt = select(UserOrganizationMembership).where(
+            UserOrganizationMembership.user_id == user_id,
+            UserOrganizationMembership.org_id == org_id,
+        )
+        return (await self.session.execute(stmt.limit(1))).scalar_one_or_none()
+
+    async def is_active_member(self, user_id: int, org_id: int) -> bool:
+        """Return ``True`` iff the user has an active membership in ``org_id``."""
+        stmt = select(UserOrganizationMembership.id).where(
+            UserOrganizationMembership.user_id == user_id,
+            UserOrganizationMembership.org_id == org_id,
+            UserOrganizationMembership.is_active.is_(True),
+        )
+        return (await self.session.execute(stmt.limit(1))).first() is not None
+
+    # --- Org-ID list for a user (token issuance + /my-organizations) ---------
+
+    async def get_org_ids_for_user(
+        self, user_id: int, *, active_only: bool = True
+    ) -> list[int]:
+        """Return every ``org_id`` the user is a member of.
+
+        ``active_only=True`` (default) excludes deactivated memberships, which
+        is the correct behaviour for token issuance and the org-switch endpoint.
+        ``active_only=False`` is used by admin/audit queries.
+        """
+        stmt = select(UserOrganizationMembership.org_id).where(
+            UserOrganizationMembership.user_id == user_id,
+        )
+        if active_only:
+            stmt = stmt.where(UserOrganizationMembership.is_active.is_(True))
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def get_memberships_for_user(
+        self, user_id: int, *, active_only: bool = True
+    ) -> list[UserOrganizationMembership]:
+        """Return full membership rows for a user (for the ``/my-organizations`` response)."""
+        stmt = select(UserOrganizationMembership).where(
+            UserOrganizationMembership.user_id == user_id,
+        )
+        if active_only:
+            stmt = stmt.where(UserOrganizationMembership.is_active.is_(True))
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    # --- Org membership list (admin: who belongs to an org?) -----------------
+
+    async def get_memberships_for_org(
+        self, org_id: int, *, active_only: bool = True
+    ) -> list[UserOrganizationMembership]:
+        """Return all membership rows for ``org_id`` (admin enumeration)."""
+        stmt = select(UserOrganizationMembership).where(
+            UserOrganizationMembership.org_id == org_id,
+        )
+        if active_only:
+            stmt = stmt.where(UserOrganizationMembership.is_active.is_(True))
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def count_active_members(self, org_id: int) -> int:
+        """Return the number of active members in ``org_id``."""
+        stmt = (
+            select(func.count())
+            .select_from(UserOrganizationMembership)
+            .where(
+                UserOrganizationMembership.org_id == org_id,
+                UserOrganizationMembership.is_active.is_(True),
+            )
+        )
+        return int((await self.session.execute(stmt)).scalar_one())
+
+    # --- Writes (used by service layer in Phase 3) ---------------------------
+
+    async def create_membership(
+        self,
+        *,
+        user_id: int,
+        org_id: int,
+        is_primary: bool = False,
+        invited_by: int | None = None,
+    ) -> UserOrganizationMembership:
+        """Insert a new active membership row and return it (flushed, not committed)."""
+        return await self.create(
+            {
+                "user_id": user_id,
+                "org_id": org_id,
+                "is_primary": is_primary,
+                "is_active": True,
+                "invited_by": invited_by,
+            }
+        )
+
+    async def deactivate_membership(
+        self, user_id: int, org_id: int
+    ) -> UserOrganizationMembership | None:
+        """Set ``is_active=False`` on the row and flush.
+
+        Returns the updated row, or ``None`` if the membership did not exist.
+        The row is retained for audit purposes — it is never hard-deleted.
+        """
+        row = await self.get_membership(user_id, org_id)
+        if row is None:
+            return None
+        row.is_active = False
+        self.session.add(row)
+        await self.session.flush()
+        return row

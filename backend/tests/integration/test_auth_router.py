@@ -21,6 +21,7 @@ from app.modules.auth.schemas import (
     CurrentUserSchema,
     DataScopeSchema,
     LoginResponse,
+    OrganizationSummarySchema,
     RevokeAllSessionsResponse,
 )
 from tests.conftest import API_PREFIX
@@ -291,3 +292,78 @@ async def test_reset_password_not_in_auth(client: AsyncClient) -> None:
     reset = await client.post(f"{API_PREFIX}/auth/reset-password", json={"token": "t"})
     assert forgot.status_code == 404
     assert reset.status_code == 404
+
+
+# --- Multi-Organization Switching Endpoints (Phase 4) ----------------------
+async def test_get_my_organizations_returns_list(
+    client: AsyncClient,
+    mock_org_membership_service: AsyncMock,
+    auth_headers: dict[str, str],
+) -> None:
+    expected = [
+        OrganizationSummarySchema(
+            org_id=10, org_code="ACME", org_name="Acme Corp", is_primary=True, is_active=True
+        )
+    ]
+    mock_org_membership_service.list_organizations.return_value = expected
+
+    resp = await client.get(f"{API_PREFIX}/auth/my-organizations", headers=auth_headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["success"] is True
+    assert len(body["data"]) == 1
+    assert body["data"][0]["org_id"] == 10
+    assert body["data"][0]["org_code"] == "ACME"
+    mock_org_membership_service.list_organizations.assert_awaited_once_with(user_id=1)
+
+
+async def test_get_my_organizations_unauthorized(client: AsyncClient) -> None:
+    resp = await client.get(f"{API_PREFIX}/auth/my-organizations")
+    assert resp.status_code == 401
+
+
+async def test_switch_organization_success(
+    client: AsyncClient,
+    mock_org_switch_service: AsyncMock,
+    auth_headers: dict[str, str],
+) -> None:
+    mock_org_switch_service.switch_organization.return_value = AccessTokenResponse(
+        access_token="new-access-token",
+        token_type="bearer",
+        expires_in=900,
+        refresh_token=None,
+    )
+
+    resp = await client.post(
+        f"{API_PREFIX}/auth/switch-organization",
+        json={"org_id": 20},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["success"] is True
+    assert body["data"]["access_token"] == "new-access-token"
+    # Note: session_id is "10" by default in auth_headers/make_access_token fixture
+    mock_org_switch_service.switch_organization.assert_awaited_once_with(
+        user_id=1, target_org_id=20, session_id=10
+    )
+
+
+async def test_switch_organization_unauthorized(client: AsyncClient) -> None:
+    resp = await client.post(
+        f"{API_PREFIX}/auth/switch-organization",
+        json={"org_id": 20},
+    )
+    assert resp.status_code == 401
+
+
+async def test_switch_organization_validation_error(
+    client: AsyncClient,
+    auth_headers: dict[str, str],
+) -> None:
+    resp = await client.post(
+        f"{API_PREFIX}/auth/switch-organization",
+        json={"org_id": "not-an-int"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 422

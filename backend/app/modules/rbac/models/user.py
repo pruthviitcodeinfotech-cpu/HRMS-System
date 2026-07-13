@@ -104,6 +104,11 @@ class User(Base):
     department_access: Mapped[list["UserDepartmentAccess"]] = relationship(  # noqa: F821
         back_populates="user", foreign_keys="UserDepartmentAccess.user_id"
     )
+    # Multi-org: all organisation memberships for this user (Phase 2).
+    org_memberships: Mapped[list["UserOrganizationMembership"]] = relationship(  # noqa: F821
+        back_populates="user",
+        foreign_keys="UserOrganizationMembership.user_id",
+    )
 
 
 class UserSession(Base):

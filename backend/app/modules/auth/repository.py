@@ -5,6 +5,15 @@ login, session lifecycle (create / read / revoke / list), and the read queries
 needed to build the ``/auth/me`` authorization context. All rows are org-scoped
 where the owning table carries ``org_id``.
 
+Phase 2 change (Multi-Organization Switching)
+─────────────────────────────────────────────
+The four authorization-context methods (``get_template_permissions``,
+``get_custom_permissions``, ``get_branch_ids``, ``get_department_ids``) now
+accept an explicit ``org_id`` parameter.  This ensures that when a user switches
+to a non-primary organization the system resolves only the permissions and data
+scope that belong to that organization.  Existing callers pass ``user.org_id``
+— behaviour is identical to before.
+
 Design rules:
     * **Reuses the existing RBAC models** (``users`` / ``user_sessions`` and the
       permission/scope tables) — no new models, no schema changes.
@@ -25,6 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants.enums import SortOrder
 from app.modules.rbac.models import (
+    RightsTemplate,
     RightsTemplatePermission,
     User,
     UserBranchAccess,
@@ -33,6 +43,7 @@ from app.modules.rbac.models import (
     UserSession,
     UserTemplateAssignment,
 )
+from app.modules.employee.models.organization import Branch, Department, Organization
 from app.shared.base.repository import BaseRepository
 
 
@@ -65,39 +76,111 @@ class AuthUserRepository(BaseRepository[User]):
         self.session.add(user)
         await self.session.flush()
 
-    # --- Authorization context (for /auth/me) --------------------------------
-    async def get_template_permissions(self, user_id: int) -> list[RightsTemplatePermission]:
-        """Return the permission rows of the user's assigned rights template."""
+    # --- Authorization context (for /auth/me and org-switch) ----------------
+    async def get_template_permissions(
+        self, user_id: int, org_id: int
+    ) -> list[RightsTemplatePermission]:
+        """Return the permission rows of the user's assigned rights template.
+
+        The join through ``RightsTemplate`` ensures that only templates belonging
+        to ``org_id`` are considered.  This is a no-op for users with a single
+        org (their template's ``org_id`` always matches), but correctly scopes
+        the result when a user switches to a non-primary organization.
+        """
         stmt = (
             select(RightsTemplatePermission)
             .join(
                 UserTemplateAssignment,
                 UserTemplateAssignment.template_id == RightsTemplatePermission.template_id,
             )
-            .where(UserTemplateAssignment.user_id == user_id)
+            .join(
+                RightsTemplate,
+                RightsTemplate.id == RightsTemplatePermission.template_id,
+            )
+            .where(
+                UserTemplateAssignment.user_id == user_id,
+                RightsTemplate.org_id == org_id,
+                RightsTemplate.deleted_at.is_(None),
+            )
         )
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
-    async def get_custom_permissions(self, user_id: int) -> list[UserCustomPermission]:
-        """Return the user's per-user permission overrides."""
+    async def get_custom_permissions(
+        self, user_id: int, org_id: int  # noqa: ARG002  (reserved; custom perms have no org col)
+    ) -> list[UserCustomPermission]:
+        """Return the user's per-user permission overrides.
+
+        ``org_id`` is accepted for API symmetry with the other permission methods
+        and to support future org-scoped custom permissions.  It is not yet used
+        in the query because ``user_custom_permissions`` carries no ``org_id``
+        column — the field is reserved for Phase 3 schema extension.
+        """
         stmt = select(UserCustomPermission).where(UserCustomPermission.user_id == user_id)
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
-    async def get_branch_ids(self, user_id: int) -> list[int]:
-        """Return the branch ids the user may access (data scope)."""
-        stmt = select(UserBranchAccess.branch_id).where(UserBranchAccess.user_id == user_id)
-        result = await self.session.execute(stmt)
-        return list(result.scalars().all())
+    async def get_branch_ids(self, user_id: int, org_id: int) -> list[int]:
+        """Return the branch ids the user may access within ``org_id`` (data scope).
 
-    async def get_department_ids(self, user_id: int) -> list[int]:
-        """Return the department ids the user may access (data scope)."""
-        stmt = select(UserDepartmentAccess.department_id).where(
-            UserDepartmentAccess.user_id == user_id
+        The join through ``branches`` filters to only those branches that belong
+        to the active organization.  For single-org users this is equivalent to
+        the previous unscoped query; for multi-org users it prevents branches
+        from a different org appearing in the active-org token claims.
+        """
+        stmt = (
+            select(UserBranchAccess.branch_id)
+            .join(Branch, Branch.branch_id == UserBranchAccess.branch_id)
+            .where(
+                UserBranchAccess.user_id == user_id,
+                Branch.org_id == org_id,
+                Branch.is_deleted.is_(False),
+            )
         )
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
+
+    async def get_department_ids(self, user_id: int, org_id: int) -> list[int]:
+        """Return the department ids the user may access within ``org_id`` (data scope).
+
+        Same org-scoping rationale as :meth:`get_branch_ids`.
+        """
+        stmt = (
+            select(UserDepartmentAccess.department_id)
+            .join(Department, Department.dept_id == UserDepartmentAccess.department_id)
+            .where(
+                UserDepartmentAccess.user_id == user_id,
+                Department.org_id == org_id,
+                Department.is_deleted.is_(False),
+            )
+        )
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+
+class OrgRepository(BaseRepository[Organization]):
+    """Lightweight read access to ``organizations`` needed by the org-switch service.
+
+    This repository intentionally exposes only the lookup required for switching:
+    verifying that a target org exists and is active.  Full CRUD for organizations
+    lives in the Employee Management module.
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        super().__init__(session, Organization)
+
+    async def get_active_by_id(self, org_id: int) -> Organization | None:
+        """Return the org row if it exists, is active, and is not soft-deleted.
+
+        Returns ``None`` in all other cases so the caller can raise the
+        appropriate domain exception (``OrgInactiveException``).
+        """
+        stmt = select(Organization).where(
+            Organization.org_id == org_id,
+            Organization.is_active.is_(True),
+            Organization.is_deleted.is_(False),
+        )
+        return (await self.session.execute(stmt.limit(1))).scalar_one_or_none()
 
 
 class UserSessionRepository(BaseRepository[UserSession]):

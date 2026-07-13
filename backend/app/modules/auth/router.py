@@ -15,12 +15,15 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, Query, Request, Response, status
 
 from app.core.dependencies.pagination import PaginationParams, pagination_params
+from app.core.exceptions.base import AuthenticationException
 from app.core.middleware.request_context import get_request_id
 from app.modules.auth.dependencies import (
     AuthServiceDep,
     CurrentSessionIdDep,
     CurrentUserDep,
     OrgIdDep,
+    OrgMembershipServiceDep,
+    OrgSwitchServiceDep,
     enforce_login_rate_limit,
     enforce_refresh_rate_limit,
 )
@@ -30,9 +33,11 @@ from app.modules.auth.schemas import (
     LoginRequest,
     LoginResponse,
     LogoutRequest,
+    OrganizationSummarySchema,
     RefreshTokenRequest,
     RevokeAllSessionsResponse,
     SessionListResponse,
+    SwitchOrganizationRequest,
 )
 from app.shared.schemas.response import SuccessResponse, success_response
 
@@ -185,3 +190,47 @@ async def revoke_all_other_sessions(
         current_session_id=current_session_id,
     )
     return success_response(data=result, request_id=get_request_id())
+
+
+@router.get(
+    "/my-organizations",
+    response_model=SuccessResponse[list[OrganizationSummarySchema]],
+    status_code=status.HTTP_200_OK,
+    summary="Get User Organizations",
+    description="List all organizations the calling user is currently an active member of.",
+)
+async def get_my_organizations(
+    service: OrgMembershipServiceDep,
+    current_user: CurrentUserDep,
+) -> dict[str, Any]:
+    """Return all organizations the user holds active membership in."""
+    result = await service.list_organizations(user_id=current_user.user_id)
+    return success_response(data=result, request_id=get_request_id())
+
+
+@router.post(
+    "/switch-organization",
+    response_model=SuccessResponse[AccessTokenResponse],
+    status_code=status.HTTP_200_OK,
+    summary="Switch Active Organization",
+    description="Switch active organization context and issue a new access token.",
+)
+async def switch_organization(
+    payload: SwitchOrganizationRequest,
+    service: OrgSwitchServiceDep,
+    current_user: CurrentUserDep,
+    session_id: CurrentSessionIdDep,
+) -> dict[str, Any]:
+    """Switch organization context. Re-resolves permissions and issues a new access token."""
+    if session_id is None:
+        raise AuthenticationException("Session is required for organization switching.", code="AUTH_SESSION_REQUIRED")
+    result = await service.switch_organization(
+        user_id=current_user.user_id,
+        target_org_id=payload.org_id,
+        session_id=session_id,
+    )
+    return success_response(
+        data=result,
+        message="Organization switched successfully.",
+        request_id=get_request_id(),
+    )

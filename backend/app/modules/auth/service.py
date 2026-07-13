@@ -197,10 +197,13 @@ class AuthService(BaseService):
                 description=f"User '{user.name}' logged in (session #{session_row.id})",
             )
 
-        merged, branch_ids, department_ids = await self._resolve_authz(user.id)
+        merged, branch_ids, department_ids = await self._resolve_authz(
+            user.id, org_id=org_id
+        )
         access_token = self._issue_access_token(
             user=user,
             session_id=session_row.id,
+            org_id=org_id,
             merged=merged,
             branch_ids=branch_ids,
             department_ids=department_ids,
@@ -324,10 +327,13 @@ class AuthService(BaseService):
         if not user.is_active:
             raise AuthorizationException("This account is inactive.", code="AUTH_USER_INACTIVE")
 
-        merged, branch_ids, department_ids = await self._resolve_authz(user.id)
+        merged, branch_ids, department_ids = await self._resolve_authz(
+            user.id, org_id=user.org_id
+        )
         access_token = self._issue_access_token(
             user=user,
             session_id=session_row.id,
+            org_id=user.org_id,
             merged=merged,
             branch_ids=branch_ids,
             department_ids=department_ids,
@@ -395,14 +401,21 @@ class AuthService(BaseService):
         if not user.is_active:
             raise AuthorizationException("This account is inactive.", code="AUTH_USER_INACTIVE")
 
-        merged, branch_ids, department_ids = await self._resolve_authz(user.id)
+        merged, branch_ids, department_ids = await self._resolve_authz(
+            user.id, org_id=user.org_id
+        )
         permissions = [
             FeaturePermissionSchema(feature_key=key, **flags) for key, flags in merged.items()
         ]
+        from app.modules.auth.org_membership_service import OrganizationMembershipService
+        membership_svc = getattr(self, "membership_svc", None) or OrganizationMembershipService(self.session)
+        available_orgs = await membership_svc.list_organizations(user.id)
+
         return CurrentUserSchema(
             **AuthUserSchema.model_validate(user).model_dump(),
             permissions=permissions,
             data_scope=DataScopeSchema(branch_ids=branch_ids, department_ids=department_ids),
+            available_organizations=available_orgs,
         )
 
     # =====================================================================
@@ -491,14 +504,19 @@ class AuthService(BaseService):
     # Internal helpers
     # =====================================================================
     async def _resolve_authz(
-        self, user_id: int
+        self, user_id: int, *, org_id: int
     ) -> tuple[dict[str, dict[str, bool]], list[int], list[int]]:
-        """Resolve effective permissions (template ⊕ custom) and data scope."""
-        template_rows = await self.users.get_template_permissions(user_id)
-        custom_rows = await self.users.get_custom_permissions(user_id)
+        """Resolve effective permissions (template ⊕ custom) and data scope.
+
+        ``org_id`` is the *active* organization whose permissions should be
+        resolved.  For single-org users this is always ``user.org_id``; for a
+        user performing an org-switch it will be the target org.
+        """
+        template_rows = await self.users.get_template_permissions(user_id, org_id)
+        custom_rows = await self.users.get_custom_permissions(user_id, org_id)
         merged = self._merge_permissions(template_rows, custom_rows)
-        branch_ids = await self.users.get_branch_ids(user_id)
-        department_ids = await self.users.get_department_ids(user_id)
+        branch_ids = await self.users.get_branch_ids(user_id, org_id)
+        department_ids = await self.users.get_department_ids(user_id, org_id)
         return merged, branch_ids, department_ids
 
     @staticmethod
@@ -521,14 +539,20 @@ class AuthService(BaseService):
         *,
         user: Any,
         session_id: int,
+        org_id: int,
         merged: dict[str, dict[str, bool]],
         branch_ids: list[int],
         department_ids: list[int],
     ) -> str:
-        """Build a self-contained access token carrying identity + authorization."""
+        """Build a self-contained access token carrying identity + authorization.
+
+        ``org_id`` is passed explicitly rather than read from ``user.org_id`` so
+        that Phase 3 (org-switch) can issue a token for a non-primary org without
+        mutating the user object.
+        """
         permissions = [{"feature_key": key, **flags} for key, flags in merged.items()]
         extra_claims: dict[str, Any] = {
-            "org_id": user.org_id,
+            "org_id": org_id,
             "is_super_admin": user.is_super_admin,
             "is_active": user.is_active,
             "sid": str(session_id),

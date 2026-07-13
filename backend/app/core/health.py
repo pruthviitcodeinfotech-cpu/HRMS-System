@@ -62,13 +62,10 @@ async def check_redis() -> tuple[bool, str | None]:
 def redis_is_required() -> bool:
     """Whether Redis must be reachable for this deployment to be considered healthy.
 
-    Redis backs the login throttle and the account lockout. When it is unreachable those
-    controls fail open (deliberately — a Redis blip must not lock everyone out of the
-    product), which means brute-force protection silently disappears. That is acceptable
-    as a transient degradation and unacceptable as a steady state, so in production with
-    rate limiting enabled Redis is a hard requirement.
+    Redis backs the login throttle, account lockout, caching, and background jobs.
+    In production, if require_redis_in_production is enabled, Redis connectivity is strictly required.
     """
-    return settings.is_production and settings.rate_limit_enabled
+    return settings.is_production and settings.require_redis_in_production
 
 
 async def readiness() -> tuple[bool, dict[str, Any]]:
@@ -104,25 +101,57 @@ async def validate_startup_dependencies() -> None:
     Outside production this only warns: a developer running ``make run`` without Redis
     should get a working API, not a startup crash.
     """
+    _logger.info(
+        "redis_config_validation_started",
+        redis_url=settings.redis_url,
+        require_redis_in_production=settings.require_redis_in_production,
+        environment=settings.environment.value,
+    )
+
+    problems: list[str] = []
+
+    # 1. Validate configuration values
+    if not (settings.redis_url.startswith("redis://") or settings.redis_url.startswith("rediss://")):
+        problems.append(
+            f"Invalid REDIS_URL scheme: '{settings.redis_url}'. Must start with redis:// or rediss://"
+        )
+
     db_ok, db_err = await check_database()
     redis_ok, redis_err = await check_redis()
 
-    problems: list[str] = []
     if not db_ok:
         problems.append(f"database is unreachable ({db_err})")
-    if redis_is_required() and not redis_ok:
-        problems.append(
+
+    redis_required = redis_is_required()
+    if not redis_ok:
+        err_msg = (
             f"redis is unreachable ({redis_err}) and is required in production "
-            "because it backs login rate limiting and the account lockout"
+            "because require_redis_in_production is enabled"
+        )
+        if redis_required:
+            problems.append(err_msg)
+            _logger.error(
+                "redis_connectivity_check_failed",
+                error=redis_err,
+                required=True,
+                environment=settings.environment.value,
+            )
+        else:
+            _logger.warning(
+                "redis_connectivity_check_failed",
+                error=redis_err,
+                required=False,
+                environment=settings.environment.value,
+            )
+    else:
+        _logger.info(
+            "redis_connectivity_check_passed",
+            redis_url=settings.redis_url,
+            environment=settings.environment.value,
         )
 
     if not problems:
-        if not redis_ok:
-            _logger.warning(
-                "startup_dependency_degraded",
-                redis=redis_err,
-                impact="cache bypassed; login rate limiting disabled",
-            )
+        _logger.info("redis_config_validation_passed")
         return
 
     if settings.is_production:
@@ -130,4 +159,5 @@ async def validate_startup_dependencies() -> None:
         raise DependencyUnavailableError(
             "Refusing to start: " + "; ".join(problems) + "."
         )
+
     _logger.warning("startup_dependency_check_failed", problems=problems)

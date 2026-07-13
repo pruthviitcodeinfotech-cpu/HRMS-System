@@ -173,6 +173,37 @@ class CurrentUserSchema(AuthUserSchema):
 
     permissions: list[FeaturePermissionSchema] = Field(default_factory=list)
     data_scope: DataScopeSchema = Field(default_factory=DataScopeSchema)
+    available_organizations: list[OrganizationSummarySchema] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 — Multi-Organization Switching schemas
+# ---------------------------------------------------------------------------
+
+
+class OrganizationSummarySchema(BaseSchema):
+    """Compact summary of an organization returned by the org-listing endpoint.
+
+    Returned by ``GET /auth/my-organizations`` (Phase 4) and embedded in the
+    ``CurrentUserSchema.available_organizations`` list so the frontend can
+    render an org-picker without a second round-trip.
+    """
+
+    org_id: int = Field(..., description="Unique organization ID.")
+    org_code: str = Field(..., description="Short org code (e.g. 'ACME').")
+    org_name: str = Field(..., description="Full organization name.")
+    is_primary: bool = Field(
+        ..., description="True if this is the user's home (primary) organization."
+    )
+    is_active: bool = Field(
+        default=True, description="True if this membership is currently active."
+    )
+
+
+class SwitchOrganizationRequest(BaseSchema):
+    """Body for ``POST /auth/switch-organization``."""
+
+    org_id: int = Field(..., description="Target organization ID to switch into.")
 
 
 class LoginResponse(BaseSchema):
@@ -232,6 +263,9 @@ __all__ = [
     "FeaturePermissionSchema",
     "DataScopeSchema",
     "CurrentUserSchema",
+    # Phase 3 — multi-org switching
+    "OrganizationSummarySchema",
+    "SwitchOrganizationRequest",
     "LoginResponse",
     "SessionSchema",
     "SessionListResponse",
