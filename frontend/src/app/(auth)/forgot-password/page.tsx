@@ -69,7 +69,7 @@ export default function ForgotPasswordPage() {
           <div className="space-y-2">
             <h1 className="text-3xl font-extrabold text-[#1E293B]">Welcome!</h1>
             <p className="text-sm font-medium text-[#475569] max-w-md">
-              Managing Employee activities & attendance made simple with Petpooja
+              Managing Employee activities & attendance made simple with HRMS
             </p>
           </div>
         </div>
@@ -157,7 +157,7 @@ export default function ForgotPasswordPage() {
 
       {/* Footer Branding line */}
       <footer className="w-full text-center py-4 text-[10px] text-slate-400 font-semibold uppercase tracking-wider select-none">
-        Petpooja Payroll System &copy; {new Date().getFullYear()}
+        HRMS System &copy; {new Date().getFullYear()}
       </footer>
     </div>
   );
