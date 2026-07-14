@@ -67,6 +67,8 @@ services:
       context: .
       target: runtime
     command: python -m app.jobs.worker
+    healthcheck:
+      disable: true
     env_file:
       - path: .env
         required: false
