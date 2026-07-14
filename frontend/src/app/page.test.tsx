@@ -1,8 +1,13 @@
-import { render, screen } from "@testing-library/react";
+import { render } from "@testing-library/react";
 import Home from "./page";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
+import { redirect } from "next/navigation";
 
-test("renders page header and confirm setup text", () => {
+vi.mock("next/navigation", () => ({
+  redirect: vi.fn(),
+}));
+
+test("redirects to dashboard", () => {
   render(<Home />);
-  expect(screen.getByText("HRMS Project Initialized")).toBeInTheDocument();
+  expect(redirect).toHaveBeenCalledWith("/dashboard");
 });

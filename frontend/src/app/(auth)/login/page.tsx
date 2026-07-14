@@ -1,8 +1,258 @@
+"use client";
+
+import { useState } from "react";
+import Link from "next/link";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
+import { toast } from "sonner";
+import { Eye, EyeOff, ShieldAlert } from "lucide-react";
+import { Logo } from "@/components/ui/logo";
+import { LoginIllustration } from "@/components/ui/login-illustration";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { Alert } from "@/components/ui/alert";
+import { useLoading } from "@/providers/loading-provider";
+
+const loginSchema = z.object({
+  identifier: z
+    .string()
+    .min(1, "Email address or Mobile Number is required")
+    .refine((val) => {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      const phoneRegex = /^\d{10}$/;
+      return emailRegex.test(val) || phoneRegex.test(val);
+    }, "Please enter a valid email address or a 10-digit mobile number"),
+  password: z.string().optional(),
+});
+
+type LoginSchemaType = z.infer<typeof loginSchema>;
+
 export default function LoginPage() {
+  const { startLoading, stopLoading } = useLoading();
+  const [showPassword, setShowPassword] = useState(false);
+  const [isOTPMode, setIsOTPMode] = useState(true); // Default to OTP Mode matching the screenshot's single field
+  const [apiError, setApiError] = useState<string | null>(null);
+
+  const {
+    register,
+    handleSubmit,
+    formState: { errors },
+  } = useForm<LoginSchemaType>({
+    resolver: zodResolver(loginSchema),
+    defaultValues: {
+      identifier: "",
+      password: "",
+    },
+  });
+
+  const onSubmit = (data: LoginSchemaType) => {
+    setApiError(null);
+
+    // If Password mode is active but password is empty, trigger manually
+    if (!isOTPMode && !data.password) {
+      setApiError("Password is required in Password login mode.");
+      toast.error("Please enter your password.");
+      return;
+    }
+
+    startLoading();
+
+    // Mock API delay for verification of loading spinner
+    setTimeout(() => {
+      stopLoading();
+      // Mock validation results
+      if (data.identifier.includes("error")) {
+        setApiError("Invalid credentials. Please verify your Email or Phone Number.");
+        toast.error("Login failed. Check your inputs.");
+      } else {
+        toast.success("Welcome back! Loading your dashboard workspace...");
+        // Mock successful login redirection path
+        window.location.href = "/dashboard";
+      }
+    }, 1500);
+  };
+
   return (
-    <div className="text-center">
-      <h1 className="text-2xl font-bold mb-2">Login</h1>
-      <p className="text-sm text-foreground/75 mb-6">Sign in to your HRMS portal</p>
+    <div className="flex-1 flex flex-col justify-between p-6 md:p-12 min-h-screen">
+      {/* Top Header Logo */}
+      <header className="w-full flex items-center justify-between pb-6">
+        <Logo />
+      </header>
+
+      {/* Main Split Grid */}
+      <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-8 items-center max-w-7xl mx-auto w-full">
+        {/* Left column illustration & welcome */}
+        <div className="lg:col-span-7 flex flex-col items-center justify-center text-center space-y-6">
+          <LoginIllustration />
+          <div className="space-y-2">
+            <h1 className="text-3xl font-extrabold text-[#1E293B]">Welcome!</h1>
+            <p className="text-sm font-medium text-[#475569] max-w-md">
+              Managing Employee activities & attendance made simple with Petpooja
+            </p>
+          </div>
+        </div>
+
+        {/* Right column white login card */}
+        <div className="lg:col-span-5 flex justify-center w-full">
+          <div className="w-full max-w-[450px] bg-white rounded-2xl shadow-xl p-8 border border-slate-100 flex flex-col space-y-6">
+            <div className="text-left space-y-1">
+              <h2 className="text-xl font-bold text-slate-800 tracking-tight">
+                Login to Dashboard
+              </h2>
+              <div className="flex items-center justify-between">
+                <p className="text-xs text-slate-500 font-medium">
+                  Hello there, Let&apos;s get started.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsOTPMode(!isOTPMode);
+                    setApiError(null);
+                  }}
+                  className="text-xs text-[#0B85C9] font-bold hover:underline cursor-pointer"
+                >
+                  {isOTPMode ? "Use Password Login" : "Use OTP Login"}
+                </button>
+              </div>
+            </div>
+
+            {apiError && (
+              <Alert variant="destructive" className="animate-in fade-in">
+                <ShieldAlert className="h-4 w-4 mt-0.5 shrink-0" />
+                <div className="flex flex-col text-left">
+                  <span className="font-semibold text-xs">Authentication Error</span>
+                  <span className="text-[10px] opacity-90 mt-0.5">{apiError}</span>
+                </div>
+              </Alert>
+            )}
+
+            <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+              {/* Email / Mobile input */}
+              <Input
+                label="Email or Phone Number"
+                type="text"
+                placeholder="Enter Email address OR Mobile Number"
+                className="w-full border-slate-200 placeholder:text-slate-400 focus:border-[#0B85C9]"
+                {...register("identifier")}
+                error={errors.identifier?.message}
+              />
+
+              {/* Password field only shown in Password Mode */}
+              {!isOTPMode && (
+                <div className="relative">
+                  <Input
+                    label="Password"
+                    type={showPassword ? "text" : "password"}
+                    placeholder="Enter your password"
+                    className="w-full pr-10 border-slate-200 focus:border-[#0B85C9]"
+                    {...register("password")}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-[32px] text-slate-400 hover:text-slate-600 cursor-pointer"
+                    tabIndex={-1}
+                  >
+                    {showPassword ? (
+                      <EyeOff className="h-4.5 w-4.5" />
+                    ) : (
+                      <Eye className="h-4.5 w-4.5" />
+                    )}
+                  </button>
+                  <div className="flex justify-end mt-1">
+                    <Link
+                      href="/forgot-password"
+                      className="text-xs font-semibold text-[#0B85C9] hover:underline cursor-pointer"
+                    >
+                      Forgot Password?
+                    </Link>
+                  </div>
+                </div>
+              )}
+
+              {/* Login Action Button */}
+              <Button
+                type="submit"
+                className="w-full bg-[#0B85C9] hover:bg-[#0974b0] text-white font-semibold py-2.5 rounded-lg transition-all"
+              >
+                Login
+              </Button>
+            </form>
+
+            {/* OR Divider line */}
+            <div className="relative flex py-2 items-center">
+              <div className="flex-grow border-t border-slate-100"></div>
+              <span className="flex-shrink mx-4 text-[10px] text-slate-400 font-bold uppercase tracking-wider">
+                Or
+              </span>
+              <div className="flex-grow border-t border-slate-100"></div>
+            </div>
+
+            {/* Google Sign in Button */}
+            <Button
+              variant="outline"
+              type="button"
+              className="w-full flex items-center justify-center gap-2 border-slate-200 hover:bg-slate-50 text-slate-600 font-semibold py-2.5 rounded-lg transition-all"
+              onClick={() => {
+                toast.info("Google Authentication is a visual demo item.");
+              }}
+            >
+              {/* Google Colorful G Icon */}
+              <svg className="h-4 w-4" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <path
+                  d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                  fill="#4285F4"
+                />
+                <path
+                  d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                  fill="#34A853"
+                />
+                <path
+                  d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
+                  fill="#FBBC05"
+                />
+                <path
+                  d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
+                  fill="#EA4335"
+                />
+              </svg>
+              <span className="text-xs">Sign in with Google</span>
+            </Button>
+
+            {/* Terms Footer Text */}
+            <p className="text-[10px] text-slate-500 text-center font-medium leading-relaxed">
+              By logging in, you accept our{" "}
+              <a
+                href="#"
+                onClick={(e) => {
+                  e.preventDefault();
+                  toast.info("Terms and conditions document is a visual demo.");
+                }}
+                className="text-[#0B85C9] font-bold hover:underline"
+              >
+                Terms & Conditions
+              </a>{" "}
+              &{" "}
+              <a
+                href="#"
+                onClick={(e) => {
+                  e.preventDefault();
+                  toast.info("Service agreement document is a visual demo.");
+                }}
+                className="text-[#0B85C9] font-bold hover:underline"
+              >
+                Service Agreement
+              </a>
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Footer Branding line */}
+      <footer className="w-full text-center py-4 text-[10px] text-slate-400 font-semibold uppercase tracking-wider select-none">
+        Petpooja Payroll System &copy; {new Date().getFullYear()}
+      </footer>
     </div>
   );
 }
