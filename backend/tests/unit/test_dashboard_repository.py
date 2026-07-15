@@ -78,16 +78,20 @@ async def test_get_employee_distribution() -> None:
 @pytest.mark.asyncio
 async def test_get_attendance_summary() -> None:
     session = AsyncMock()
-    # 1 execute call returning list of (status, late_minutes, early_leaving_minutes)
-    session.execute.return_value = _mock_result_all(
-        [
-            ("present", 15, 0),
-            ("absent", None, None),
-            ("half_day", 0, 10),
-            ("on_leave", None, None),
-            (None, None, None),
-        ]
-    )
+    # 3 execute calls in total: attendance status, on break today, pending biometrics
+    session.execute.side_effect = [
+        _mock_result_all(
+            [
+                ("present", 15, 0),
+                ("absent", None, None),
+                ("half_day", 0, 10),
+                ("on_leave", None, None),
+                (None, None, None),
+            ]
+        ),
+        _mock_scalar(2),  # on_break_today
+        _mock_scalar(5),  # pending_biometrics
+    ]
 
     repo = DashboardRepository(session)
     res = await repo.get_attendance_summary(
@@ -102,7 +106,10 @@ async def test_get_attendance_summary() -> None:
         "late_arrivals": 1,
         "early_exits": 1,
         "not_marked": 1,
+        "on_break_today": 2,
+        "pending_biometrics": 5,
     }
+
 
 
 @pytest.mark.asyncio

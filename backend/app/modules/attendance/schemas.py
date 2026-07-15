@@ -225,6 +225,8 @@ class AttendanceLiveMessageSchema(BaseSchema):
     device_id: int | None = Field(default=None, description="Source device ID (if biometric).")
 
 
+from typing import Any
+
 class AttendanceDailySchema(BaseSchema):
     """Daily attendance summary representation (contract §11 / daily grid)."""
 
@@ -257,6 +259,22 @@ class AttendanceDailySchema(BaseSchema):
         default=False,
         description="Whether this day is locked from mutations (post-payroll).",
     )
+    is_on_break: bool = Field(
+        default=False,
+        description="Whether this employee is currently on break.",
+    )
+
+    employee_code: str | None = Field(default=None, description="Employee code.")
+    employee_name: str | None = Field(default=None, description="Employee name.")
+    department_name: str | None = Field(default=None, description="Department name.")
+    designation: str | None = Field(default=None, description="Designation name.")
+    first_punch: datetime | None = Field(default=None, description="First check-in timestamp.")
+    last_punch: datetime | None = Field(default=None, description="Last check-out timestamp.")
+    working_hours: float | None = Field(default=None, description="Total working hours.")
+    break_hours: float | None = Field(default=None, description="Total break hours.")
+    overtime: float | None = Field(default=None, description="Total overtime hours.")
+    shift_id: int | None = Field(default=None, description="ID of the shift.")
+    shift_name: str | None = Field(default=None, description="Name of the shift.")
 
     @field_validator("worked_minutes")
     @classmethod
@@ -272,6 +290,92 @@ class AttendanceDailySchema(BaseSchema):
     @classmethod
     def _validate_overtime_minutes(cls, value: int) -> int:
         return _validate_non_negative_minutes(value, "overtime_minutes")
+
+    @model_validator(mode="before")
+    @classmethod
+    def populate_employee_details(cls, data: Any) -> Any:
+        # Check if the data has attributes or keys
+        if isinstance(data, dict) or not hasattr(data, "__dict__"):
+            # If it's a dict or dict-like object
+            if isinstance(data, dict):
+                # If there's an employee dict/object in data
+                emp = data.get("employee")
+                if emp:
+                    if isinstance(emp, dict):
+                        data["employee_code"] = emp.get("employee_code")
+                        data["employee_name"] = emp.get("employee_name")
+                        data["department_name"] = emp.get("department", {}).get("dept_name") if isinstance(emp.get("department"), dict) else getattr(emp.get("department"), "dept_name", None)
+                        data["designation"] = emp.get("designation", {}).get("designation_name") if isinstance(emp.get("designation"), dict) else getattr(emp.get("designation"), "designation_name", None)
+                    else:
+                        data["employee_code"] = getattr(emp, "employee_code", None)
+                        data["employee_name"] = getattr(emp, "employee_name", None)
+                        dept = getattr(emp, "department", None)
+                        data["department_name"] = getattr(dept, "dept_name", None) if dept else None
+                        desg = getattr(emp, "designation", None)
+                        data["designation"] = getattr(desg, "designation_name", None) if desg else None
+                
+                if "first_punch" not in data:
+                    data["first_punch"] = data.get("first_punch_in") or data.get("first_in")
+                if "last_punch" not in data:
+                    data["last_punch"] = data.get("last_punch_out") or data.get("last_out")
+                
+                if "working_hours" not in data:
+                    working_mins = data.get("total_working_minutes") or data.get("worked_minutes") or 0
+                    data["working_hours"] = round(working_mins / 60.0, 2)
+                if "break_hours" not in data:
+                    break_mins = data.get("total_break_minutes") or data.get("break_minutes") or 0
+                    data["break_hours"] = round(break_mins / 60.0, 2)
+                if "overtime" not in data:
+                    ot_mins = data.get("overtime_minutes") or data.get("overtime") or 0
+                    data["overtime"] = round(ot_mins / 60.0, 2)
+                if "is_on_break" not in data:
+                    data["is_on_break"] = data.get("is_on_break", False)
+            if "shift_id" not in data:
+                data["shift_id"] = data.get("shift_id")
+            if "shift_name" not in data:
+                data["shift_name"] = data.get("shift_name")
+        else:
+            # It's an ORM object or similar.
+            emp = getattr(data, "employee", None)
+            if emp:
+                setattr(data, "employee_code", getattr(emp, "employee_code", None))
+                setattr(data, "employee_name", getattr(emp, "employee_name", None))
+                dept = getattr(emp, "department", None)
+                setattr(data, "department_name", getattr(dept, "dept_name", None) if dept else None)
+                desg = getattr(emp, "designation", None)
+                setattr(data, "designation", getattr(desg, "designation_name", None) if desg else None)
+            else:
+                setattr(data, "employee_code", getattr(data, "employee_code", None))
+                setattr(data, "employee_name", getattr(data, "employee_name", None))
+                setattr(data, "department_name", getattr(data, "department_name", None))
+                setattr(data, "designation", getattr(data, "designation", None))
+            
+            if getattr(data, "first_punch", None) is None:
+                setattr(data, "first_punch", getattr(data, "first_punch_in", None))
+            if getattr(data, "last_punch", None) is None:
+                setattr(data, "last_punch", getattr(data, "last_punch_out", None))
+            
+            if getattr(data, "working_hours", None) is None:
+                working_mins = getattr(data, "total_working_minutes", 0) or 0
+                setattr(data, "working_hours", round(working_mins / 60.0, 2))
+            
+            if getattr(data, "break_hours", None) is None:
+                break_mins = getattr(data, "total_break_minutes", 0) or 0
+                setattr(data, "break_hours", round(break_mins / 60.0, 2))
+            
+            if getattr(data, "overtime", None) is None:
+                ot_mins = getattr(data, "overtime_minutes", 0) or 0
+                setattr(data, "overtime", round(ot_mins / 60.0, 2))
+
+            if getattr(data, "is_on_break", None) is None:
+                setattr(data, "is_on_break", getattr(data, "is_on_break", False))
+                
+            if getattr(data, "shift_id", None) is None:
+                setattr(data, "shift_id", getattr(data, "shift_id", None))
+            if getattr(data, "shift_name", None) is None:
+                setattr(data, "shift_name", getattr(data, "shift_name", None))
+            
+        return data
 
 
 class AttendanceMonthlyDaySchema(BaseSchema):

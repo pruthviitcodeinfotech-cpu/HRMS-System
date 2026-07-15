@@ -130,24 +130,149 @@ class AttendanceDayRepository(BaseRepository[AttendanceDay]):
         page_size: int = 20,
     ) -> list[AttendanceDay]:
         """Return a filtered, paginated page of attendance days (newest date first)."""
-        stmt = self._search_stmt(
-            select(AttendanceDay),
-            org_id,
-            employee_id=employee_id,
-            date=date,
-            date_from=date_from,
-            date_to=date_to,
-            shift_id=shift_id,
-            branch_id=branch_id,
-            dept_id=dept_id,
-            branch_scope=branch_scope,
-        )
-        stmt = (
-            stmt.order_by(AttendanceDay.attendance_date.desc(), AttendanceDay.id.desc())
-            .offset((page - 1) * page_size)
-            .limit(page_size)
-        )
-        return list((await self.session.execute(stmt)).scalars().all())
+        if date is not None:
+            from sqlalchemy import and_, or_
+            from sqlalchemy.orm import joinedload
+            from app.modules.shift.models.assignment import ShiftAssignment
+            from app.modules.shift.models.shift import Shift
+            
+            stmt = select(Employee, AttendanceDay, Shift.shift_id, Shift.shift_name).outerjoin(
+                AttendanceDay,
+                and_(
+                    AttendanceDay.employee_id == Employee.employee_id,
+                    AttendanceDay.attendance_date == date,
+                    AttendanceDay.org_id == org_id,
+                )
+            ).outerjoin(
+                ShiftAssignment,
+                and_(
+                    ShiftAssignment.employee_id == Employee.employee_id,
+                    ShiftAssignment.org_id == org_id,
+                    ShiftAssignment.effective_from <= date,
+                )
+            ).outerjoin(
+                Shift,
+                and_(
+                    Shift.shift_id == ShiftAssignment.shift_id,
+                    Shift.org_id == org_id,
+                )
+            ).where(
+                Employee.org_id == org_id,
+                Employee.is_deleted.is_(False),
+                Employee.employment_status == "active",
+            )
+            
+            if employee_id is not None:
+                stmt = stmt.where(Employee.employee_id == employee_id)
+            if shift_id is not None:
+                stmt = stmt.where(or_(AttendanceDay.shift_id == shift_id, Shift.shift_id == shift_id))
+            if branch_id is not None:
+                stmt = stmt.where(Employee.master_branch_id == branch_id)
+            if dept_id is not None:
+                stmt = stmt.where(Employee.dept_id == dept_id)
+            if branch_scope is not None:
+                stmt = stmt.where(Employee.master_branch_id.in_(branch_scope))
+
+            stmt = stmt.options(
+                joinedload(Employee.department),
+                joinedload(Employee.designation),
+            )
+            
+            # Paginate and order by employee_id asc to be deterministic
+            stmt = (
+                stmt.order_by(Employee.employee_id.asc())
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+            )
+            
+            results = (await self.session.execute(stmt)).all()
+            
+            # Query who is currently on break on this date
+            break_subq = (
+                select(
+                    AttendancePunch.employee_id,
+                    func.max(AttendancePunch.sequence_no).label("max_seq"),
+                )
+                .where(
+                    AttendancePunch.org_id == org_id,
+                    AttendancePunch.is_valid.is_(True),
+                )
+                .group_by(AttendancePunch.employee_id)
+                .subquery()
+            )
+            
+            on_break_stmt = (
+                select(AttendancePunch.employee_id)
+                .join(
+                    break_subq,
+                    and_(
+                        AttendancePunch.employee_id == break_subq.c.employee_id,
+                        AttendancePunch.sequence_no == break_subq.c.max_seq,
+                    ),
+                )
+                .join(AttendanceDay, AttendancePunch.attendance_day_id == AttendanceDay.id)
+                .where(
+                    AttendanceDay.org_id == org_id,
+                    AttendanceDay.attendance_date == date,
+                    AttendancePunch.punch_type == "break_out",
+                    AttendancePunch.is_valid.is_(True),
+                )
+            )
+            on_break_employee_ids = set((await self.session.execute(on_break_stmt)).scalars().all())
+
+            attendance_days = []
+            for emp, att, sh_id, sh_name in results:
+                if att is not None:
+                    # Link relationships so model_validate can access them
+                    att.employee = emp
+                    att.is_on_break = emp.employee_id in on_break_employee_ids
+                    att.shift_id = sh_id or att.shift_id
+                    att.shift_name = sh_name
+                    attendance_days.append(att)
+                else:
+                    # Construct transient AttendanceDay
+                    transient_att = AttendanceDay(
+                        org_id=org_id,
+                        employee_id=emp.employee_id,
+                        attendance_date=date,
+                        status="not_marked",
+                        employee=emp,
+                        total_working_minutes=0,
+                        total_break_minutes=0,
+                        overtime_minutes=0,
+                        late_minutes=0,
+                        early_leaving_minutes=0,
+                        is_regularized=False,
+                    )
+                    transient_att.is_on_break = emp.employee_id in on_break_employee_ids
+                    transient_att.shift_id = sh_id
+                    transient_att.shift_name = sh_name
+                    attendance_days.append(transient_att)
+            return attendance_days
+        else:
+            stmt = self._search_stmt(
+                select(AttendanceDay),
+                org_id,
+                employee_id=employee_id,
+                date=date,
+                date_from=date_from,
+                date_to=date_to,
+                shift_id=shift_id,
+                branch_id=branch_id,
+                dept_id=dept_id,
+                branch_scope=branch_scope,
+            )
+            from sqlalchemy.orm import joinedload
+            stmt = stmt.options(
+                joinedload(AttendanceDay.employee).joinedload(Employee.department),
+                joinedload(AttendanceDay.employee).joinedload(Employee.designation),
+            )
+            stmt = (
+                stmt.order_by(AttendanceDay.attendance_date.desc(), AttendanceDay.id.desc())
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+            )
+            return list((await self.session.execute(stmt)).scalars().all())
 
     async def search_count(
         self,
@@ -163,19 +288,47 @@ class AttendanceDayRepository(BaseRepository[AttendanceDay]):
         branch_scope: list[int] | None = None,
     ) -> int:
         """Return the number of attendance days matching the same filters as :meth:`search`."""
-        stmt = self._search_stmt(
-            select(func.count(AttendanceDay.id)),
-            org_id,
-            employee_id=employee_id,
-            date=date,
-            date_from=date_from,
-            date_to=date_to,
-            shift_id=shift_id,
-            branch_id=branch_id,
-            dept_id=dept_id,
-            branch_scope=branch_scope,
-        )
-        return int((await self.session.execute(stmt)).scalar_one())
+        if date is not None:
+            from sqlalchemy import and_
+            
+            stmt = select(func.count(Employee.employee_id)).where(
+                Employee.org_id == org_id,
+                Employee.is_deleted.is_(False),
+                Employee.employment_status == "active",
+            )
+            if employee_id is not None:
+                stmt = stmt.where(Employee.employee_id == employee_id)
+            if shift_id is not None:
+                stmt = stmt.join(
+                    AttendanceDay,
+                    and_(
+                        AttendanceDay.employee_id == Employee.employee_id,
+                        AttendanceDay.attendance_date == date,
+                    )
+                ).where(AttendanceDay.shift_id == shift_id)
+            if branch_id is not None:
+                stmt = stmt.where(Employee.master_branch_id == branch_id)
+            if dept_id is not None:
+                stmt = stmt.where(Employee.dept_id == dept_id)
+            if branch_scope is not None:
+                stmt = stmt.where(Employee.master_branch_id.in_(branch_scope))
+                
+            return (await self.session.execute(stmt)).scalar() or 0
+        else:
+            stmt = self._search_stmt(
+                select(func.count(AttendanceDay.id)),
+                org_id,
+                employee_id=employee_id,
+                date=date,
+                date_from=date_from,
+                date_to=date_to,
+                shift_id=shift_id,
+                branch_id=branch_id,
+                dept_id=dept_id,
+                branch_scope=branch_scope,
+            )
+            return int((await self.session.execute(stmt)).scalar_one())
+
 
 
 class AttendancePunchRepository(BaseRepository[AttendancePunch]):

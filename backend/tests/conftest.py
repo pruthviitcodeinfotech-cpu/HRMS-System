@@ -21,7 +21,9 @@ from __future__ import annotations
 import math
 import time
 from collections.abc import AsyncIterator, Callable
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
+UTC = timezone.utc
+
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 

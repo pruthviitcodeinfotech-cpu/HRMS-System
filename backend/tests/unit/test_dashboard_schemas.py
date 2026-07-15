@@ -316,3 +316,33 @@ def test_notification_dashboard_response() -> None:
     assert notif_dash.unread_count == 5
     assert notif_dash.recent[0].title == "Welcome Notification"
     assert notif_dash.generated_at == _NOW
+
+
+def test_shift_summary_schemas() -> None:
+    from app.modules.dashboard.schemas import ShiftSummaryItemSchema, ShiftSummaryResponse
+
+    item = ShiftSummaryItemSchema(
+        shift_id=1,
+        shift_name="General Shift",
+        total_employees=10,
+        present=8,
+        late=2,
+        absent=1,
+        on_leave=1,
+    )
+    assert item.shift_id == 1
+    assert item.shift_name == "General Shift"
+    assert item.total_employees == 10
+    assert item.present == 8
+    assert item.late == 2
+    assert item.absent == 1
+    assert item.on_leave == 1
+
+    res = ShiftSummaryResponse(
+        shifts=[item],
+        generated_at=_NOW,
+    )
+    assert len(res.shifts) == 1
+    assert res.shifts[0].shift_name == "General Shift"
+    assert res.generated_at == _NOW
+

@@ -165,3 +165,76 @@ async def test_get_locked_periods() -> None:
     assert len(result) == 1
     assert result[0].lock_month == 2
     svc.locks.get_locked_periods.assert_called_once_with(_ORG_ID)
+
+
+def test_attendance_daily_schema_new_fields() -> None:
+    from app.modules.attendance.schemas import AttendanceDailySchema
+
+    # 1. Test validation from dict
+    data_dict = {
+        "employee_id": 1,
+        "status": "present",
+        "first_punch_in": datetime.datetime(2026, 7, 15, 9, 0, 0),
+        "last_punch_out": datetime.datetime(2026, 7, 15, 18, 0, 0),
+        "total_working_minutes": 540,
+        "total_break_minutes": 60,
+        "overtime_minutes": 30,
+        "is_locked": False,
+        "employee": {
+            "employee_code": "EMP001",
+            "employee_name": "John Doe",
+            "department": {
+                "dept_name": "Engineering"
+            },
+            "designation": {
+                "designation_name": "Software Engineer"
+            }
+        }
+    }
+    schema = AttendanceDailySchema.model_validate(data_dict)
+    assert schema.employee_code == "EMP001"
+    assert schema.employee_name == "John Doe"
+    assert schema.department_name == "Engineering"
+    assert schema.designation == "Software Engineer"
+    assert schema.first_punch == datetime.datetime(2026, 7, 15, 9, 0, 0)
+    assert schema.last_punch == datetime.datetime(2026, 7, 15, 18, 0, 0)
+    assert schema.working_hours == 9.0
+    assert schema.break_hours == 1.0
+    assert schema.overtime == 0.5
+
+    # 2. Test validation from ORM-like object (using SimpleNamespace)
+    class DummyRelation:
+        def __init__(self, **kwargs):
+            for k, v in kwargs.items():
+                setattr(self, k, v)
+
+    dummy_dept = DummyRelation(dept_name="Sales")
+    dummy_desg = DummyRelation(designation_name="Executive")
+    dummy_employee = DummyRelation(
+        employee_code="EMP002",
+        employee_name="Jane Smith",
+        department=dummy_dept,
+        designation=dummy_desg
+    )
+    dummy_day = DummyRelation(
+        employee_id=2,
+        status="present",
+        first_punch_in=datetime.datetime(2026, 7, 15, 9, 30, 0),
+        last_punch_out=datetime.datetime(2026, 7, 15, 17, 30, 0),
+        total_working_minutes=480,
+        total_break_minutes=30,
+        overtime_minutes=0,
+        is_locked=True,
+        employee=dummy_employee
+    )
+    schema_orm = AttendanceDailySchema.model_validate(dummy_day)
+    assert schema_orm.employee_code == "EMP002"
+    assert schema_orm.employee_name == "Jane Smith"
+    assert schema_orm.department_name == "Sales"
+    assert schema_orm.designation == "Executive"
+    assert schema_orm.first_punch == datetime.datetime(2026, 7, 15, 9, 30, 0)
+    assert schema_orm.last_punch == datetime.datetime(2026, 7, 15, 17, 30, 0)
+    assert schema_orm.working_hours == 8.0
+    assert schema_orm.break_hours == 0.5
+    assert schema_orm.overtime == 0.0
+

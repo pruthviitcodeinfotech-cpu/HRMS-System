@@ -35,6 +35,8 @@ from app.modules.dashboard.schemas import (
     PayrollDashboardResponse,
     SettlementDashboardResponse,
     WidgetsMetadataResponse,
+    ShiftSummaryResponse,
+    PendingBiometricsResponse,
 )
 from app.shared.schemas.response import SuccessResponse, success_response
 
@@ -193,6 +195,64 @@ async def get_attendance_dashboard(
     """Retrieve daily attendance statuses plus historical daily trend logs."""
     res = await service.get_attendance_dashboard(org_id=org_id, user=current_user, target_date=date)
     return _ok(res)
+
+
+@router.get(
+    "/shifts",
+    response_model=SuccessResponse[ShiftSummaryResponse],
+    summary="Dashboard Shift Summary",
+    description="Today's attendance counts grouped by shift.",
+    dependencies=[Depends(require_permission(_FEATURE_KEY, A.READ))],
+)
+async def get_shift_summary(
+    service: DashboardServiceDep,
+    org_id: OrgIdDep,
+    current_user: CurrentUserDep,
+    date: Annotated[
+        datetime.date | None,
+        Query(description="Target date for shift attendance metrics. Defaults to today."),
+    ] = None,
+) -> dict[str, Any]:
+    """Retrieve daily attendance metrics grouped by shift."""
+    res = await service.get_shift_summary(org_id=org_id, user=current_user, target_date=date)
+    return _ok(res)
+
+
+@router.get(
+    "/biometrics/pending",
+    response_model=SuccessResponse[PendingBiometricsResponse],
+    summary="Dashboard Pending Biometrics Employees",
+    description="List of employees whose biometric enrollment is pending.",
+    dependencies=[Depends(require_permission(_FEATURE_KEY, A.READ))],
+)
+async def get_pending_biometrics_employees(
+    service: DashboardServiceDep,
+    org_id: OrgIdDep,
+    current_user: CurrentUserDep,
+    search: Annotated[
+        str | None,
+        Query(description="Search by employee name or code"),
+    ] = None,
+    page: Annotated[
+        int,
+        Query(ge=1, description="1-based page number"),
+    ] = 1,
+    page_size: Annotated[
+        int,
+        Query(ge=1, le=100, description="Items per page"),
+    ] = 20,
+) -> dict[str, Any]:
+    """Retrieve daily attendance metrics grouped by shift."""
+    res = await service.get_pending_biometrics_employees(
+        org_id=org_id,
+        user=current_user,
+        search=search,
+        page=page,
+        page_size=page_size,
+    )
+    return _ok(res)
+
+
 
 
 @router.get(

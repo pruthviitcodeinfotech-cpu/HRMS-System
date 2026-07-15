@@ -993,3 +993,151 @@ async def test_all_cache_hits(dashboard_service, mock_cache) -> None:
 
     res_chart6 = await dashboard_service.get_branch_attendance_chart(org_id=1, user=user)
     assert res_chart6.labels == ["A"]
+
+
+@pytest.mark.asyncio
+async def test_dashboard_service_new_kpis(dashboard_service, mock_cache) -> None:
+    mock_get, mock_set = mock_cache
+    user = _principal(
+        is_super_admin=False,
+        perms=[
+            _perm("employee", can_read=True),
+            _perm("attendance", can_read=True),
+            _perm("leave_request", can_read=True),
+            _perm("approval", can_read=True),
+            _perm("payroll_record", can_read=True),
+            _perm("settlement", can_read=True),
+            _perm("device", can_read=True),
+        ],
+    )
+
+    dashboard_service.repo.get_employee_summary.return_value = {
+        "total_employees": 100,
+        "active_employees": 95,
+        "new_employees": 5,
+    }
+    dashboard_service.repo.get_attendance_summary.return_value = {
+        "present_today": 80,
+        "absent_today": 10,
+        "late_arrivals": 5,
+        "early_exits": 2,
+        "on_leave_today": 3,
+        "on_break_today": 12,
+        "pending_biometrics": 7,
+    }
+    dashboard_service.repo.get_leave_summary.return_value = {"total_requests": 10, "pending": 2}
+    dashboard_service.repo.get_pending_approvals_summary.return_value = {"pending_approvals": 4}
+    dashboard_service.repo.get_payroll_summary.return_value = {"status": "draft"}
+    dashboard_service.repo.get_settlement_summary.return_value = {
+        "active_loans_advances": 2,
+        "closed_loans_advances": 1,
+        "total_outstanding_loans_advances": Decimal("1000.00"),
+        "total_outstanding_arrears": Decimal("500.00"),
+    }
+    dashboard_service.repo.get_hardware_dashboard.return_value = {
+        "online_devices": 4,
+        "offline_devices": 1,
+    }
+    dashboard_service.repo.get_notification_dashboard.return_value = {
+        "unread_count": 3,
+        "recent": [],
+    }
+
+    res_kpis = await dashboard_service.get_kpis(org_id=1, user=user)
+    assert res_kpis.on_break_today == 12
+    assert res_kpis.pending_biometrics == 7
+
+    res_summary = await dashboard_service.get_summary(org_id=1, user=user)
+    assert res_summary.attendance.on_break_today == 12
+    assert res_summary.attendance.pending_biometrics == 7
+
+
+@pytest.mark.asyncio
+async def test_get_shift_summary_success(dashboard_service, mock_cache) -> None:
+    user = _principal(is_super_admin=True)
+    dashboard_service.repo.get_shift_attendance_summary.return_value = [
+        {
+            "shift_id": 1,
+            "shift_name": "Day Shift",
+            "total_employees": 20,
+            "present": 15,
+            "late": 3,
+            "absent": 4,
+            "on_leave": 1,
+        }
+    ]
+
+    res = await dashboard_service.get_shift_summary(org_id=1, user=user)
+    assert len(res.shifts) == 1
+    assert res.shifts[0].shift_name == "Day Shift"
+    assert res.shifts[0].total_employees == 20
+    assert res.shifts[0].present == 15
+    assert res.shifts[0].late == 3
+    assert res.shifts[0].absent == 4
+    assert res.shifts[0].on_leave == 1
+    dashboard_service.repo.get_shift_attendance_summary.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_get_shift_summary_unauthorized(dashboard_service) -> None:
+    user = _principal(is_super_admin=False, perms=[])
+    with pytest.raises(AuthorizationException):
+        await dashboard_service.get_shift_summary(org_id=1, user=user)
+
+
+@pytest.mark.asyncio
+async def test_get_pending_biometrics_employees_success(dashboard_service) -> None:
+    user = _principal(
+        is_super_admin=False,
+        perms=[_perm("employee", can_read=True)],
+        branch_ids=(1, 2),
+        department_ids=(3,),
+    )
+    dashboard_service.repo.get_pending_biometrics_employees.return_value = (
+        [
+            {
+                "employee_id": 101,
+                "employee_code": "EMP001",
+                "employee_name": "John Doe",
+                "department": "Engineering",
+                "designation": "Software Engineer",
+                "branch": "HQ",
+                "biometric_status": "pending",
+                "enrollment_status": "pending",
+                "created_at": datetime.datetime(2026, 1, 1),
+            }
+        ],
+        1,
+    )
+
+    res = await dashboard_service.get_pending_biometrics_employees(
+        org_id=1,
+        user=user,
+        search="John",
+        page=1,
+        page_size=10,
+    )
+    assert len(res.items) == 1
+    assert res.items[0].employee_id == 101
+    assert res.items[0].employee_code == "EMP001"
+    assert res.items[0].biometric_status == "pending"
+    assert res.pagination.total_records == 1
+    assert res.pagination.page == 1
+    dashboard_service.repo.get_pending_biometrics_employees.assert_called_once_with(
+        org_id=1,
+        branch_ids=[1, 2],
+        dept_ids=[3],
+        search="John",
+        page=1,
+        page_size=10,
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_pending_biometrics_employees_unauthorized(dashboard_service) -> None:
+    user = _principal(is_super_admin=False, perms=[])
+    with pytest.raises(AuthorizationException):
+        await dashboard_service.get_pending_biometrics_employees(org_id=1, user=user)
+
+
+

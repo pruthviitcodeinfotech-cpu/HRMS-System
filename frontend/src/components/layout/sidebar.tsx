@@ -1,84 +1,64 @@
 "use client";
 
 import { useSidebarStore } from "@/lib/stores/sidebar-store";
-import { useThemeStore } from "@/lib/stores/theme-store";
 import { NavigationMenu } from "./navigation-menu";
-import { Menu, LogOut, Sun, Moon } from "lucide-react";
-import { useAuth } from "@/features/auth/hooks";
+import { HelpCircle, MessageSquare, ExternalLink } from "lucide-react";
 
 export const Sidebar = () => {
-  const { isOpen, toggle } = useSidebarStore();
-  const { theme, toggleTheme } = useThemeStore();
-  const { logout, user } = useAuth();
+  const { isOpen } = useSidebarStore();
 
   return (
     <aside
-      className={`h-screen border-r border-border bg-card flex flex-col justify-between transition-all duration-300 ease-in-out shrink-0 ${
-        isOpen ? "w-64" : "w-18"
+      className={`h-full border-r border-border bg-card flex flex-col justify-between transition-all duration-300 ease-in-out shrink-0 z-10 ${
+        isOpen ? "w-64" : "w-16"
       }`}
     >
-      <div>
-        {/* Top Header Logo */}
-        <div className="h-16 flex items-center justify-between px-4 border-b border-border">
-          {isOpen && (
-            <div className="flex items-center space-x-2">
-              <div className="h-7 w-7 rounded-md bg-primary flex items-center justify-center text-primary-foreground font-extrabold text-sm">
-                H
-              </div>
-              <span className="font-bold text-base tracking-tight text-foreground">
-                HRMS System
-              </span>
-            </div>
-          )}
-          {!isOpen && (
-            <div className="h-7 w-7 rounded-md bg-primary flex items-center justify-center text-primary-foreground font-extrabold text-sm mx-auto">
-              H
-            </div>
-          )}
-          {isOpen && (
-            <button
-              onClick={toggle}
-              className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-              aria-label="Collapse Sidebar"
-            >
-              <Menu className="h-5 w-5" />
-            </button>
-          )}
-        </div>
-
-        {/* Navigation Section */}
+      <div className="flex-1 flex flex-col overflow-y-auto">
+        {/* Navigation Menu */}
         <NavigationMenu sidebarOpen={isOpen} />
       </div>
 
-      {/* Footer controls & Profile */}
-      <div className="p-3 border-t border-border space-y-2">
-        {isOpen && user && (
-          <div className="px-2 py-1.5 rounded-lg bg-muted/50 mb-2">
-            <p className="text-xs font-semibold text-foreground truncate">{user.email}</p>
-            <p className="text-[10px] text-muted-foreground truncate">{user.roles.join(", ")}</p>
-          </div>
-        )}
-
-        <div className="flex items-center gap-1">
-          <button
-            onClick={toggleTheme}
-            className="flex-1 flex items-center justify-center gap-2 p-2 rounded-lg border border-border hover:bg-muted text-xs font-semibold text-foreground transition-colors cursor-pointer"
-            title="Toggle theme"
-          >
-            {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-            {isOpen && <span>Theme</span>}
-          </button>
-
-          <button
-            onClick={() => {
-              void logout();
-            }}
-            className="flex items-center justify-center p-2 rounded-lg border border-destructive/20 hover:bg-destructive/10 text-destructive transition-colors cursor-pointer"
-            title="Sign out"
-          >
-            <LogOut className="h-4 w-4" />
-          </button>
+      {/* Bottom Actions matching Petpooja style */}
+      <div className="p-3 border-t border-border flex flex-col space-y-2 bg-slate-50/20 dark:bg-slate-900/10 select-none">
+        {/* Call support */}
+        <div
+          className={`flex items-center text-slate-500 dark:text-slate-400 rounded-lg transition-all ${
+            isOpen ? "px-2 py-1.5 space-x-2 text-[10px]" : "p-2.5 justify-center"
+          }`}
+          title="Call Support: 07969223344"
+        >
+          <HelpCircle className="h-4.5 w-4.5 shrink-0 text-slate-400 dark:text-slate-500" />
+          {isOpen && (
+            <span className="truncate font-medium">
+              Call Us On:{" "}
+              <a
+                href="tel:07969223344"
+                className="text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 underline font-bold cursor-pointer"
+              >
+                07969223344
+              </a>
+            </span>
+          )}
         </div>
+
+        {/* WhatsApp support */}
+        <a
+          href="https://wa.me/07969223344"
+          target="_blank"
+          rel="noopener noreferrer"
+          className={`flex items-center text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/80 rounded-lg transition-all cursor-pointer ${
+            isOpen ? "px-2 py-1.5 space-x-2 text-[10px]" : "p-2.5 justify-center"
+          }`}
+          title="Contact on Whatsapp"
+        >
+          <MessageSquare className="h-4.5 w-4.5 shrink-0 text-emerald-500 fill-emerald-50/50 dark:fill-emerald-950/20" />
+          {isOpen && (
+            <div className="flex items-center space-x-1.5 min-w-0">
+              <span className="font-medium text-slate-600 dark:text-slate-300 truncate">Contact on Whatsapp</span>
+              <ExternalLink className="h-2.5 w-2.5 text-blue-500 dark:text-blue-400 shrink-0" />
+            </div>
+          )}
+        </a>
       </div>
     </aside>
   );

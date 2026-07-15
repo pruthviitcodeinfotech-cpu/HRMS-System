@@ -482,3 +482,84 @@ async def test_unauthorized_missing_token(
 ) -> None:
     resp = await dashboard_client.get(f"{API_PREFIX}/dashboard/summary")
     assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_get_shift_summary_endpoint(
+    dashboard_client: AsyncClient,
+    mock_dashboard_service: AsyncMock,
+    super_admin_headers: dict[str, str],
+) -> None:
+    from app.modules.dashboard.schemas import ShiftSummaryResponse
+
+    mock_dashboard_service.get_shift_summary.return_value = ShiftSummaryResponse(
+        shifts=[
+            {
+                "shift_id": 1,
+                "shift_name": "Day Shift",
+                "total_employees": 10,
+                "present": 8,
+                "late": 1,
+                "absent": 2,
+                "on_leave": 0,
+            }
+        ]
+    )
+    resp = await dashboard_client.get(
+        f"{API_PREFIX}/dashboard/shifts", headers=super_admin_headers
+    )
+    assert resp.status_code == 200
+    assert "data" in resp.json()
+    assert resp.json()["data"]["shifts"][0]["shift_name"] == "Day Shift"
+    mock_dashboard_service.get_shift_summary.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_get_pending_biometrics_employees_endpoint(
+    dashboard_client: AsyncClient,
+    mock_dashboard_service: AsyncMock,
+    super_admin_headers: dict[str, str],
+) -> None:
+    from app.modules.dashboard.schemas import PendingBiometricsResponse
+    from unittest.mock import ANY
+
+    mock_dashboard_service.get_pending_biometrics_employees.return_value = PendingBiometricsResponse(
+        items=[
+            {
+                "employee_id": 101,
+                "employee_code": "EMP001",
+                "employee_name": "John Doe",
+                "department": "Engineering",
+                "designation": "Software Engineer",
+                "branch": "HQ",
+                "biometric_status": "pending",
+                "enrollment_status": "pending",
+                "created_at": datetime.datetime(2026, 1, 1),
+            }
+        ],
+        pagination={
+            "page": 1,
+            "page_size": 20,
+            "total_records": 1,
+            "total_pages": 1,
+            "has_next": False,
+            "has_previous": False,
+        }
+    )
+    resp = await dashboard_client.get(
+        f"{API_PREFIX}/dashboard/biometrics/pending?search=John&page=1&page_size=20",
+        headers=super_admin_headers
+    )
+    assert resp.status_code == 200
+    assert "data" in resp.json()
+    assert len(resp.json()["data"]["items"]) == 1
+    assert resp.json()["data"]["items"][0]["employee_name"] == "John Doe"
+    mock_dashboard_service.get_pending_biometrics_employees.assert_called_once_with(
+        org_id=1,
+        user=ANY,
+        search="John",
+        page=1,
+        page_size=20,
+    )
+
+

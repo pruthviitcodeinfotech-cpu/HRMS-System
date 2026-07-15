@@ -219,6 +219,57 @@ class DashboardRepository(BaseRepository[Employee]):
                 if early_mins and early_mins > 0:
                     early += 1
 
+        # Calculate on_break_today
+        from app.modules.attendance.models import AttendancePunch
+        break_subq = (
+            select(
+                AttendancePunch.attendance_day_id,
+                func.max(AttendancePunch.sequence_no).label("max_seq"),
+            )
+            .where(AttendancePunch.is_valid.is_(True))
+            .group_by(AttendancePunch.attendance_day_id)
+            .subquery()
+        )
+
+        break_stmt = (
+            select(func.count(AttendancePunch.id))
+            .join(
+                break_subq,
+                and_(
+                    AttendancePunch.attendance_day_id == break_subq.c.attendance_day_id,
+                    AttendancePunch.sequence_no == break_subq.c.max_seq,
+                ),
+            )
+            .join(AttendanceDay, AttendancePunch.attendance_day_id == AttendanceDay.id)
+            .join(Employee, AttendanceDay.employee_id == Employee.employee_id)
+            .where(
+                AttendanceDay.org_id == org_id,
+                AttendanceDay.attendance_date == target_date,
+                AttendancePunch.punch_type == "break_out",
+                AttendancePunch.is_valid.is_(True),
+                *emp_filter,
+            )
+        )
+        break_res = await self.session.execute(break_stmt)
+        on_break_today = break_res.scalar() or 0
+
+        # Calculate pending_biometrics
+        from app.modules.employee.models.satellites import EmployeeBiometric
+        biometric_stmt_in = (
+            select(EmployeeBiometric.employee_id)
+            .where(EmployeeBiometric.is_deleted.is_(False))
+        )
+
+        pending_stmt = (
+            select(func.count(Employee.employee_id))
+            .where(
+                ~Employee.employee_id.in_(biometric_stmt_in),
+                *emp_filter,
+            )
+        )
+        pending_res = await self.session.execute(pending_stmt)
+        pending_biometrics = pending_res.scalar() or 0
+
         return {
             "present_today": present,
             "absent_today": absent,
@@ -227,7 +278,126 @@ class DashboardRepository(BaseRepository[Employee]):
             "late_arrivals": late,
             "early_exits": early,
             "not_marked": not_marked,
+            "on_break_today": on_break_today,
+            "pending_biometrics": pending_biometrics,
         }
+
+    async def get_shift_attendance_summary(
+        self,
+        org_id: int,
+        target_date: datetime.date,
+        branch_ids: list[int] | None = None,
+        dept_ids: list[int] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Fetch target date's attendance counts grouped by shift."""
+        from app.modules.shift.models import Shift, ShiftAssignment
+
+        # 1. Fetch all non-deleted shifts in the organization
+        shifts_stmt = select(Shift).where(
+            Shift.org_id == org_id,
+            Shift.is_deleted.is_(False),
+        )
+        shifts_res = await self.session.execute(shifts_stmt)
+        shifts = shifts_res.scalars().all()
+
+        if not shifts:
+            return []
+
+        # 2. Build filters for employees
+        emp_filter = [
+            Employee.org_id == org_id,
+            Employee.is_deleted.is_(False),
+            Employee.employment_status == "active",
+        ]
+        if branch_ids:
+            emp_filter.append(Employee.master_branch_id.in_(branch_ids))
+        if dept_ids:
+            emp_filter.append(Employee.dept_id.in_(dept_ids))
+
+        # 3. Get total employees assigned to each shift on target_date
+        assignment_stmt = (
+            select(
+                ShiftAssignment.shift_id,
+                func.count(ShiftAssignment.employee_id).label("total_employees")
+            )
+            .join(Employee, Employee.employee_id == ShiftAssignment.employee_id)
+            .where(
+                ShiftAssignment.org_id == org_id,
+                ShiftAssignment.effective_from <= target_date,
+                (ShiftAssignment.effective_to.is_(None) | (ShiftAssignment.effective_to >= target_date)),
+                *emp_filter
+            )
+            .group_by(ShiftAssignment.shift_id)
+        )
+        assignments_res = await self.session.execute(assignment_stmt)
+        assignments_map = {row.shift_id: row.total_employees for row in assignments_res.all()}
+
+        # 4. Get attendance statistics from AttendanceDay for target_date grouped by shift_id
+        attendance_stmt = (
+            select(
+                AttendanceDay.shift_id,
+                AttendanceDay.status,
+                AttendanceDay.late_minutes,
+                func.count(AttendanceDay.id).label("count")
+            )
+            .join(Employee, Employee.employee_id == AttendanceDay.employee_id)
+            .where(
+                AttendanceDay.org_id == org_id,
+                AttendanceDay.attendance_date == target_date,
+                *emp_filter
+            )
+            .group_by(AttendanceDay.shift_id, AttendanceDay.status, AttendanceDay.late_minutes)
+        )
+        attendance_res = await self.session.execute(attendance_stmt)
+        attendance_rows = attendance_res.all()
+
+        # Aggregate attendance counts per shift
+        stats_map = {}
+        for row in attendance_rows:
+            sid = row.shift_id
+            if sid not in stats_map:
+                stats_map[sid] = {"present": 0, "late": 0, "absent": 0, "on_leave": 0}
+            
+            status = row.status
+            late_mins = row.late_minutes or 0
+            count = row.count
+
+            if status in ("present", "half_day"):
+                stats_map[sid]["present"] += count
+                if late_mins > 0:
+                    stats_map[sid]["late"] += count
+            elif status == "absent":
+                stats_map[sid]["absent"] += count
+            elif status == "on_leave":
+                stats_map[sid]["on_leave"] += count
+
+        # 5. Combine and construct response list
+        results = []
+        for shift in shifts:
+            sid = shift.shift_id
+            total_emp = assignments_map.get(sid, 0)
+            stats = stats_map.get(sid, {"present": 0, "late": 0, "absent": 0, "on_leave": 0})
+            
+            present = stats["present"]
+            late = stats["late"]
+            db_absent = stats["absent"]
+            on_leave = stats["on_leave"]
+
+            # Employees assigned to shift but not marked are considered absent
+            unmarked = max(0, total_emp - (present + db_absent + on_leave))
+            absent = db_absent + unmarked
+
+            results.append({
+                "shift_id": sid,
+                "shift_name": shift.shift_name,
+                "total_employees": total_emp,
+                "present": present,
+                "late": late,
+                "absent": absent,
+                "on_leave": on_leave,
+            })
+
+        return results
 
     async def get_attendance_trend(
         self,
@@ -973,3 +1143,88 @@ class DashboardRepository(BaseRepository[Employee]):
             ],
             "generated_at": datetime.datetime.now(datetime.timezone.utc),  # noqa: UP017
         }
+
+    async def get_pending_biometrics_employees(
+        self,
+        org_id: int,
+        branch_ids: list[int] | None = None,
+        dept_ids: list[int] | None = None,
+        search: str | None = None,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Fetch paginated list of employees with pending biometric enrollment."""
+        from app.modules.employee.models.satellites import EmployeeBiometric
+
+        # Subquery to find all employees with non-deleted biometric records
+        biometric_subq = (
+            select(EmployeeBiometric.employee_id)
+            .where(
+                EmployeeBiometric.is_deleted.is_(False)
+            )
+            .subquery()
+        )
+
+        # Base filters
+        filters = [
+            Employee.org_id == org_id,
+            Employee.is_deleted.is_(False),
+            ~Employee.employee_id.in_(select(biometric_subq)),
+        ]
+
+        if branch_ids:
+            filters.append(Employee.master_branch_id.in_(branch_ids))
+        if dept_ids:
+            filters.append(Employee.dept_id.in_(dept_ids))
+
+        if search:
+            search_pattern = f"%{search}%"
+            filters.append(
+                or_(
+                    Employee.employee_code.ilike(search_pattern),
+                    Employee.employee_name.ilike(search_pattern),
+                )
+            )
+
+        # Count query
+        count_stmt = select(func.count(Employee.employee_id)).where(*filters)
+        count_res = await self.session.execute(count_stmt)
+        total_records = count_res.scalar() or 0
+
+        # Query to fetch records
+        stmt = (
+            select(
+                Employee.employee_id,
+                Employee.employee_code,
+                Employee.employee_name,
+                Department.dept_name.label("department"),
+                Designation.designation_name.label("designation"),
+                Branch.branch_name.label("branch"),
+                Employee.created_at,
+            )
+            .outerjoin(Department, Employee.dept_id == Department.dept_id)
+            .outerjoin(Designation, Employee.designation_id == Designation.designation_id)
+            .outerjoin(Branch, Employee.master_branch_id == Branch.branch_id)
+            .where(*filters)
+            .order_by(Employee.employee_id.asc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+
+        res = await self.session.execute(stmt)
+        items = []
+        for row in res.all():
+            items.append({
+                "employee_id": row.employee_id,
+                "employee_code": row.employee_code,
+                "employee_name": row.employee_name,
+                "department": row.department,
+                "designation": row.designation,
+                "branch": row.branch,
+                "biometric_status": "pending",
+                "enrollment_status": "pending",
+                "created_at": row.created_at,
+            })
+
+        return items, total_records
+

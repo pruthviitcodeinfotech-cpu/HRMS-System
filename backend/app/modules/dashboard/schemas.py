@@ -13,6 +13,7 @@ from pydantic import Field
 
 from app.shared.base.schema import BaseSchema
 from app.shared.utils.datetime import utcnow
+from app.shared.schemas.pagination import PaginatedResponse
 
 # ===========================================================================
 # 1. Base / Common Dashboard DTOs
@@ -80,9 +81,13 @@ class AttendanceSummarySchema(BaseSchema):
 
     present_today: int = Field(..., description="Number of employees present today.")
     absent_today: int = Field(..., description="Number of employees absent today.")
+    half_day_today: int = Field(default=0, description="Number of half day employees today.")
     late_arrivals: int = Field(..., description="Number of employees who arrived late today.")
     early_exits: int = Field(..., description="Number of employees who left early today.")
     on_leave_today: int = Field(..., description="Number of employees currently on leave today.")
+    on_break_today: int = Field(default=0, description="Number of employees currently on break today.")
+    pending_biometrics: int = Field(default=0, description="Number of employees whose biometric enrollment/status is pending.")
+
 
 
 class LeaveSummarySchema(BaseSchema):
@@ -173,9 +178,12 @@ class DashboardKPIsResponse(BaseSchema):
     new_employees: int = Field(..., description="New hires count in the current period.")
     present_today: int = Field(..., description="Present today count.")
     absent_today: int = Field(..., description="Absent today count.")
+    half_day_today: int = Field(default=0, description="Half day today count.")
     late_arrivals: int = Field(..., description="Late arrivals today count.")
     early_exits: int = Field(..., description="Early exits today count.")
     on_leave_today: int = Field(..., description="On leave today count.")
+    on_break_today: int = Field(default=0, description="On break today count.")
+    pending_biometrics: int = Field(default=0, description="Pending biometrics count.")
     pending_leaves: int = Field(..., description="Pending leave requests count.")
     pending_approvals: int = Field(..., description="Pending approvals count.")
     current_payroll_status: str = Field(..., description="Status of the current payroll cycle.")
@@ -190,6 +198,7 @@ class DashboardKPIsResponse(BaseSchema):
         default_factory=utcnow,
         description="Timestamp indicating when the KPIs were computed.",
     )
+
 
 
 class DashboardStatisticsResponse(BaseSchema):
@@ -258,6 +267,8 @@ class AttendanceDashboardResponse(BaseSchema):
     absent_today: int = Field(..., description="Absent today count.")
     half_day_today: int = Field(..., description="Half day today count.")
     on_leave_today: int = Field(..., description="On leave today count.")
+    on_break_today: int = Field(default=0, description="On break today count.")
+    pending_biometrics: int = Field(default=0, description="Pending biometrics count.")
     late_arrivals: int = Field(..., description="Late arrivals today count.")
     early_exits: int = Field(..., description="Early exits today count.")
     not_marked: int = Field(..., description="Active employees with unmarked attendance today.")
@@ -268,6 +279,30 @@ class AttendanceDashboardResponse(BaseSchema):
         default_factory=utcnow,
         description="Timestamp indicating when the metrics were computed.",
     )
+
+
+class ShiftSummaryItemSchema(BaseSchema):
+    """Shift summary counts representation."""
+
+    shift_id: int = Field(..., description="ID of the shift.")
+    shift_name: str = Field(..., description="Name of the shift.")
+    total_employees: int = Field(default=0, description="Total active employees assigned to this shift.")
+    present: int = Field(default=0, description="Number of employees present today.")
+    late: int = Field(default=0, description="Number of late arrivals today.")
+    absent: int = Field(default=0, description="Number of absent employees today.")
+    on_leave: int = Field(default=0, description="Number of employees on leave today.")
+
+
+class ShiftSummaryResponse(BaseSchema):
+    """Metrics for the Dashboard Shift Summary widget."""
+
+    shifts: list[ShiftSummaryItemSchema] = Field(..., description="Daily summary grouped by shift.")
+    generated_at: datetime.datetime = Field(
+        default_factory=utcnow,
+        description="Timestamp indicating when the metrics were computed.",
+    )
+
+
 
 
 class LeaveTypeBreakdownItem(BaseSchema):
@@ -405,3 +440,23 @@ class NotificationDashboardResponse(BaseSchema):
         default_factory=utcnow,
         description="Timestamp indicating when the dashboard was generated.",
     )
+
+
+class PendingBiometricEmployeeSchema(BaseSchema):
+    """Schema representing an employee with pending biometric enrollment."""
+
+    employee_id: int = Field(..., description="ID of the employee.")
+    employee_code: str = Field(..., description="Unique employee code.")
+    employee_name: str = Field(..., description="Name of the employee.")
+    department: str | None = Field(default=None, description="Department name.")
+    designation: str | None = Field(default=None, description="Designation name.")
+    branch: str | None = Field(default=None, description="Branch name.")
+    biometric_status: str = Field(default="pending", description="Biometric status.")
+    enrollment_status: str = Field(default="pending", description="Biometric enrollment status.")
+    created_at: datetime.datetime | None = Field(default=None, description="Created timestamp.")
+
+
+class PendingBiometricsResponse(PaginatedResponse[PendingBiometricEmployeeSchema]):
+    """Paginated list of employees with pending biometric enrollment."""
+    pass
+

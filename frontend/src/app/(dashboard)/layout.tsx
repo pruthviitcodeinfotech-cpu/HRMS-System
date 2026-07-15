@@ -10,17 +10,17 @@ import { Breadcrumb } from "@/components/layout/breadcrumb";
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   return (
     <ProtectedRoute>
-      <div className="flex h-screen w-screen overflow-hidden bg-background text-foreground font-sans">
-        {/* Sidebar */}
-        <Sidebar />
+      <div className="flex flex-col h-screen w-screen overflow-hidden bg-background text-foreground font-sans">
+        {/* Top Header */}
+        <Header />
 
-        {/* Workspace content */}
-        <div className="flex-1 flex flex-col h-full overflow-hidden">
-          {/* Header */}
-          <Header />
+        {/* Lower workspace: Sidebar + Content */}
+        <div className="flex flex-1 overflow-hidden">
+          {/* Sidebar */}
+          <Sidebar />
 
           {/* Scrolling view */}
-          <div className="flex-1 overflow-y-auto p-6 flex flex-col justify-between">
+          <div className="flex-1 overflow-y-auto bg-background p-6 flex flex-col justify-between transition-colors duration-250">
             <div>
               <Breadcrumb />
               <main className="w-full">{children}</main>

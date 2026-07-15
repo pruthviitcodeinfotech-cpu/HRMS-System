@@ -46,6 +46,9 @@ from app.modules.dashboard.schemas import (
     SettlementDashboardResponse,
     WidgetMetadataSchema,
     WidgetsMetadataResponse,
+    ShiftSummaryItemSchema,
+    ShiftSummaryResponse,
+    PendingBiometricsResponse,
 )
 from app.shared.base.service import BaseService
 from app.shared.utils.datetime import utcnow
@@ -185,11 +188,14 @@ class DashboardService(BaseService):
         if user.permissions.has_permission(ATTENDANCE_FEATURE, PermissionAction.READ):
             res = await self.repo.get_attendance_summary(org_id, t_date, branch_ids, dept_ids)
             attendance_data = AttendanceSummarySchema(
-                present_today=res["present_today"],
+                present_today=res["present_today"] + res.get("half_day_today", 0),
                 absent_today=res["absent_today"],
+                half_day_today=res.get("half_day_today", 0),
                 late_arrivals=res["late_arrivals"],
                 early_exits=res["early_exits"],
                 on_leave_today=res["on_leave_today"],
+                on_break_today=res.get("on_break_today", 0),
+                pending_biometrics=res.get("pending_biometrics", 0),
             )
 
         # 3. Leave
@@ -272,9 +278,12 @@ class DashboardService(BaseService):
         new_employees = 0
         present_today = 0
         absent_today = 0
+        half_day_today = 0
         late_arrivals = 0
         early_exits = 0
         on_leave_today = 0
+        on_break_today = 0
+        pending_biometrics = 0
         pending_leaves = 0
         pending_approvals = 0
         current_payroll_status = "N/A"
@@ -295,11 +304,14 @@ class DashboardService(BaseService):
         # 2. Attendance
         if user.permissions.has_permission(ATTENDANCE_FEATURE, PermissionAction.READ):
             res = await self.repo.get_attendance_summary(org_id, t_date, branch_ids, dept_ids)
-            present_today = res["present_today"]
+            present_today = res["present_today"] + res.get("half_day_today", 0)
             absent_today = res["absent_today"]
+            half_day_today = res.get("half_day_today", 0)
             late_arrivals = res["late_arrivals"]
             early_exits = res["early_exits"]
             on_leave_today = res["on_leave_today"]
+            on_break_today = res.get("on_break_today", 0)
+            pending_biometrics = res.get("pending_biometrics", 0)
 
         # 3. Leave
         if user.permissions.has_permission(LEAVE_FEATURE, PermissionAction.READ):
@@ -343,9 +355,12 @@ class DashboardService(BaseService):
             new_employees=new_employees,
             present_today=present_today,
             absent_today=absent_today,
+            half_day_today=half_day_today,
             late_arrivals=late_arrivals,
             early_exits=early_exits,
             on_leave_today=on_leave_today,
+            on_break_today=on_break_today,
+            pending_biometrics=pending_biometrics,
             pending_leaves=pending_leaves,
             pending_approvals=pending_approvals,
             current_payroll_status=current_payroll_status,
@@ -518,14 +533,55 @@ class DashboardService(BaseService):
         ]
 
         response_obj = AttendanceDashboardResponse(
-            present_today=summary["present_today"],
+            present_today=summary["present_today"] + summary.get("half_day_today", 0),
             absent_today=summary["absent_today"],
             half_day_today=summary.get("half_day_today", 0),
             on_leave_today=summary["on_leave_today"],
+            on_break_today=summary.get("on_break_today", 0),
+            pending_biometrics=summary.get("pending_biometrics", 0),
             late_arrivals=summary["late_arrivals"],
             early_exits=summary["early_exits"],
             not_marked=summary.get("not_marked", 0),
             trend=trend,
+            generated_at=utcnow(),
+        )
+
+        await cache_set_json(cache_key, response_obj.model_dump())
+        return response_obj
+
+    async def get_shift_summary(
+        self, org_id: int, user: CurrentUser, target_date: datetime.date | None = None
+    ) -> ShiftSummaryResponse:
+        """Fetch target date's attendance summary grouped by shift."""
+        if not user.permissions.has_permission(ATTENDANCE_FEATURE, PermissionAction.READ):
+            raise AuthorizationException("Missing permission 'attendance:read'.")
+
+        t_date = target_date or utcnow().date()
+        branch_ids, dept_ids = self._resolve_data_scopes(user)
+
+        branch_part = ",".join(map(str, sorted(branch_ids))) if branch_ids else "all"
+        dept_part = ",".join(map(str, sorted(dept_ids))) if dept_ids else "all"
+        cache_key = f"dashboard:{org_id}:widget:shift_summary:b_{branch_part}:d_{dept_part}:{t_date.isoformat()}"
+
+        cached = await cache_get_json(cache_key)
+        if cached:
+            return ShiftSummaryResponse.model_validate(cached)
+
+        data = await self.repo.get_shift_attendance_summary(org_id, t_date, branch_ids, dept_ids)
+
+        response_obj = ShiftSummaryResponse(
+            shifts=[
+                ShiftSummaryItemSchema(
+                    shift_id=item["shift_id"],
+                    shift_name=item["shift_name"],
+                    total_employees=item["total_employees"],
+                    present=item["present"],
+                    late=item["late"],
+                    absent=item["absent"],
+                    on_leave=item["on_leave"],
+                )
+                for item in data
+            ],
             generated_at=utcnow(),
         )
 
@@ -980,3 +1036,34 @@ class DashboardService(BaseService):
 
         await cache_set_json(cache_key, response_obj.model_dump())
         return response_obj
+
+    async def get_pending_biometrics_employees(
+        self,
+        org_id: int,
+        user: CurrentUser,
+        search: str | None = None,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> PendingBiometricsResponse:
+        """Fetch paginated and searchable list of employees lacking biometric enrollment."""
+        if not user.permissions.has_permission(EMPLOYEE_FEATURE, PermissionAction.READ):
+            raise AuthorizationException("Missing permission 'employee:read'.")
+
+        branch_ids, dept_ids = self._resolve_data_scopes(user)
+
+        items, total_records = await self.repo.get_pending_biometrics_employees(
+            org_id=org_id,
+            branch_ids=branch_ids,
+            dept_ids=dept_ids,
+            search=search,
+            page=page,
+            page_size=page_size,
+        )
+
+        return PendingBiometricsResponse.build(
+            items=items,
+            page=page,
+            page_size=page_size,
+            total_records=total_records,
+        )
+

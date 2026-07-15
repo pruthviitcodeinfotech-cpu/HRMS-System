@@ -1,5 +1,7 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 :root {
   /* Brand colors */
   --primary: 224 86% 46%; /* Deep Slate Blue */

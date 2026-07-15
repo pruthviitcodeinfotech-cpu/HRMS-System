@@ -161,6 +161,13 @@ class AttendanceDay(Base):
 
     punches: Mapped[list["AttendancePunch"]] = relationship(back_populates="attendance_day")
     penalties: Mapped[list["AttendancePenalty"]] = relationship(back_populates="attendance_day")
+    employee: Mapped["Employee"] = relationship(
+        "Employee",
+        primaryjoin="AttendanceDay.employee_id == Employee.employee_id",
+        foreign_keys="[AttendanceDay.employee_id]",
+        viewonly=True,
+    )
+
 
 
 class AttendancePunch(Base):
