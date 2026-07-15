@@ -44,6 +44,36 @@ export const handleApiError = (error: unknown): ApiError => {
         errorResponse.message = msg || detail || axiosError.message || errorResponse.message;
         errorResponse.code = typeof errorData.code === "string" ? errorData.code : undefined;
         errorResponse.errors = errorData.errors as Record<string, string[]> | undefined;
+
+        // Support standard nested backend ErrorResponse: { success: false, message, error: { code, message, details: [...] } }
+        if (errorData.error && typeof errorData.error === "object") {
+          const nestedError = errorData.error as Record<string, unknown>;
+          if (typeof nestedError.message === "string" && nestedError.message) {
+            errorResponse.message = nestedError.message;
+          }
+          if (typeof nestedError.code === "string" && nestedError.code) {
+            errorResponse.code = nestedError.code;
+          }
+          const details = nestedError.details;
+          if (Array.isArray(details)) {
+            const mappedErrors: Record<string, string[]> = {};
+            for (const err of details) {
+              if (err && typeof err === "object") {
+                const errObj = err as Record<string, unknown>;
+                const field = typeof errObj.field === "string" ? errObj.field : null;
+                const message =
+                  typeof errObj.message === "string" ? errObj.message : "Invalid value";
+                if (field) {
+                  if (!mappedErrors[field]) {
+                    mappedErrors[field] = [];
+                  }
+                  mappedErrors[field].push(message);
+                }
+              }
+            }
+            errorResponse.errors = mappedErrors;
+          }
+        }
       } else {
         errorResponse.message = axiosError.message || errorResponse.message;
       }

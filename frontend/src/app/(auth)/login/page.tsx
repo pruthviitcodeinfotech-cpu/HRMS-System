@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -13,64 +14,103 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Alert } from "@/components/ui/alert";
 import { useLoading } from "@/providers/loading-provider";
+import { useLogin } from "@/features/auth/hooks";
+import { useAuthStore } from "@/features/auth/store";
+import { ApiError } from "@/services/api-client/error-handler";
 
 const loginSchema = z.object({
-  identifier: z
-    .string()
-    .min(1, "Email address or Mobile Number is required")
-    .refine((val) => {
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      const phoneRegex = /^\d{10}$/;
-      return emailRegex.test(val) || phoneRegex.test(val);
-    }, "Please enter a valid email address or a 10-digit mobile number"),
-  password: z.string().optional(),
+  email: z.string().min(1, "Email address is required").email("Please enter a valid email address"),
+  password: z.string().min(1, "Password is required"),
 });
 
 type LoginSchemaType = z.infer<typeof loginSchema>;
 
 export default function LoginPage() {
+  const searchParams = useSearchParams();
   const { startLoading, stopLoading } = useLoading();
   const [showPassword, setShowPassword] = useState(false);
-  const [isOTPMode, setIsOTPMode] = useState(true); // Default to OTP Mode matching the screenshot's single field
   const [apiError, setApiError] = useState<string | null>(null);
+
+  const { mutate: login, isPending } = useLogin();
 
   const {
     register,
     handleSubmit,
+    setError,
     formState: { errors },
   } = useForm<LoginSchemaType>({
     resolver: zodResolver(loginSchema),
     defaultValues: {
-      identifier: "",
+      email: "",
       password: "",
     },
   });
 
+  // Sync mutation loading state to global backdrop loader
+  useEffect(() => {
+    if (isPending) {
+      startLoading();
+    } else {
+      stopLoading();
+    }
+  }, [isPending, startLoading, stopLoading]);
+
   const onSubmit = (data: LoginSchemaType) => {
     setApiError(null);
 
-    // If Password mode is active but password is empty, trigger manually
-    if (!isOTPMode && !data.password) {
-      setApiError("Password is required in Password login mode.");
-      toast.error("Please enter your password.");
-      return;
-    }
+    login(
+      {
+        payload: {
+          email: data.email,
+          password: data.password,
+          device_info: typeof window !== "undefined" ? window.navigator.userAgent : "Web Client",
+        },
+        orgId: "1", // Default primary Acme tenant org ID
+      },
+      {
+        onSuccess: async (response) => {
+          const { access_token } = response.data;
+          // Set standard session in auth memory store
+          useAuthStore.getState().setSession(access_token);
 
-    startLoading();
+          try {
+            // Fetch complete user profile context immediately on login success
+            const { fetchCurrentUser } = await import("@/features/auth/services");
+            const profileRes = await fetchCurrentUser();
+            if (profileRes.success && profileRes.data) {
+              useAuthStore.getState().setUserProfile(profileRes.data);
+            }
+          } catch (err) {
+            console.error("Failed to fetch user profile on login:", err);
+          }
 
-    // Mock API delay for verification of loading spinner
-    setTimeout(() => {
-      stopLoading();
-      // Mock validation results
-      if (data.identifier.includes("error")) {
-        setApiError("Invalid credentials. Please verify your Email or Phone Number.");
-        toast.error("Login failed. Check your inputs.");
-      } else {
-        toast.success("Welcome back! Loading your dashboard workspace...");
-        // Mock successful login redirection path
-        window.location.href = "/dashboard";
+          const redirectTo = searchParams.get("redirectTo") || "/dashboard";
+          const targetUrl = redirectTo.startsWith("/") ? redirectTo : "/dashboard";
+
+          toast.success("Welcome back! Loading your dashboard workspace...");
+          window.location.href = targetUrl;
+        },
+        onError: (err) => {
+          if (err instanceof ApiError) {
+            // Map validation errors directly to the respective form inputs
+            if (err.errors) {
+              Object.entries(err.errors).forEach(([field, messages]) => {
+                setError(field as keyof LoginSchemaType, {
+                  type: "server",
+                  message: messages.join(", "),
+                });
+              });
+            }
+            setApiError(err.message);
+            toast.error(err.message);
+          } else {
+            const genericMsg = err instanceof Error ? err.message : "An unexpected error occurred.";
+            setApiError(genericMsg);
+            toast.error(genericMsg);
+          }
+        },
       }
-    }, 1500);
+    );
   };
 
   return (
@@ -100,83 +140,76 @@ export default function LoginPage() {
               <h2 className="text-xl font-bold text-slate-800 tracking-tight">
                 Login to Dashboard
               </h2>
-              <div className="flex items-center justify-between">
-                <p className="text-xs text-slate-500 font-medium">
-                  Hello there, Let&apos;s get started.
-                </p>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsOTPMode(!isOTPMode);
-                    setApiError(null);
-                  }}
-                  className="text-xs text-[#0B85C9] font-bold hover:underline cursor-pointer"
-                >
-                  {isOTPMode ? "Use Password Login" : "Use OTP Login"}
-                </button>
-              </div>
+              <p className="text-xs text-slate-500 font-medium">
+                Hello there, Let&apos;s get started.
+              </p>
             </div>
 
             {apiError && (
               <Alert variant="destructive" className="animate-in fade-in">
                 <ShieldAlert className="h-4 w-4 mt-0.5 shrink-0" />
                 <div className="flex flex-col text-left">
-                  <span className="font-semibold text-xs">Authentication Error</span>
-                  <span className="text-[10px] opacity-90 mt-0.5">{apiError}</span>
+                  <span className="font-semibold text-xs font-sans">Authentication Error</span>
+                  <span className="text-[10px] opacity-90 mt-0.5 font-sans leading-tight">
+                    {apiError}
+                  </span>
                 </div>
               </Alert>
             )}
 
             <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-              {/* Email / Mobile input */}
+              {/* Email Address Input */}
               <Input
-                label="Email or Phone Number"
-                type="text"
-                placeholder="Enter Email address OR Mobile Number"
+                label="Email Address"
+                type="email"
+                placeholder="Enter email address"
                 className="w-full border-slate-200 placeholder:text-slate-400 focus:border-[#0B85C9]"
-                {...register("identifier")}
-                error={errors.identifier?.message}
+                {...register("email")}
+                error={errors.email?.message}
+                disabled={isPending}
               />
 
-              {/* Password field only shown in Password Mode */}
-              {!isOTPMode && (
-                <div className="relative">
-                  <Input
-                    label="Password"
-                    type={showPassword ? "text" : "password"}
-                    placeholder="Enter your password"
-                    className="w-full pr-10 border-slate-200 focus:border-[#0B85C9]"
-                    {...register("password")}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-[32px] text-slate-400 hover:text-slate-600 cursor-pointer"
-                    tabIndex={-1}
+              {/* Password Input with show/hide toggle */}
+              <div className="relative">
+                <Input
+                  label="Password"
+                  type={showPassword ? "text" : "password"}
+                  placeholder="Enter your password"
+                  className="w-full pr-10 border-slate-200 focus:border-[#0B85C9]"
+                  {...register("password")}
+                  error={errors.password?.message}
+                  disabled={isPending}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-[32px] text-slate-400 hover:text-slate-600 cursor-pointer disabled:opacity-50"
+                  tabIndex={-1}
+                  disabled={isPending}
+                >
+                  {showPassword ? (
+                    <EyeOff className="h-4.5 w-4.5" />
+                  ) : (
+                    <Eye className="h-4.5 w-4.5" />
+                  )}
+                </button>
+                <div className="flex justify-end mt-1">
+                  <Link
+                    href="/forgot-password"
+                    className="text-xs font-semibold text-[#0B85C9] hover:underline cursor-pointer"
                   >
-                    {showPassword ? (
-                      <EyeOff className="h-4.5 w-4.5" />
-                    ) : (
-                      <Eye className="h-4.5 w-4.5" />
-                    )}
-                  </button>
-                  <div className="flex justify-end mt-1">
-                    <Link
-                      href="/forgot-password"
-                      className="text-xs font-semibold text-[#0B85C9] hover:underline cursor-pointer"
-                    >
-                      Forgot Password?
-                    </Link>
-                  </div>
+                    Forgot Password?
+                  </Link>
                 </div>
-              )}
+              </div>
 
               {/* Login Action Button */}
               <Button
                 type="submit"
                 className="w-full bg-[#0B85C9] hover:bg-[#0974b0] text-white font-semibold py-2.5 rounded-lg transition-all"
+                disabled={isPending}
               >
-                Login
+                {isPending ? "Authenticating..." : "Login"}
               </Button>
             </form>
 

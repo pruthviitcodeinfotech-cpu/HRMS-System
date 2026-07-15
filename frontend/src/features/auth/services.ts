@@ -1,7 +1,7 @@
-import axios from "axios";
-import { env } from "@/config/env";
+import { axiosClient } from "@/lib/axios-client";
 import { useAuthStore } from "./store";
 import { handleApiError } from "@/services/api-client/error-handler";
+import { CurrentUserProfile } from "./types";
 
 export interface LoginPayload {
   email: string;
@@ -68,14 +68,13 @@ export const loginSession = async (
   payload: LoginPayload
 ): Promise<ApiResponse<LoginResponseData>> => {
   try {
-    const response = await axios.post<ApiResponse<LoginResponseData>>(
-      `${env.NEXT_PUBLIC_API_URL}/auth/login`,
+    const response = await axiosClient.post<ApiResponse<LoginResponseData>>(
+      "/auth/login",
       payload,
       {
         headers: {
           "x-org-id": orgId,
         },
-        withCredentials: true,
       }
     );
 
@@ -98,11 +97,9 @@ export const refreshSession = async (): Promise<{ access_token: string }> => {
     if (!refreshToken) {
       throw new Error("No refresh token available");
     }
-    const response = await axios.post<ApiResponse<AccessTokenResponse>>(
-      `${env.NEXT_PUBLIC_API_URL}/auth/refresh`,
-      { refresh_token: refreshToken },
-      { withCredentials: true }
-    );
+    const response = await axiosClient.post<ApiResponse<AccessTokenResponse>>("/auth/refresh", {
+      refresh_token: refreshToken,
+    });
 
     const data = response.data;
     if (data.success && data.data) {
@@ -124,20 +121,26 @@ export const logoutSession = async (): Promise<void> => {
   try {
     const state = useAuthStore.getState();
     const token = state.accessToken;
+    const refreshToken = getCookie("refresh_token") || localStorage.getItem("refresh_token");
     const headers: Record<string, string> = {};
     if (token) {
       headers["Authorization"] = `Bearer ${token}`;
     }
-    await axios.post(
-      `${env.NEXT_PUBLIC_API_URL}/auth/logout`,
-      {},
-      { headers, withCredentials: true }
-    );
+    await axiosClient.post("/auth/logout", { refresh_token: refreshToken }, { headers });
   } catch (err) {
     console.error("Failed to revoke session on backend:", err);
   } finally {
     deleteCookie("access_token");
     deleteCookie("refresh_token");
     localStorage.removeItem("refresh_token");
+  }
+};
+
+export const fetchCurrentUser = async (): Promise<ApiResponse<CurrentUserProfile>> => {
+  try {
+    const response = await axiosClient.get<ApiResponse<CurrentUserProfile>>("/auth/me");
+    return response.data;
+  } catch (error) {
+    throw handleApiError(error);
   }
 };

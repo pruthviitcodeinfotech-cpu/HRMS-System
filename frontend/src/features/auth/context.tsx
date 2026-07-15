@@ -43,15 +43,23 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       console.error("Failed to call backend logout:", err);
     } finally {
       clearSession();
+      if (typeof window !== "undefined") {
+        window.location.href = "/login";
+      }
     }
   };
 
   const refresh = async () => {
     setLoading(true);
     try {
-      const { refreshSession } = await import("./services");
+      const { refreshSession, fetchCurrentUser } = await import("./services");
       const { access_token } = await refreshSession();
       setSession(access_token);
+
+      const profileRes = await fetchCurrentUser();
+      if (profileRes.success && profileRes.data) {
+        useAuthStore.getState().setUserProfile(profileRes.data);
+      }
     } catch (err) {
       console.error("Failed to refresh session:", err);
       clearSession();
@@ -65,9 +73,14 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   useEffect(() => {
     const initializeAuth = async () => {
       try {
-        const { refreshSession } = await import("./services");
+        const { refreshSession, fetchCurrentUser } = await import("./services");
         const { access_token } = await refreshSession();
         setSession(access_token);
+
+        const profileRes = await fetchCurrentUser();
+        if (profileRes.success && profileRes.data) {
+          useAuthStore.getState().setUserProfile(profileRes.data);
+        }
       } catch {
         clearSession();
       } finally {
