@@ -239,12 +239,28 @@ class DepartmentRepository(BaseRepository[Department]):
 
     async def get_by_id_in_org(self, org_id: int, dept_id: int) -> Department | None:
         """Return a non-deleted department by id within ``org_id``, or ``None``."""
-        stmt = select(Department).where(
+        active_emp_sub = (
+            select(func.count(Employee.employee_id))
+            .where(
+                Employee.dept_id == Department.dept_id,
+                Employee.org_id == org_id,
+                Employee.is_deleted.is_(False),
+                Employee.employment_status == ACTIVE_EMPLOYMENT_STATUS,
+            )
+            .correlate(Department)
+            .scalar_subquery()
+        )
+        stmt = select(Department, active_emp_sub.label("employee_count")).where(
             Department.dept_id == dept_id,
             Department.org_id == org_id,
             Department.is_deleted.is_(False),
         )
-        return (await self.session.execute(stmt.limit(1))).scalar_one_or_none()
+        row = (await self.session.execute(stmt.limit(1))).first()
+        if row is None:
+            return None
+        dept, count = row
+        dept.employee_count = count
+        return dept
 
     async def name_exists(
         self, org_id: int, dept_name: str, *, exclude_dept_id: int | None = None
@@ -306,7 +322,18 @@ class DepartmentRepository(BaseRepository[Department]):
         conds = self._conditions(
             org_id, search=search, is_active=is_active, include_deleted=include_deleted
         )
-        stmt = select(Department).where(and_(*conds))
+        active_emp_sub = (
+            select(func.count(Employee.employee_id))
+            .where(
+                Employee.dept_id == Department.dept_id,
+                Employee.org_id == org_id,
+                Employee.is_deleted.is_(False),
+                Employee.employment_status == ACTIVE_EMPLOYMENT_STATUS,
+            )
+            .correlate(Department)
+            .scalar_subquery()
+        )
+        stmt = select(Department, active_emp_sub.label("employee_count")).where(and_(*conds))
         stmt = apply_sorting(
             stmt,
             Department,
@@ -316,7 +343,12 @@ class DepartmentRepository(BaseRepository[Department]):
             default_sort_by="dept_name",
         )
         stmt = stmt.limit(page_size).offset((page - 1) * page_size)
-        return list((await self.session.execute(stmt)).scalars().all())
+        res = await self.session.execute(stmt)
+        departments_with_count = []
+        for dept, count in res.all():
+            dept.employee_count = count
+            departments_with_count.append(dept)
+        return departments_with_count
 
     async def search_count(
         self,
@@ -342,12 +374,28 @@ class DesignationRepository(BaseRepository[Designation]):
 
     async def get_by_id_in_org(self, org_id: int, designation_id: int) -> Designation | None:
         """Return a non-deleted designation by id within ``org_id``, or ``None``."""
-        stmt = select(Designation).where(
+        active_emp_sub = (
+            select(func.count(Employee.employee_id))
+            .where(
+                Employee.designation_id == Designation.designation_id,
+                Employee.org_id == org_id,
+                Employee.is_deleted.is_(False),
+                Employee.employment_status == ACTIVE_EMPLOYMENT_STATUS,
+            )
+            .correlate(Designation)
+            .scalar_subquery()
+        )
+        stmt = select(Designation, active_emp_sub.label("employee_count")).where(
             Designation.designation_id == designation_id,
             Designation.org_id == org_id,
             Designation.is_deleted.is_(False),
         )
-        return (await self.session.execute(stmt.limit(1))).scalar_one_or_none()
+        row = (await self.session.execute(stmt.limit(1))).first()
+        if row is None:
+            return None
+        designation, count = row
+        designation.employee_count = count
+        return designation
 
     async def name_exists(
         self, org_id: int, designation_name: str, *, exclude_designation_id: int | None = None
@@ -409,7 +457,18 @@ class DesignationRepository(BaseRepository[Designation]):
         conds = self._conditions(
             org_id, search=search, is_active=is_active, include_deleted=include_deleted
         )
-        stmt = select(Designation).where(and_(*conds))
+        active_emp_sub = (
+            select(func.count(Employee.employee_id))
+            .where(
+                Employee.designation_id == Designation.designation_id,
+                Employee.org_id == org_id,
+                Employee.is_deleted.is_(False),
+                Employee.employment_status == ACTIVE_EMPLOYMENT_STATUS,
+            )
+            .correlate(Designation)
+            .scalar_subquery()
+        )
+        stmt = select(Designation, active_emp_sub.label("employee_count")).where(and_(*conds))
         stmt = apply_sorting(
             stmt,
             Designation,
@@ -419,7 +478,12 @@ class DesignationRepository(BaseRepository[Designation]):
             default_sort_by="designation_name",
         )
         stmt = stmt.limit(page_size).offset((page - 1) * page_size)
-        return list((await self.session.execute(stmt)).scalars().all())
+        res = await self.session.execute(stmt)
+        designations_with_count = []
+        for designation, count in res.all():
+            designation.employee_count = count
+            designations_with_count.append(designation)
+        return designations_with_count
 
     async def search_count(
         self,

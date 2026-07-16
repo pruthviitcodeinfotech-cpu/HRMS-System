@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from app.core.constants.enums import SortOrder
 from app.core.exceptions.base import (
     ConflictException,
     NotFoundException,
@@ -432,6 +433,55 @@ async def test_list_employees_pagination_and_search(employee_service) -> None:
     assert kwargs["branch_scope"] == [1]
     assert kwargs["search"] == "jane"
     assert kwargs["status"] == "active"
+    # Defaults preserved when no sort is requested (backward compatible order).
+    assert kwargs["sort_by"] == "created_at"
+    assert kwargs["sort_order"] is SortOrder.DESC
+
+
+async def test_list_employees_forwards_designation_filter_and_sort(employee_service) -> None:
+    employee_service.employees.search.return_value = []
+    employee_service.employees.search_count.return_value = 0
+    query = EmployeeListQuery(designation_id=7, sort_by="employee_name", sort_order="asc")
+
+    await employee_service.list_employees(org_id=1, query=query)
+
+    search_kwargs = employee_service.employees.search.await_args.kwargs
+    assert search_kwargs["designation_id"] == 7
+    assert search_kwargs["sort_by"] == "employee_name"
+    assert search_kwargs["sort_order"] is SortOrder.ASC
+    # The count query applies the same filters (but never sorts).
+    count_kwargs = employee_service.employees.search_count.await_args.kwargs
+    assert count_kwargs["designation_id"] == 7
+    assert "sort_by" not in count_kwargs
+
+
+async def test_list_employees_enriches_org_names(employee_service) -> None:
+    employee_service.employees.search.return_value = [_employee()]
+    employee_service.employees.search_count.return_value = 1
+
+    result = await employee_service.list_employees(
+        org_id=1, query=EmployeeListQuery(page=1, page_size=25)
+    )
+
+    item = result.items[0]
+    assert item.branch_name == "HQ"
+    assert item.department_name == "Engineering"
+    assert item.designation_name == "Engineer"
+
+
+async def test_list_employees_org_names_null_safe(employee_service) -> None:
+    row = _employee(master_branch=None, department=None, designation=None)
+    employee_service.employees.search.return_value = [row]
+    employee_service.employees.search_count.return_value = 1
+
+    result = await employee_service.list_employees(
+        org_id=1, query=EmployeeListQuery(page=1, page_size=25)
+    )
+
+    item = result.items[0]
+    assert item.branch_name is None
+    assert item.department_name is None
+    assert item.designation_name is None
 
 
 async def test_search_employees_is_list_alias(employee_service) -> None:

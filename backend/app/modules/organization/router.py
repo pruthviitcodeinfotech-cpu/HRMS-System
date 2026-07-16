@@ -464,6 +464,25 @@ async def deactivate_department(
     return _ok(result, "Department deactivated.")
 
 
+@router.delete(
+    "/departments/{dept_id}",
+    response_model=SuccessResponse[DepartmentSchema],
+    summary="Delete Department",
+    dependencies=[Depends(require_permission(DEPARTMENT_FEATURE, A.DELETE))],
+)
+async def delete_department(
+    dept_id: int,
+    service: DepartmentServiceDep,
+    current_user: CurrentUserDep,
+    org_id: OrgIdDep,
+) -> dict[str, Any]:
+    """Soft-delete a department scoped to the organization. Blocked if in use."""
+    result = await service.delete_department(
+        org_id=org_id, actor_id=current_user.user_id, dept_id=dept_id
+    )
+    return _ok(result, "Department deleted successfully.")
+
+
 # ===========================================================================
 # 19-24. Designation Management (§5.3) — feature key `designation`
 # ===========================================================================
@@ -603,6 +622,25 @@ async def deactivate_designation(
         is_active=False,
     )
     return _ok(result, "Designation deactivated.")
+
+
+@router.delete(
+    "/designations/{designation_id}",
+    response_model=SuccessResponse[DesignationSchema],
+    summary="Delete Designation",
+    dependencies=[Depends(require_permission(DESIGNATION_FEATURE, A.DELETE))],
+)
+async def delete_designation(
+    designation_id: int,
+    service: DesignationServiceDep,
+    current_user: CurrentUserDep,
+    org_id: OrgIdDep,
+) -> dict[str, Any]:
+    """Soft-delete a designation scoped to the organization. Blocked if in use."""
+    result = await service.delete_designation(
+        org_id=org_id, actor_id=current_user.user_id, designation_id=designation_id
+    )
+    return _ok(result, "Designation deleted successfully.")
 
 
 __all__ = ["router"]

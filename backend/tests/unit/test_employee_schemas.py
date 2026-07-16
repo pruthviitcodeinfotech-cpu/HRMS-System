@@ -13,6 +13,7 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
+from app.core.constants.enums import SortOrder
 from app.modules.employee.constants import EmploymentStatus
 from app.modules.employee.schemas import (
     EmployeeCreateRequest,
@@ -94,7 +95,10 @@ def test_list_query_defaults() -> None:
     query = EmployeeListQuery()
     assert query.page == 1
     assert query.branch_id is None
+    assert query.designation_id is None
     assert query.status is None
+    assert query.sort_by is None
+    assert query.sort_order is None
 
 
 def test_list_query_status_enum_coercion() -> None:
@@ -105,3 +109,19 @@ def test_list_query_status_enum_coercion() -> None:
 def test_list_query_rejects_bad_page() -> None:
     with pytest.raises(ValidationError):
         EmployeeListQuery(page=0)
+
+
+def test_list_query_sort_order_coercion() -> None:
+    query = EmployeeListQuery(sort_by="employee_name", sort_order="asc")
+    assert query.sort_by == "employee_name"
+    assert query.sort_order is SortOrder.ASC
+
+
+def test_list_query_rejects_bad_sort_order() -> None:
+    with pytest.raises(ValidationError):
+        EmployeeListQuery(sort_order="upwards")
+
+
+def test_list_query_accepts_designation_filter() -> None:
+    query = EmployeeListQuery(designation_id=7)
+    assert query.designation_id == 7

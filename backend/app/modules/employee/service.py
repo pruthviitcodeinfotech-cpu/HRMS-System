@@ -38,6 +38,7 @@ from pathlib import Path
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.constants.enums import SortOrder
 from app.core.exceptions.base import (
     ConflictException,
     NotFoundException,
@@ -52,6 +53,7 @@ from app.infrastructure.storage.client import (
 from app.modules.audit.constants import ActionType
 from app.modules.audit.service import AuditService
 from app.modules.employee.constants import EmploymentStatus
+from app.modules.employee.export import build_xlsx
 from app.modules.employee.exceptions import (
     BankDetailNotFoundException,
     BranchNotFoundException,
@@ -121,6 +123,26 @@ from app.shared.utils.datetime import utcnow
 _CODE_PREFIX = "EMP"
 _CODE_PAD = 5
 _AUDIT_MODULE = "Employee Management"
+
+# Excel export: single synchronous workbook, so the row count is capped. 10k
+# comfortably covers the org sizes this deployment targets; larger exports
+# belong in the async jobs pipeline.
+EXPORT_ROW_LIMIT = 10_000
+EXPORT_HEADERS = [
+    "Employee Code",
+    "Employee Name",
+    "Display Name",
+    "Mobile Number",
+    "Email",
+    "Gender",
+    "Master Branch",
+    "Department",
+    "Designation",
+    "Employee Type",
+    "Status",
+    "Date of Joining",
+    "Created On",
+]
 
 
 @dataclass(frozen=True)
@@ -335,17 +357,37 @@ class EmployeeService(BaseService):
             "search": query.q,
             "branch_id": query.branch_id,
             "department_id": query.department_id,
+            "designation_id": query.designation_id,
             "status": status,
             "branch_scope": branch_scope,
         }
         rows = await self.employees.search(
-            org_id, page=query.page, page_size=query.page_size, **common
+            org_id,
+            page=query.page,
+            page_size=query.page_size,
+            sort_by=query.sort_by or "created_at",
+            sort_order=query.sort_order or SortOrder.DESC,
+            **common,
         )
         total = await self.employees.search_count(org_id, **common)
-        items = [EmployeeSummarySchema.model_validate(row) for row in rows]
+        items = [self._to_summary(row) for row in rows]
         return EmployeeListResponse.build(
             items=items, page=query.page, page_size=query.page_size, total_records=total
         )
+
+    @staticmethod
+    def _to_summary(row: Employee) -> EmployeeSummarySchema:
+        """Project a list row, denormalising the joined org names for the UI."""
+        item = EmployeeSummarySchema.model_validate(row)
+        branch = getattr(row, "master_branch", None)
+        department = getattr(row, "department", None)
+        designation = getattr(row, "designation", None)
+        item.branch_name = branch.branch_name if branch is not None else None
+        item.department_name = department.dept_name if department is not None else None
+        item.designation_name = (
+            designation.designation_name if designation is not None else None
+        )
+        return item
 
     async def search_employees(
         self,

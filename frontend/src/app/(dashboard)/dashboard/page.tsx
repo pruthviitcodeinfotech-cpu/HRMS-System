@@ -18,6 +18,8 @@ import {
   ChevronLeft,
   ChevronRight,
   ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
   CircleDot,
   CheckCircle2,
   Filter,
@@ -243,6 +245,9 @@ export default function DashboardPage() {
   const [visibleFilters, setVisibleFilters] = useState<Record<string, boolean>>({});
   const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
 
+  // Table sorting states
+  const [sortConfig, setSortConfig] = useState<{ key: string; direction: "asc" | "desc" } | null>(null);
+
   // Table filter states
   const [selectedEmpId, setSelectedEmpId] = useState<string | null>(null);
   const [selectedEmpName, setSelectedEmpName] = useState("");
@@ -336,6 +341,28 @@ export default function DashboardPage() {
     }));
   };
 
+  const handleSort = (key: string) => {
+    setSortConfig((prev) => {
+      if (!prev || prev.key !== key) {
+        return { key, direction: "asc" };
+      }
+      if (prev.direction === "asc") {
+        return { key, direction: "desc" };
+      }
+      return null;
+    });
+  };
+
+  const renderSortIcon = (key: string) => {
+    if (sortConfig?.key !== key) {
+      return <ArrowUpDown className="h-3.5 w-3.5 opacity-50 shrink-0" />;
+    }
+    if (sortConfig.direction === "asc") {
+      return <ArrowUp className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400 shrink-0" />;
+    }
+    return <ArrowDown className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400 shrink-0" />;
+  };
+
   const getFilteredItemsByShift = () => {
     if (!attendanceData?.items) return [];
     let items = attendanceData.items;
@@ -406,6 +433,42 @@ export default function DashboardPage() {
       data = data.filter((row) => 
         (row.designation || "").toLowerCase() === selectedDesig.toLowerCase()
       );
+    }
+
+    // Apply sorting
+    if (sortConfig) {
+      data = [...data].sort((a, b) => {
+        let aVal: any = null;
+        let bVal: any = null;
+
+        if (sortConfig.key === "empId") {
+          aVal = a.employee_id;
+          bVal = b.employee_id;
+        } else if (sortConfig.key === "empName") {
+          aVal = a.employee_name;
+          bVal = b.employee_name;
+        } else if (sortConfig.key === "dept") {
+          aVal = a.department_name;
+          bVal = b.department_name;
+        } else if (sortConfig.key === "desig") {
+          aVal = a.designation;
+          bVal = b.designation;
+        }
+
+        if (aVal === undefined || aVal === null) return 1;
+        if (bVal === undefined || bVal === null) return -1;
+
+        if (typeof aVal === "number" && typeof bVal === "number") {
+          return sortConfig.direction === "asc" ? aVal - bVal : bVal - aVal;
+        }
+
+        const aStr = String(aVal).trim().toLowerCase();
+        const bStr = String(bVal).trim().toLowerCase();
+
+        if (aStr < bStr) return sortConfig.direction === "asc" ? -1 : 1;
+        if (aStr > bStr) return sortConfig.direction === "asc" ? 1 : -1;
+        return 0;
+      });
     }
     
     return data;
@@ -853,35 +916,31 @@ export default function DashboardPage() {
                     <tr className="border-b border-border text-slate-500 dark:text-slate-400 bg-slate-50/20 dark:bg-slate-900/10 font-semibold select-none">
                       
                       {/* Employee ID Column */}
-                      <th className="py-3 px-5 relative">
+                      <th className="py-3 px-5 relative group">
                         <div className="flex items-center">
                           <span
-                            onClick={() => toggleFilterVisibility("empId")}
+                            onClick={() => handleSort("empId")}
                             className="flex items-center space-x-1 hover:text-slate-700 dark:hover:text-slate-200 cursor-pointer select-none"
                           >
                             <span>Employee ID</span>
-                            <ArrowUpDown className="h-3.5 w-3.5 opacity-50" />
+                            {renderSortIcon("empId")}
                           </span>
                           
-                          {(visibleFilters["empId"] || selectedEmpId) && (
-                            <>
-                              <span className="mx-2 text-slate-300 dark:text-slate-750 font-light select-none">|</span>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setActiveDropdown(activeDropdown === "empId" ? null : "empId");
-                                }}
-                                className={`p-1 rounded transition-colors cursor-pointer ${
-                                  selectedEmpId
-                                    ? "text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/40"
-                                    : "text-slate-400 dark:text-slate-500 hover:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800"
-                                }`}
-                                title="Filter Employee ID"
-                              >
-                                <Filter className="h-3.5 w-3.5" />
-                              </button>
-                            </>
-                          )}
+                          <span className={`mx-2 text-slate-300 dark:text-slate-750 font-light select-none ${selectedEmpId ? "flex" : "hidden group-hover:flex"}`}>|</span>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setActiveDropdown(activeDropdown === "empId" ? null : "empId");
+                            }}
+                            className={`p-1 rounded transition-colors cursor-pointer ${
+                              selectedEmpId
+                                ? "text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/40 flex"
+                                : "text-slate-400 dark:text-slate-500 hover:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800 hidden group-hover:flex"
+                            }`}
+                            title="Filter Employee ID"
+                          >
+                            <Filter className="h-3.5 w-3.5" />
+                          </button>
                         </div>
 
                         {activeDropdown === "empId" && (
@@ -918,35 +977,31 @@ export default function DashboardPage() {
                       </th>
 
                       {/* Employee Name Column */}
-                      <th className="py-3 px-5 relative">
+                      <th className="py-3 px-5 relative group">
                         <div className="flex items-center">
                           <span
-                            onClick={() => toggleFilterVisibility("empName")}
+                            onClick={() => handleSort("empName")}
                             className="flex items-center space-x-1 hover:text-slate-700 dark:hover:text-slate-200 cursor-pointer select-none"
                           >
                             <span>Employee Name</span>
-                            <ArrowUpDown className="h-3.5 w-3.5 opacity-50" />
+                            {renderSortIcon("empName")}
                           </span>
                           
-                          {(visibleFilters["empName"] || selectedEmpName) && (
-                            <>
-                              <span className="mx-2 text-slate-300 dark:text-slate-750 font-light select-none">|</span>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setActiveDropdown(activeDropdown === "empName" ? null : "empName");
-                                }}
-                                className={`p-1 rounded transition-colors cursor-pointer ${
-                                  selectedEmpName
-                                    ? "text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/40"
-                                    : "text-slate-400 dark:text-slate-500 hover:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800"
-                                }`}
-                                title="Search Employee Name"
-                              >
-                                <Filter className="h-3.5 w-3.5" />
-                              </button>
-                            </>
-                          )}
+                          <span className={`mx-2 text-slate-300 dark:text-slate-750 font-light select-none ${selectedEmpName.trim() ? "flex" : "hidden group-hover:flex"}`}>|</span>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setActiveDropdown(activeDropdown === "empName" ? null : "empName");
+                            }}
+                            className={`p-1 rounded transition-colors cursor-pointer ${
+                              selectedEmpName.trim()
+                                ? "text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/40 flex"
+                                : "text-slate-400 dark:text-slate-500 hover:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800 hidden group-hover:flex"
+                            }`}
+                            title="Search Employee Name"
+                          >
+                            <Filter className="h-3.5 w-3.5" />
+                          </button>
                         </div>
 
                         {activeDropdown === "empName" && (
@@ -975,35 +1030,31 @@ export default function DashboardPage() {
                       </th>
 
                       {/* Department Column */}
-                      <th className="py-3 px-5 relative">
+                      <th className="py-3 px-5 relative group">
                         <div className="flex items-center">
                           <span
-                            onClick={() => toggleFilterVisibility("dept")}
+                            onClick={() => handleSort("dept")}
                             className="flex items-center space-x-1 hover:text-slate-700 dark:hover:text-slate-200 cursor-pointer select-none"
                           >
                             <span>Department</span>
-                            <ArrowUpDown className="h-3.5 w-3.5 opacity-50" />
+                            {renderSortIcon("dept")}
                           </span>
                           
-                          {(visibleFilters["dept"] || selectedDept) && (
-                            <>
-                              <span className="mx-2 text-slate-300 dark:text-slate-700 font-light select-none">|</span>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setActiveDropdown(activeDropdown === "dept" ? null : "dept");
-                                }}
-                                className={`p-1 rounded transition-colors cursor-pointer ${
-                                  selectedDept
-                                    ? "text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/40"
-                                    : "text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
-                                }`}
-                                title="Filter by Department"
-                              >
-                                <Filter className="h-3.5 w-3.5" />
-                              </button>
-                            </>
-                          )}
+                          <span className={`mx-2 text-slate-300 dark:text-slate-700 font-light select-none ${selectedDept ? "flex" : "hidden group-hover:flex"}`}>|</span>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setActiveDropdown(activeDropdown === "dept" ? null : "dept");
+                            }}
+                            className={`p-1 rounded transition-colors cursor-pointer ${
+                              selectedDept
+                                ? "text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/40 flex"
+                                : "text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-450 hover:bg-slate-100 dark:hover:bg-slate-800 hidden group-hover:flex"
+                            }`}
+                            title="Filter by Department"
+                          >
+                            <Filter className="h-3.5 w-3.5" />
+                          </button>
                         </div>
 
                         {activeDropdown === "dept" && (
@@ -1040,35 +1091,31 @@ export default function DashboardPage() {
                       </th>
 
                       {/* Designation Column */}
-                      <th className="py-3 px-5 relative">
+                      <th className="py-3 px-5 relative group">
                         <div className="flex items-center">
                           <span
-                            onClick={() => toggleFilterVisibility("desig")}
+                            onClick={() => handleSort("desig")}
                             className="flex items-center space-x-1 hover:text-slate-700 dark:hover:text-slate-200 cursor-pointer select-none"
                           >
                             <span>Designation</span>
-                            <ArrowUpDown className="h-3.5 w-3.5 opacity-50" />
+                            {renderSortIcon("desig")}
                           </span>
                           
-                          {(visibleFilters["desig"] || selectedDesig) && (
-                            <>
-                              <span className="mx-2 text-slate-300 dark:text-slate-700 font-light select-none">|</span>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setActiveDropdown(activeDropdown === "desig" ? null : "desig");
-                                }}
-                                className={`p-1 rounded transition-colors cursor-pointer ${
-                                  selectedDesig
-                                    ? "text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/40"
-                                    : "text-slate-400 dark:text-slate-500 hover:text-slate-650 hover:bg-slate-100 dark:hover:bg-slate-800"
-                                }`}
-                                title="Filter by Designation"
-                              >
-                                <Filter className="h-3.5 w-3.5" />
-                              </button>
-                            </>
-                          )}
+                          <span className={`mx-2 text-slate-300 dark:text-slate-750 font-light select-none ${selectedDesig ? "flex" : "hidden group-hover:flex"}`}>|</span>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setActiveDropdown(activeDropdown === "desig" ? null : "desig");
+                            }}
+                            className={`p-1 rounded transition-colors cursor-pointer ${
+                              selectedDesig
+                                ? "text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/40 flex"
+                                : "text-slate-400 dark:text-slate-500 hover:text-slate-650 hover:bg-slate-100 dark:hover:bg-slate-800 hidden group-hover:flex"
+                            }`}
+                            title="Filter by Designation"
+                          >
+                            <Filter className="h-3.5 w-3.5" />
+                          </button>
                         </div>
 
                         {activeDropdown === "desig" && (

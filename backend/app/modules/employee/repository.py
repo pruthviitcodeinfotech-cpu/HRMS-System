@@ -236,7 +236,18 @@ class EmployeeRepository(BaseRepository[Employee]):
             branch_scope=branch_scope,
             include_deleted=include_deleted,
         )
-        stmt = select(Employee).where(and_(*conds))
+        stmt = (
+            select(Employee)
+            .where(and_(*conds))
+            .options(
+                # Many-to-one org links are JOINed into the page SELECT so the
+                # list projection can expose branch/department/designation names
+                # without one extra query per row (no N+1).
+                joinedload(Employee.master_branch),
+                joinedload(Employee.department),
+                joinedload(Employee.designation),
+            )
+        )
         stmt = apply_sorting(
             stmt,
             Employee,

@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -27,6 +28,18 @@ export const NavigationMenu = ({ sidebarOpen }: NavigationMenuProps) => {
   const pathname = usePathname();
   const { hasPermission } = usePermissions();
 
+  // Expanded sub-menus tracking state
+  const [expandedItems, setExpandedItems] = useState<Record<string, boolean>>({
+    Employees: true, // Default open per the user request reference screenshot
+  });
+
+  const toggleExpand = (label: string) => {
+    setExpandedItems((prev) => ({
+      ...prev,
+      [label]: !prev[label],
+    }));
+  };
+
   const navItems = [
     {
       href: "/dashboard",
@@ -43,6 +56,13 @@ export const NavigationMenu = ({ sidebarOpen }: NavigationMenuProps) => {
       hasChevron: true,
       isNew: false,
       permission: { feature: "employee", action: "read" },
+      items: [
+        { href: "/employees", label: "Employees" },
+        { href: "/employees/departments", label: "Departments" },
+        { href: "/employees/designations", label: "Designations" },
+        { href: "/employees/attendance-permission", label: "Attendance Permission" },
+        { href: "/employees/manage-branch", label: "Manage Branch" },
+      ] as const,
     },
     {
       href: "/shifts",
@@ -126,6 +146,21 @@ export const NavigationMenu = ({ sidebarOpen }: NavigationMenuProps) => {
     },
   ] as const;
 
+  // Auto-expand hierarchy when path matches any of the children
+  useEffect(() => {
+    navItems.forEach((item) => {
+      if ("items" in item) {
+        const hasActiveChild = item.items.some((child) => pathname === child.href);
+        if (hasActiveChild) {
+          setExpandedItems((prev) => ({
+            ...prev,
+            [item.label]: true,
+          }));
+        }
+      }
+    });
+  }, [pathname]);
+
   const filteredItems = navItems.filter((item) => {
     try {
       return hasPermission(item.permission.feature, item.permission.action);
@@ -138,41 +173,108 @@ export const NavigationMenu = ({ sidebarOpen }: NavigationMenuProps) => {
     <nav className="p-2 space-y-1 mt-1">
       {filteredItems.map((item) => {
         const Icon = item.icon;
-        const isActive = pathname.startsWith(item.href) || (item.href === "/dashboard" && pathname === "/");
+        const hasChildren = "items" in item;
+        
+        // Parent is active if current path starts with parent href OR matches any child href
+        const isParentActive = hasChildren
+          ? pathname.startsWith(item.href) || item.items.some((child) => pathname === child.href)
+          : pathname.startsWith(item.href) || (item.href === "/dashboard" && pathname === "/");
+
+        const isExpanded = expandedItems[item.label] ?? false;
 
         return (
-          <Link
-            key={item.href}
-            href={item.href}
-            className={`flex items-center justify-between rounded-lg transition-all duration-200 cursor-pointer ${
-              sidebarOpen
-                ? "px-3 py-2 text-xs font-semibold"
-                : "p-2.5 justify-center"
-            } ${
-              isActive
-                ? "bg-blue-600 text-white shadow-xs"
-                : "text-slate-600 dark:text-slate-300 hover:text-slate-800 dark:hover:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800"
-            }`}
-            title={item.label}
-          >
-            <div className="flex items-center space-x-3 min-w-0">
-              <Icon className={`h-4.5 w-4.5 shrink-0 ${isActive ? "text-white" : "text-slate-500 dark:text-slate-400"}`} />
-              {sidebarOpen && <span className="truncate">{item.label}</span>}
-            </div>
+          <div key={item.href} className="space-y-1">
+            {/* MenuItem Wrapper (Button for expandables, Link for flat links) */}
+            {hasChildren ? (
+              <button
+                onClick={() => toggleExpand(item.label)}
+                className={`w-full flex items-center justify-between rounded-lg transition-all duration-200 cursor-pointer ${
+                  sidebarOpen
+                    ? "px-3 py-2 text-xs font-semibold"
+                    : "p-2.5 justify-center"
+                } ${
+                  isParentActive
+                    ? "bg-blue-600 text-white shadow-xs"
+                    : "text-slate-600 dark:text-slate-300 hover:text-slate-800 dark:hover:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800"
+                }`}
+                title={item.label}
+              >
+                <div className="flex items-center space-x-3 min-w-0">
+                  <Icon className={`h-4.5 w-4.5 shrink-0 ${isParentActive ? "text-white" : "text-slate-500 dark:text-slate-400"}`} />
+                  {sidebarOpen && <span className="truncate">{item.label}</span>}
+                </div>
 
-            {sidebarOpen && (
-              <div className="flex items-center space-x-1.5 shrink-0">
-                {item.isNew && (
-                  <span className="px-1.5 py-0.5 rounded text-[8px] font-bold uppercase tracking-wider bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 border border-blue-100 dark:border-blue-900/50">
-                    New
-                  </span>
+                {sidebarOpen && (
+                  <div className="flex items-center space-x-1.5 shrink-0">
+                    {item.isNew && (
+                      <span className="px-1.5 py-0.5 rounded text-[8px] font-bold uppercase tracking-wider bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 border border-blue-100 dark:border-blue-900/50">
+                        New
+                      </span>
+                    )}
+                    <ChevronRight
+                      className={`h-3.5 w-3.5 transition-transform duration-200 ${
+                        isParentActive ? "text-white" : "text-slate-400 dark:text-slate-500"
+                      } ${isExpanded ? "rotate-90" : ""}`}
+                    />
+                  </div>
                 )}
-                {item.hasChevron && (
-                  <ChevronRight className={`h-3 w-3 ${isActive ? "text-white" : "text-slate-400 dark:text-slate-500"}`} />
+              </button>
+            ) : (
+              <Link
+                href={item.href}
+                className={`flex items-center justify-between rounded-lg transition-all duration-200 cursor-pointer ${
+                  sidebarOpen
+                    ? "px-3 py-2 text-xs font-semibold"
+                    : "p-2.5 justify-center"
+                } ${
+                  isParentActive
+                    ? "bg-blue-600 text-white shadow-xs"
+                    : "text-slate-600 dark:text-slate-300 hover:text-slate-800 dark:hover:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800"
+                }`}
+                title={item.label}
+              >
+                <div className="flex items-center space-x-3 min-w-0">
+                  <Icon className={`h-4.5 w-4.5 shrink-0 ${isParentActive ? "text-white" : "text-slate-500 dark:text-slate-400"}`} />
+                  {sidebarOpen && <span className="truncate">{item.label}</span>}
+                </div>
+
+                {sidebarOpen && (
+                  <div className="flex items-center space-x-1.5 shrink-0">
+                    {item.isNew && (
+                      <span className="px-1.5 py-0.5 rounded text-[8px] font-bold uppercase tracking-wider bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 border border-blue-100 dark:border-blue-900/50">
+                        New
+                      </span>
+                    )}
+                    {item.hasChevron && (
+                      <ChevronRight className={`h-3 w-3 ${isParentActive ? "text-white" : "text-slate-400 dark:text-slate-500"}`} />
+                    )}
+                  </div>
                 )}
+              </Link>
+            )}
+
+            {/* Collapsible Hierarchy Thread Sub-Links */}
+            {hasChildren && isExpanded && sidebarOpen && (
+              <div className="pl-4 ml-4.5 border-l border-slate-200 dark:border-slate-800 flex flex-col space-y-1 py-1">
+                {item.items.map((subItem) => {
+                  const isSubActive = pathname === subItem.href;
+                  return (
+                    <Link
+                      key={subItem.href}
+                      href={subItem.href}
+                      className={`block py-1.5 px-3 text-xs font-semibold rounded-md transition-all duration-150 cursor-pointer ${
+                        isSubActive
+                          ? "text-blue-600 dark:text-blue-400 font-bold bg-blue-50/40 dark:bg-blue-950/10"
+                          : "text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/40"
+                      }`}
+                    >
+                      {subItem.label}
+                    </Link>
+                  );
+                })}
               </div>
             )}
-          </Link>
+          </div>
         );
       })}
     </nav>

@@ -1,13 +1,12 @@
 "use client";
 
 import { ProtectedRoute } from "@/features/auth";
-import { EmployeeList } from "@/features/employees";
+import { DesignationList } from "@/features/employees/components/designation-list";
 
-export default function EmployeesPage() {
+export default function DesignationsPage() {
   return (
     <ProtectedRoute requiredPermission={{ feature: "employee", action: "read" }}>
-      <EmployeeList />
+      <DesignationList />
     </ProtectedRoute>
   );
 }
-

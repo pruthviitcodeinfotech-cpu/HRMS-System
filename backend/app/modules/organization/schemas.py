@@ -235,6 +235,7 @@ class DepartmentSchema(BaseSchema):
     created_by: int | None = Field(default=None, description="Creator user id.")
     created_at: datetime = Field(..., description="Creation timestamp.")
     updated_at: datetime = Field(..., description="Last update timestamp.")
+    employee_count: int = Field(default=0, description="Count of active employees in this department.")
 
 
 class DepartmentListResponse(PaginatedResponse[DepartmentSchema]):
@@ -285,6 +286,7 @@ class DesignationSchema(BaseSchema):
     created_by: int | None = Field(default=None, description="Creator user id.")
     created_at: datetime = Field(..., description="Creation timestamp.")
     updated_at: datetime = Field(..., description="Last update timestamp.")
+    employee_count: int = Field(default=0, description="Count of active employees in this designation.")
 
 
 class DesignationListResponse(PaginatedResponse[DesignationSchema]):

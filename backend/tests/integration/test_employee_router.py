@@ -152,6 +152,54 @@ async def test_list_employees_200(
     body = resp.json()["data"]
     assert body["pagination"]["total_records"] == 1
     assert len(body["items"]) == 1
+    # Additive org-name fields are always present (null when not populated).
+    item = body["items"][0]
+    assert item["branch_name"] is None
+    assert item["department_name"] is None
+    assert item["designation_name"] is None
+
+
+async def test_list_employees_forwards_sort_and_designation_filter(
+    employee_client: AsyncClient, mock_employee_service: AsyncMock, super_admin_headers
+) -> None:
+    mock_employee_service.list_employees.return_value = _list_response()
+    resp = await employee_client.get(
+        f"{API_PREFIX}/employees?designation_id=7&sort_by=employee_name&sort_order=asc",
+        headers=super_admin_headers,
+    )
+    assert resp.status_code == 200
+    query = mock_employee_service.list_employees.await_args.kwargs["query"]
+    assert query.designation_id == 7
+    assert query.sort_by == "employee_name"
+    assert query.sort_order == "asc"
+
+
+async def test_list_employees_rejects_invalid_sort_order(
+    employee_client: AsyncClient, mock_employee_service: AsyncMock, super_admin_headers
+) -> None:
+    resp = await employee_client.get(
+        f"{API_PREFIX}/employees?sort_order=upwards", headers=super_admin_headers
+    )
+    assert resp.status_code == 422
+    mock_employee_service.list_employees.assert_not_awaited()
+
+
+async def test_list_employees_serialises_org_names(
+    employee_client: AsyncClient, mock_employee_service: AsyncMock, super_admin_headers
+) -> None:
+    summary = _summary()
+    summary.branch_name = "HQ"
+    summary.department_name = "Engineering"
+    summary.designation_name = "Engineer"
+    mock_employee_service.list_employees.return_value = EmployeeListResponse.build(
+        items=[summary], page=1, page_size=25, total_records=1
+    )
+    resp = await employee_client.get(f"{API_PREFIX}/employees", headers=super_admin_headers)
+    assert resp.status_code == 200
+    item = resp.json()["data"]["items"][0]
+    assert item["branch_name"] == "HQ"
+    assert item["department_name"] == "Engineering"
+    assert item["designation_name"] == "Engineer"
 
 
 async def test_create_employee_201(

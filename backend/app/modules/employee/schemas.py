@@ -36,6 +36,7 @@ from decimal import Decimal
 
 from pydantic import Field, field_validator, model_validator
 
+from app.core.constants.enums import SortOrder
 from app.modules.employee.constants import (
     AttendanceMethod,
     BiometricType,
@@ -240,11 +241,23 @@ class EmployeeListQuery(PaginationRequest):
 
     branch_id: int | None = Field(default=None, description="Filter by master branch.")
     department_id: int | None = Field(default=None, description="Filter by department.")
+    designation_id: int | None = Field(default=None, description="Filter by designation.")
     status: EmploymentStatus | None = Field(
         default=None, description="Filter by employment status."
     )
     q: str | None = Field(
         default=None, max_length=200, description="Free-text search (name / code / contact)."
+    )
+    sort_by: str | None = Field(
+        default=None,
+        description=(
+            "Sort column: employee_code | employee_name | date_of_joining | "
+            "employment_status | created_at | updated_at. Unknown values fall back "
+            "to the default (created_at)."
+        ),
+    )
+    sort_order: SortOrder | None = Field(
+        default=None, description="Sort direction: asc or desc (default desc)."
     )
 
 
@@ -600,6 +613,13 @@ class EmployeeSummarySchema(BaseSchema):
     date_of_joining: date | None = None
     profile_photo_url: str | None = None
     created_at: datetime
+
+    # Denormalised org names for list rendering (additive; populated by the list
+    # endpoint from the joined branch/department/designation rows). Optional so
+    # existing consumers and ORM-based validation remain unaffected.
+    branch_name: str | None = None
+    department_name: str | None = None
+    designation_name: str | None = None
 
 
 class EmployeeSchema(EmployeeSummarySchema):

@@ -18,6 +18,10 @@
   --input: 220 13% 91%;
   --ring: 224 86% 46%;
 
+  /* Muted colors */
+  --muted: 210 40% 96.1%;
+  --muted-foreground: 215.4 16.3% 46.9%;
+
   /* Status colors */
   --success: 142.1 76.2% 36.3%;
   --warning: 37.9 90.2% 49.8%;
@@ -40,6 +44,10 @@
   --border: 217.2 32.6% 17.5%; /* Slate gray border */
   --input: 217.2 32.6% 17.5%;
   --ring: 224.3 76.3% 48%;
+
+  /* Muted colors */
+  --muted: 217.2 32.6% 17.5%;
+  --muted-foreground: 215 20.2% 65.1%;
 }
 
 @theme inline {
@@ -52,6 +60,8 @@
   --color-border: hsl(var(--border));
   --color-input: hsl(var(--input));
   --color-ring: hsl(var(--ring));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
 
   --color-success: hsl(var(--success));
   --color-warning: hsl(var(--warning));

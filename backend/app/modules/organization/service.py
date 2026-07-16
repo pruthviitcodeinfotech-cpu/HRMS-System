@@ -441,6 +441,27 @@ class DepartmentService(_OrgBaseService):
             )
         return DepartmentSchema.model_validate(dept)
 
+    async def delete_department(
+        self, *, org_id: int, actor_id: int, dept_id: int
+    ) -> DepartmentSchema:
+        """Soft-delete a department. Blocked if referenced by active employees."""
+        dept = await self._get_or_404(org_id, dept_id)
+
+        if await self.departments.has_active_employees(org_id, dept_id):
+            raise DepartmentInUseException()
+
+        async with self.transaction():
+            dept = await self.departments.update(dept, {"is_deleted": True})
+            await self._audit(
+                org_id=org_id,
+                actor_id=actor_id,
+                action_type=ActionType.DELETE,
+                sub_module=self._SUB_MODULE,
+                title="Department deleted",
+                description=f"Deleted department '{dept.dept_name}'.",
+            )
+        return DepartmentSchema.model_validate(dept)
+
     async def _get_or_404(self, org_id: int, dept_id: int) -> Department:
         dept = await self.departments.get_by_id_in_org(org_id, dept_id)
         if dept is None:
@@ -565,6 +586,27 @@ class DesignationService(_OrgBaseService):
                 sub_module=self._SUB_MODULE,
                 title=f"Designation {verb}",
                 description=f"Designation '{designation.designation_name}' {verb}.",
+            )
+        return DesignationSchema.model_validate(designation)
+
+    async def delete_designation(
+        self, *, org_id: int, actor_id: int, designation_id: int
+    ) -> DesignationSchema:
+        """Soft-delete a designation. Blocked if referenced by active employees."""
+        designation = await self._get_or_404(org_id, designation_id)
+
+        if await self.designations.has_active_employees(org_id, designation_id):
+            raise DesignationInUseException()
+
+        async with self.transaction():
+            designation = await self.designations.update(designation, {"is_deleted": True})
+            await self._audit(
+                org_id=org_id,
+                actor_id=actor_id,
+                action_type=ActionType.DELETE,
+                sub_module=self._SUB_MODULE,
+                title="Designation deleted",
+                description=f"Deleted designation '{designation.designation_name}'.",
             )
         return DesignationSchema.model_validate(designation)
 

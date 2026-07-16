@@ -30,6 +30,7 @@ from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
 from fastapi.responses import FileResponse, Response
 
 from app.core.constants.enums import PermissionAction as A
+from app.core.constants.enums import SortOrder
 from app.core.dependencies.auth import (
     CurrentUser,
     get_current_active_user,
@@ -156,19 +157,35 @@ async def list_employees(
     pagination: Annotated[PaginationParams, Depends(pagination_params)],
     branch_id: Annotated[int | None, Query(description="Filter by master branch.")] = None,
     department_id: Annotated[int | None, Query(description="Filter by department.")] = None,
+    designation_id: Annotated[int | None, Query(description="Filter by designation.")] = None,
     employee_status: Annotated[
         EmploymentStatus | None, Query(alias="status", description="Filter by employment status.")
     ] = None,
     q: Annotated[str | None, Query(description="Free-text search (name / code / contact).")] = None,
+    sort_by: Annotated[
+        str | None,
+        Query(
+            description=(
+                "Sort column: employee_code | employee_name | date_of_joining | "
+                "employment_status | created_at | updated_at (default created_at)."
+            )
+        ),
+    ] = None,
+    sort_order: Annotated[
+        SortOrder | None, Query(description="Sort direction: asc or desc (default desc).")
+    ] = None,
 ) -> dict[str, Any]:
-    """Return a filtered, searched, paginated page of employees (branch-scoped)."""
+    """Return a filtered, searched, sorted, paginated page of employees (branch-scoped)."""
     query = EmployeeListQuery(
         page=pagination.page,
         page_size=pagination.page_size,
         branch_id=branch_id,
         department_id=department_id,
+        designation_id=designation_id,
         status=employee_status,
         q=q,
+        sort_by=sort_by,
+        sort_order=sort_order,
     )
     result = await service.list_employees(
         org_id=org_id, query=query, branch_scope=_branch_scope(current_user)
