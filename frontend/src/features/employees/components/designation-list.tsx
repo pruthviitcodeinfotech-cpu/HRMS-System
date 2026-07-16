@@ -16,6 +16,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { EmptyState } from "@/components/feedback/empty-state";
+import {
+  useDesignations,
+  useCreateDesignation,
+  useUpdateDesignation,
+  useDeleteDesignation,
+  useDesignationOptions,
+  useDebouncedValue,
+} from "../hooks";
 
 interface Designation {
   id: number;
@@ -29,33 +37,9 @@ interface Designation {
   };
 }
 
-const INITIAL_DESIGNATIONS: Designation[] = [
-  { id: 1, name: "System Architecture", employeeCount: 1, statusCounts: { Active: 1, Inactive: 0, Left: 0, Terminated: 0 } },
-  { id: 2, name: "HDL", employeeCount: 0, statusCounts: { Active: 0, Inactive: 0, Left: 0, Terminated: 0 } },
-  { id: 3, name: "Python", employeeCount: 3, statusCounts: { Active: 2, Inactive: 1, Left: 0, Terminated: 0 } },
-  { id: 4, name: "Graphic Designer", employeeCount: 3, statusCounts: { Active: 1, Inactive: 1, Left: 1, Terminated: 0 } },
-  { id: 5, name: "telecaller", employeeCount: 0, statusCounts: { Active: 0, Inactive: 0, Left: 0, Terminated: 0 } },
-  { id: 6, name: "video editing", employeeCount: 2, statusCounts: { Active: 2, Inactive: 0, Left: 0, Terminated: 0 } },
-  { id: 7, name: "Project Manager", employeeCount: 1, statusCounts: { Active: 1, Inactive: 0, Left: 0, Terminated: 0 } },
-  { id: 8, name: "BDM", employeeCount: 2, statusCounts: { Active: 1, Inactive: 0, Left: 1, Terminated: 0 } },
-  { id: 9, name: "marketing", employeeCount: 10, statusCounts: { Active: 6, Inactive: 2, Left: 1, Terminated: 1 } },
-  { id: 10, name: "React.js", employeeCount: 5, statusCounts: { Active: 4, Inactive: 0, Left: 1, Terminated: 0 } },
-  { id: 11, name: "Angular", employeeCount: 4, statusCounts: { Active: 3, Inactive: 1, Left: 0, Terminated: 0 } },
-  { id: 12, name: "Backend Developer", employeeCount: 6, statusCounts: { Active: 5, Inactive: 0, Left: 0, Terminated: 1 } },
-  { id: 13, name: "ceo", employeeCount: 1, statusCounts: { Active: 1, Inactive: 0, Left: 0, Terminated: 0 } },
-  { id: 14, name: "UI/UX Designer", employeeCount: 2, statusCounts: { Active: 1, Inactive: 1, Left: 0, Terminated: 0 } },
-  { id: 15, name: "HR Manager", employeeCount: 1, statusCounts: { Active: 1, Inactive: 0, Left: 0, Terminated: 0 } },
-];
-
 const EMPLOYEE_STATUS_OPTIONS = ["Active", "Inactive", "Left", "Terminated"];
 
 export function DesignationList() {
-  // Local list state
-  const [designations, setDesignations] = useState<Designation[]>(INITIAL_DESIGNATIONS);
-  
-  // Loading simulation state
-  const [isLoading, setIsLoading] = useState(true);
-
   // Search & Filtering Popups State
   const [activeActionRowId, setActiveActionRowId] = useState<number | null>(null);
   const [isNameFilterOpen, setIsNameFilterOpen] = useState(false);
@@ -63,6 +47,8 @@ export function DesignationList() {
 
   // Filter values
   const [searchQuery, setSearchQuery] = useState("");
+  const debouncedSearch = useDebouncedValue(searchQuery, 400);
+
   const [nameSearchQuery, setNameSearchQuery] = useState("");
   const [selectedNames, setSelectedNames] = useState<string[]>([]);
   const [tempSelectedNames, setTempSelectedNames] = useState<string[]>([]);
@@ -84,7 +70,6 @@ export function DesignationList() {
   const [drawerId, setDrawerId] = useState<number | null>(null);
   const [drawerName, setDrawerName] = useState("");
   const [drawerNameError, setDrawerNameError] = useState("");
-  const [isSaving, setIsSaving] = useState(false);
 
   // Delete Confirmation Modal
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
@@ -95,13 +80,45 @@ export function DesignationList() {
   const nameFilterDropdownRef = useRef<HTMLDivElement>(null);
   const countFilterDropdownRef = useRef<HTMLDivElement>(null);
 
-  // Simulate loading on mount
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setIsLoading(false);
-    }, 600);
-    return () => clearTimeout(timer);
-  }, []);
+  // React Query: Get paginated/filtered/sorted designations
+  const designationsQuery = useDesignations({
+    page: currentPage,
+    page_size: pageSize,
+    search: debouncedSearch.trim() || undefined,
+    sort_by: sortOrder ? "designation_name" : undefined,
+    sort_order: sortOrder || undefined,
+  });
+
+  // React Query: Fetch designation name options for the name filter dropdown
+  const { data: designationOptions = [] } = useDesignationOptions();
+
+  // React Query: Mutations
+  const createMutation = useCreateDesignation();
+  const updateMutation = useUpdateDesignation();
+  const deleteMutation = useDeleteDesignation();
+
+  const isSaving = createMutation.isPending || updateMutation.isPending;
+  const isMutationPending = isSaving || deleteMutation.isPending;
+
+  // Map backend DesignationSchema to local Designation type
+  const designations = useMemo<Designation[]>(() => {
+    const items = designationsQuery.data?.items ?? [];
+    return items.map((item) => ({
+      id: item.designation_id,
+      name: item.designation_name,
+      employeeCount: item.employee_count,
+      statusCounts: {
+        Active: item.employee_count,
+        Inactive: 0,
+        Left: 0,
+        Terminated: 0,
+      },
+    }));
+  }, [designationsQuery.data?.items]);
+
+  const paginationMeta = designationsQuery.data?.pagination;
+  const totalRecords = paginationMeta?.total_records ?? 0;
+  const totalPages = paginationMeta?.total_pages ?? 1;
 
   // Handle click outside to close dropdowns/popovers
   useEffect(() => {
@@ -142,10 +159,13 @@ export function DesignationList() {
     setIsNameFilterOpen(false);
   };
 
-  // Get all unique names available in current designations list
+  // Get all unique names available in designations list
   const allDesignationNames = useMemo(() => {
+    if (designationOptions.length > 0) {
+      return Array.from(new Set(designationOptions.map((d) => d.designation_name))).sort();
+    }
     return Array.from(new Set(designations.map((d) => d.name))).sort();
-  }, [designations]);
+  }, [designationOptions, designations]);
 
   // Filter and process designations
   const processedDesignations = useMemo(() => {
@@ -162,36 +182,13 @@ export function DesignationList() {
       };
     });
 
-    // Filter by search query
-    if (searchQuery.trim()) {
-      result = result.filter((d) =>
-        d.name.toLowerCase().includes(searchQuery.trim().toLowerCase())
-      );
-    }
-
-    // Filter by selected designation names if any are selected
+    // Filter by selected designation names if any are selected (local filtering for UI parity)
     if (selectedNames.length > 0) {
       result = result.filter((d) => selectedNames.includes(d.name));
     }
 
-    // Apply sorting
-    if (sortOrder === "asc") {
-      result.sort((a, b) => a.name.localeCompare(b.name));
-    } else if (sortOrder === "desc") {
-      result.sort((a, b) => b.name.localeCompare(a.name));
-    }
-
     return result;
-  }, [designations, searchQuery, selectedNames, selectedStatuses, sortOrder]);
-
-  // Pagination calculation
-  const totalRecords = processedDesignations.length;
-  const totalPages = Math.ceil(totalRecords / pageSize) || 1;
-
-  const paginatedDesignations = useMemo(() => {
-    const start = (currentPage - 1) * pageSize;
-    return processedDesignations.slice(start, start + pageSize);
-  }, [processedDesignations, currentPage, pageSize]);
+  }, [designations, selectedNames, selectedStatuses]);
 
   // Toggle sort order
   const handleSortName = () => {
@@ -226,10 +223,19 @@ export function DesignationList() {
 
   const confirmDelete = () => {
     if (deleteTargetId === null) return;
-    setDesignations((prev) => prev.filter((d) => d.id !== deleteTargetId));
-    toast.success("Designation deleted successfully");
-    setIsDeleteModalOpen(false);
-    setDeleteTargetId(null);
+    deleteMutation.mutate(deleteTargetId, {
+      onSuccess: () => {
+        toast.success("Designation deleted successfully");
+        setIsDeleteModalOpen(false);
+        setDeleteTargetId(null);
+      },
+      onError: (err: unknown) => {
+        const errMsg = err instanceof Error ? err.message : "Failed to delete designation";
+        toast.error(errMsg);
+        setIsDeleteModalOpen(false);
+        setDeleteTargetId(null);
+      },
+    });
   };
 
   const handleSaveDetails = (e: React.FormEvent) => {
@@ -239,50 +245,37 @@ export function DesignationList() {
       return;
     }
 
-    // Check duplicate
-    const isDuplicate = designations.some(
-      (d) => d.name.toLowerCase() === drawerName.trim().toLowerCase() && d.id !== drawerId
-    );
-    if (isDuplicate) {
-      setDrawerNameError("Designation name already exists");
-      return;
+    if (drawerMode === "add") {
+      createMutation.mutate(
+        { designation_name: drawerName.trim() },
+        {
+          onSuccess: () => {
+            toast.success("Designation created successfully");
+            setIsDrawerOpen(false);
+            setCurrentPage(1);
+          },
+          onError: (err: unknown) => {
+            const errMsg = err instanceof Error ? err.message : "Failed to create designation";
+            toast.error(errMsg);
+          },
+        }
+      );
+    } else {
+      if (drawerId === null) return;
+      updateMutation.mutate(
+        { id: drawerId, data: { designation_name: drawerName.trim() } },
+        {
+          onSuccess: () => {
+            toast.success("Designation updated successfully");
+            setIsDrawerOpen(false);
+          },
+          onError: (err: unknown) => {
+            const errMsg = err instanceof Error ? err.message : "Failed to update designation";
+            toast.error(errMsg);
+          },
+        }
+      );
     }
-
-    setIsSaving(true);
-
-    // Simulate save duration
-    setTimeout(() => {
-      if (drawerMode === "add") {
-        const newId = designations.length > 0 ? Math.max(...designations.map((d) => d.id)) + 1 : 1;
-        const newName = drawerName.trim();
-        const newDesignation: Designation = {
-          id: newId,
-          name: newName,
-          employeeCount: 0,
-          statusCounts: { Active: 0, Inactive: 0, Left: 0, Terminated: 0 },
-        };
-        setDesignations((prev) => [newDesignation, ...prev]);
-        setCurrentPage(1);
-        setSearchQuery("");
-        
-        // Auto-select in filter if filtering is active
-        if (selectedNames.length > 0) {
-          setSelectedNames((prev) => [...prev, newName]);
-        }
-        if (tempSelectedNames.length > 0) {
-          setTempSelectedNames((prev) => [...prev, newName]);
-        }
-
-        toast.success("Designation created successfully");
-      } else {
-        setDesignations((prev) =>
-          prev.map((d) => (d.id === drawerId ? { ...d, name: drawerName.trim() } : d))
-        );
-        toast.success("Designation updated successfully");
-      }
-      setIsSaving(false);
-      setIsDrawerOpen(false);
-    }, 400);
   };
 
   const resetFilters = () => {
@@ -355,12 +348,9 @@ export function DesignationList() {
     setIsCountFilterOpen(false);
   };
 
-  // Simulate loading state trigger
+  // Reload data from query
   const handleReload = () => {
-    setIsLoading(true);
-    setTimeout(() => {
-      setIsLoading(false);
-    }, 600);
+    designationsQuery.refetch();
   };
 
   return (
@@ -376,7 +366,7 @@ export function DesignationList() {
             onClick={handleReload}
             className="text-[10px] text-muted-foreground hover:text-foreground px-2 py-1.5 border border-border rounded-md transition-colors cursor-pointer mr-1"
           >
-            Reload UI
+            Reload Data
           </button>
           <Button variant="primary" size="sm" onClick={handleAddClick} className="shadow-xs bg-[#0b5cff] hover:bg-[#094ed9] text-white font-medium text-xs rounded-md h-9 px-4">
             Add New
@@ -447,7 +437,7 @@ export function DesignationList() {
                       <div className="relative">
                         <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
                         <input
-                          type="text"
+                           type="text"
                           value={nameSearchQuery}
                           onChange={(e) => setNameSearchQuery(e.target.value)}
                           placeholder="Search"
@@ -521,7 +511,7 @@ export function DesignationList() {
                       className={`p-1 hover:bg-muted rounded-md transition-colors cursor-pointer ${
                         selectedStatuses.length !== EMPLOYEE_STATUS_OPTIONS.length
                           ? "text-[#0b5cff]"
-                          : "text-[#0b5cff]"
+                          : "text-slate-400"
                       }`}
                     >
                       <SlidersHorizontal className="h-3 w-3" />
@@ -609,7 +599,7 @@ export function DesignationList() {
               </tr>
             </thead>
             <tbody>
-              {isLoading ? (
+              {designationsQuery.isLoading ? (
                 // Skeletons
                 Array.from({ length: pageSize }).map((_, idx) => (
                   <tr key={idx} className="border-b border-border/60">
@@ -624,13 +614,33 @@ export function DesignationList() {
                     </td>
                   </tr>
                 ))
-              ) : paginatedDesignations.length === 0 ? (
+              ) : designationsQuery.isError ? (
+                // Error State
+                <tr>
+                  <td colSpan={3} className="px-6 py-12 text-center">
+                    <div className="flex flex-col items-center justify-center space-y-3">
+                      <div className="h-12 w-12 rounded-full bg-destructive/10 flex items-center justify-center text-destructive">
+                        <AlertTriangle className="h-6 w-6" />
+                      </div>
+                      <div>
+                        <h4 className="text-sm font-semibold text-foreground">Failed to Load Designations</h4>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          {designationsQuery.error instanceof Error ? designationsQuery.error.message : "An error occurred."}
+                        </p>
+                      </div>
+                      <Button variant="outline" size="sm" onClick={() => designationsQuery.refetch()}>
+                        Retry
+                      </Button>
+                    </div>
+                  </td>
+                </tr>
+              ) : processedDesignations.length === 0 ? (
                 // Empty State
                 <tr>
                   <td colSpan={3} className="px-6 py-12 text-center">
                     <EmptyState
                       title="No Designations Found"
-                      description="Try adjusting your search query or status filters."
+                      description="Try adjusting your search query or filters."
                       action={
                         <Button variant="outline" size="sm" onClick={resetFilters}>
                           Reset Filters
@@ -641,7 +651,7 @@ export function DesignationList() {
                 </tr>
               ) : (
                 // Table Rows
-                paginatedDesignations.map((d) => (
+                processedDesignations.map((d) => (
                   <tr
                     key={d.id}
                     className="border-b border-border/60 hover:bg-[#f8fafc]/50 dark:hover:bg-slate-800/10 transition-colors"
@@ -678,8 +688,9 @@ export function DesignationList() {
                             Edit
                           </button>
                           <button
+                            disabled={isMutationPending}
                             onClick={() => handleDeleteClick(d.id)}
-                            className="w-full flex items-center gap-2 px-3 py-1.5 text-xs font-semibold text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 transition-colors cursor-pointer text-left border-none bg-transparent"
+                            className="w-full flex items-center gap-2 px-3 py-1.5 text-xs font-semibold text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 disabled:opacity-50 transition-colors cursor-pointer text-left border-none bg-transparent"
                           >
                             <Trash2 className="h-3.5 w-3.5 text-red-500" />
                             Delete
@@ -726,7 +737,7 @@ export function DesignationList() {
             {/* Prev / Next & Numbers Pagination */}
             <div className="flex items-center gap-1">
               <button
-                disabled={currentPage === 1 || isLoading}
+                disabled={currentPage === 1 || designationsQuery.isLoading}
                 onClick={() => setCurrentPage((p) => p - 1)}
                 className="h-8 px-3 border border-border rounded-md hover:bg-muted disabled:opacity-50 disabled:hover:bg-transparent cursor-pointer disabled:cursor-not-allowed transition-colors text-slate-600 dark:text-slate-300 font-semibold bg-white dark:bg-slate-800"
               >
@@ -748,7 +759,7 @@ export function DesignationList() {
               ))}
 
               <button
-                disabled={currentPage === totalPages || isLoading}
+                disabled={currentPage === totalPages || designationsQuery.isLoading}
                 onClick={() => setCurrentPage((p) => p + 1)}
                 className="h-8 px-3 border border-border rounded-md hover:bg-muted disabled:opacity-50 disabled:hover:bg-transparent cursor-pointer disabled:cursor-not-allowed transition-colors text-slate-600 dark:text-slate-300 font-semibold bg-white dark:bg-slate-800"
               >
@@ -788,7 +799,7 @@ export function DesignationList() {
               <form onSubmit={handleSaveDetails} className="p-5 space-y-4">
                 <div className="space-y-1.5">
                   <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                    Name <span className="text-red-500">*</span>
+                    Name <span className="text-red-550">*</span>
                   </label>
                   <Input
                     value={drawerName}
@@ -871,10 +882,18 @@ export function DesignationList() {
               <Button
                 variant="destructive"
                 size="sm"
+                disabled={deleteMutation.isPending}
                 onClick={confirmDelete}
                 className="h-9 px-4 text-xs font-semibold bg-red-600 hover:bg-red-700 text-white"
               >
-                Delete
+                {deleteMutation.isPending ? (
+                  <>
+                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                    Deleting...
+                  </>
+                ) : (
+                  "Delete"
+                )}
               </Button>
             </div>
           </div>
