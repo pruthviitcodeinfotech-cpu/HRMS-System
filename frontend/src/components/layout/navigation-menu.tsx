@@ -71,6 +71,12 @@ export const NavigationMenu = ({ sidebarOpen }: NavigationMenuProps) => {
       hasChevron: true,
       isNew: false,
       permission: { feature: "shift", action: "read" },
+      items: [
+        { href: "/shifts", label: "Shifts" },
+        { href: "/shifts/assignments", label: "Shift Assignment" },
+        { href: "/shifts/week-off", label: "Week Off" },
+        { href: "/shifts/roster", label: "Roster" },
+      ] as const,
     },
     {
       href: "/leaves",

@@ -134,12 +134,28 @@ class BranchRepository(BaseRepository[Branch]):
 
     async def get_by_id_in_org(self, org_id: int, branch_id: int) -> Branch | None:
         """Return a non-deleted branch by id within ``org_id``, or ``None``."""
-        stmt = select(Branch).where(
+        active_emp_sub = (
+            select(func.count(Employee.employee_id))
+            .where(
+                Employee.master_branch_id == Branch.branch_id,
+                Employee.org_id == org_id,
+                Employee.is_deleted.is_(False),
+                Employee.employment_status == ACTIVE_EMPLOYMENT_STATUS,
+            )
+            .correlate(Branch)
+            .scalar_subquery()
+        )
+        stmt = select(Branch, active_emp_sub.label("employee_count")).where(
             Branch.branch_id == branch_id,
             Branch.org_id == org_id,
             Branch.is_deleted.is_(False),
         )
-        return (await self.session.execute(stmt.limit(1))).scalar_one_or_none()
+        row = (await self.session.execute(stmt.limit(1))).first()
+        if row is None:
+            return None
+        branch, count = row
+        branch.employee_count = count
+        return branch
 
     async def has_active_employees(self, org_id: int, branch_id: int) -> bool:
         """Return whether any active, non-deleted employee references this branch."""
@@ -198,7 +214,18 @@ class BranchRepository(BaseRepository[Branch]):
             include_deleted=include_deleted,
             branch_scope=branch_scope,
         )
-        stmt = select(Branch).where(and_(*conds))
+        active_emp_sub = (
+            select(func.count(Employee.employee_id))
+            .where(
+                Employee.master_branch_id == Branch.branch_id,
+                Employee.org_id == org_id,
+                Employee.is_deleted.is_(False),
+                Employee.employment_status == ACTIVE_EMPLOYMENT_STATUS,
+            )
+            .correlate(Branch)
+            .scalar_subquery()
+        )
+        stmt = select(Branch, active_emp_sub.label("employee_count")).where(and_(*conds))
         stmt = apply_sorting(
             stmt,
             Branch,
@@ -208,7 +235,12 @@ class BranchRepository(BaseRepository[Branch]):
             default_sort_by="branch_name",
         )
         stmt = stmt.limit(page_size).offset((page - 1) * page_size)
-        return list((await self.session.execute(stmt)).scalars().all())
+        res = await self.session.execute(stmt)
+        branches_with_count = []
+        for branch, count in res.all():
+            branch.employee_count = count
+            branches_with_count.append(branch)
+        return branches_with_count
 
     async def search_count(
         self,

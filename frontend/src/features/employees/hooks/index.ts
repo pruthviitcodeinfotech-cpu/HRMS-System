@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { keepPreviousData, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { employeeService } from "../services/employees";
-import { EmployeeListParams, DepartmentListParams, DesignationListParams } from "../types";
+import { EmployeeListParams, DepartmentListParams, DesignationListParams, BranchListParams, BranchCreatePayload, BranchUpdatePayload } from "../types";
 
 // Query-key factory: every employee cache entry lives under ["employees", ...]
 export const employeeKeys = {
@@ -260,6 +260,112 @@ export const useDeleteDesignation = () => {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: designationKeys.all });
       queryClient.invalidateQueries({ queryKey: ["employees", "lookups", "designations"] });
+    },
+  });
+};
+
+// ---------------------------------------------------------------------------
+// Branch hooks
+// ---------------------------------------------------------------------------
+
+export const branchKeys = {
+  all: ["branches"] as const,
+  lists: () => [...branchKeys.all, "list"] as const,
+  list: (params: BranchListParams) => [...branchKeys.lists(), params] as const,
+  detail: (id: number) => [...branchKeys.all, "detail", id] as const,
+};
+
+export const useBranches = (params: BranchListParams) => {
+  return useQuery({
+    queryKey: branchKeys.list(params),
+    queryFn: async () => {
+      const response = await employeeService.getBranches(params);
+      return response.data;
+    },
+    placeholderData: keepPreviousData,
+  });
+};
+
+export const useBranch = (id: number, enabled = true) => {
+  return useQuery({
+    queryKey: branchKeys.detail(id),
+    queryFn: async () => {
+      const response = await employeeService.getBranch(id);
+      return response.data;
+    },
+    enabled: enabled && !!id,
+  });
+};
+
+export const useCreateBranch = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (data: BranchCreatePayload) => {
+      const response = await employeeService.createBranch(data);
+      return response.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: branchKeys.all });
+      queryClient.invalidateQueries({ queryKey: ["employees", "lookups", "branches"] });
+    },
+  });
+};
+
+export const useUpdateBranch = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, data }: { id: number; data: BranchUpdatePayload }) => {
+      const response = await employeeService.updateBranch(id, data);
+      return response.data;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: branchKeys.all });
+      queryClient.invalidateQueries({ queryKey: branchKeys.detail(data.branch_id) });
+      queryClient.invalidateQueries({ queryKey: ["employees", "lookups", "branches"] });
+    },
+  });
+};
+
+export const useActivateBranch = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: number) => {
+      const response = await employeeService.activateBranch(id);
+      return response.data;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: branchKeys.all });
+      queryClient.invalidateQueries({ queryKey: branchKeys.detail(data.branch_id) });
+      queryClient.invalidateQueries({ queryKey: ["employees", "lookups", "branches"] });
+    },
+  });
+};
+
+export const useDeactivateBranch = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: number) => {
+      const response = await employeeService.deactivateBranch(id);
+      return response.data;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: branchKeys.all });
+      queryClient.invalidateQueries({ queryKey: branchKeys.detail(data.branch_id) });
+      queryClient.invalidateQueries({ queryKey: ["employees", "lookups", "branches"] });
+    },
+  });
+};
+
+export const useDeleteBranch = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: number) => {
+      const response = await employeeService.deleteBranch(id);
+      return response.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: branchKeys.all });
+      queryClient.invalidateQueries({ queryKey: ["employees", "lookups", "branches"] });
     },
   });
 };

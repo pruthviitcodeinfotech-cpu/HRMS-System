@@ -13,6 +13,11 @@ import {
   DesignationListParams,
   DesignationListResponse,
   DesignationSchema,
+  BranchListParams,
+  BranchListResponse,
+  BranchSchema,
+  BranchCreatePayload,
+  BranchUpdatePayload,
 } from "../types";
 
 const buildListQuery = (params: EmployeeListParams): string => {
@@ -150,5 +155,50 @@ export const employeeService = {
 
   deleteDesignation: async (designationId: number): Promise<ApiResponse<DesignationSchema>> => {
     return apiClient.delete<ApiResponse<DesignationSchema>>(`/designations/${designationId}`);
+  },
+
+  getBranches: async (
+    params: BranchListParams = {}
+  ): Promise<ApiResponse<BranchListResponse>> => {
+    const query = new URLSearchParams();
+    if (params.page) query.append("page", String(params.page));
+    if (params.page_size) query.append("page_size", String(params.page_size));
+    if (params.search) query.append("search", params.search);
+    if (params.is_active !== undefined) query.append("is_active", String(params.is_active));
+    if (params.include_deleted !== undefined)
+      query.append("include_deleted", String(params.include_deleted));
+    if (params.sort_by) query.append("sort_by", params.sort_by);
+    if (params.sort_order) query.append("sort_order", params.sort_order);
+
+    const queryString = query.toString();
+    const url = queryString ? `/branches?${queryString}` : "/branches";
+    return apiClient.get<ApiResponse<BranchListResponse>>(url);
+  },
+
+  getBranch: async (branchId: number): Promise<ApiResponse<BranchSchema>> => {
+    return apiClient.get<ApiResponse<BranchSchema>>(`/branches/${branchId}`);
+  },
+
+  createBranch: async (data: BranchCreatePayload): Promise<ApiResponse<BranchSchema>> => {
+    return apiClient.post<ApiResponse<BranchSchema>>("/branches", data);
+  },
+
+  updateBranch: async (
+    branchId: number,
+    data: BranchUpdatePayload
+  ): Promise<ApiResponse<BranchSchema>> => {
+    return apiClient.patch<ApiResponse<BranchSchema>>(`/branches/${branchId}`, data);
+  },
+
+  activateBranch: async (branchId: number): Promise<ApiResponse<BranchSchema>> => {
+    return apiClient.post<ApiResponse<BranchSchema>>(`/branches/${branchId}/activate`, {});
+  },
+
+  deactivateBranch: async (branchId: number): Promise<ApiResponse<BranchSchema>> => {
+    return apiClient.post<ApiResponse<BranchSchema>>(`/branches/${branchId}/deactivate`, {});
+  },
+
+  deleteBranch: async (branchId: number): Promise<ApiResponse<BranchSchema>> => {
+    return apiClient.delete<ApiResponse<BranchSchema>>(`/branches/${branchId}`);
   },
 };

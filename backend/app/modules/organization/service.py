@@ -322,6 +322,27 @@ class BranchService(_OrgBaseService):
             )
         return BranchSchema.model_validate(branch)
 
+    async def delete_branch(
+        self, *, org_id: int, actor_id: int, branch_id: int
+    ) -> BranchSchema:
+        """Soft-delete a branch. Blocked if referenced by active employees."""
+        branch = await self._get_or_404(org_id, branch_id)
+
+        if await self.branches.has_active_employees(org_id, branch_id):
+            raise BranchInUseException()
+
+        async with self.transaction():
+            branch = await self.branches.update(branch, {"is_deleted": True})
+            await self._audit(
+                org_id=org_id,
+                actor_id=actor_id,
+                action_type=ActionType.DELETE,
+                sub_module=self._SUB_MODULE,
+                title="Branch deleted",
+                description=f"Deleted branch '{branch.branch_name}'.",
+            )
+        return BranchSchema.model_validate(branch)
+
     async def _get_or_404(self, org_id: int, branch_id: int) -> Branch:
         branch = await self.branches.get_by_id_in_org(org_id, branch_id)
         if branch is None:

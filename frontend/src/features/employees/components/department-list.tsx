@@ -259,10 +259,10 @@ export function DepartmentList() {
     <div className="space-y-4">
       {/* Upper header */}
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-1.5 text-sm font-bold text-foreground">
+        <h1 className="flex items-center gap-1.5 text-xl font-bold tracking-tight text-foreground">
           <span>Departments</span>
           <span className="text-primary font-bold">({totalRecords})</span>
-        </div>
+        </h1>
         <Button variant="primary" size="sm" onClick={handleAddClick} className="gap-1.5 shadow-xs">
           <Plus className="h-4 w-4" />
           Add New

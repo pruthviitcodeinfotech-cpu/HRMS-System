@@ -185,6 +185,7 @@ class BranchSchema(BaseSchema):
     allowed_radius_meters: int | None = Field(default=None, description="Geofence radius (m).")
     is_active: bool = Field(..., description="Whether the branch is active.")
     is_deleted: bool = Field(..., description="Soft-delete flag.")
+    employee_count: int = Field(default=0, description="Count of active employees in this branch.")
     created_at: datetime = Field(..., description="Creation timestamp.")
     updated_at: datetime = Field(..., description="Last update timestamp.")
 

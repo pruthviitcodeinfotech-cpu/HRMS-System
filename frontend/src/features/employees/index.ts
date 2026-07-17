@@ -3,6 +3,7 @@ export * from "./types";
 export * from "./components/employee-list";
 export * from "./components/department-list";
 export * from "./components/designation-list";
+export * from "./components/branch-list";
 export * from "./hooks";
 export * from "./services/employees";
 export * from "./utils";

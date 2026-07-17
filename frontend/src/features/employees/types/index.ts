@@ -192,3 +192,81 @@ export interface DesignationListParams {
   sort_by?: "designation_name" | "created_at";
   sort_order?: SortOrder;
 }
+
+// ---------------------------------------------------------------------------
+// Backend contract — GET /api/v1/branches (Organization module)
+// ---------------------------------------------------------------------------
+
+export interface BranchSchema {
+  branch_id: number;
+  org_id: number;
+  branch_name: string;
+  logo_url: string | null;
+  gstin: string | null;
+  mobile_number: string | null;
+  address: string | null;
+  landmark: string | null;
+  pin_code: string | null;
+  city: string | null;
+  state: string | null;
+  country: string | null;
+  industry_type: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  allowed_radius_meters: number | null;
+  is_active: boolean;
+  is_deleted: boolean;
+  employee_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BranchListResponse {
+  items: BranchSchema[];
+  pagination: PaginationMeta;
+}
+
+export interface BranchListParams {
+  page?: number;
+  page_size?: number;
+  search?: string;
+  is_active?: boolean;
+  include_deleted?: boolean;
+  sort_by?: "branch_name" | "created_at";
+  sort_order?: SortOrder;
+}
+
+export interface BranchCreatePayload {
+  branch_name: string;
+  logo_url?: string | null;
+  gstin?: string | null;
+  mobile_number?: string | null;
+  address?: string | null;
+  landmark?: string | null;
+  pin_code?: string | null;
+  city?: string | null;
+  state?: string | null;
+  country?: string | null;
+  industry_type?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  allowed_radius_meters?: number | null;
+}
+
+export interface BranchUpdatePayload {
+  branch_name?: string;
+  logo_url?: string | null;
+  gstin?: string | null;
+  mobile_number?: string | null;
+  address?: string | null;
+  landmark?: string | null;
+  pin_code?: string | null;
+  city?: string | null;
+  state?: string | null;
+  country?: string | null;
+  industry_type?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  allowed_radius_meters?: number | null;
+}
+

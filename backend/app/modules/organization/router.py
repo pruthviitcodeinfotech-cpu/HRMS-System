@@ -334,6 +334,25 @@ async def deactivate_branch(
     return _ok(result, "Branch deactivated.")
 
 
+@router.delete(
+    "/branches/{branch_id}",
+    response_model=SuccessResponse[BranchSchema],
+    summary="Delete Branch",
+    dependencies=[Depends(require_permission(BRANCH_FEATURE, A.DELETE))],
+)
+async def delete_branch(
+    branch_id: int,
+    service: BranchServiceDep,
+    current_user: CurrentUserDep,
+    org_id: OrgIdDep,
+) -> dict[str, Any]:
+    """Soft-delete a branch scoped to the organization. Blocked if in use."""
+    result = await service.delete_branch(
+        org_id=org_id, actor_id=current_user.user_id, branch_id=branch_id
+    )
+    return _ok(result, "Branch deleted successfully.")
+
+
 # ===========================================================================
 # 13-18. Department Management (§5.2) — feature key `department`
 # ===========================================================================
