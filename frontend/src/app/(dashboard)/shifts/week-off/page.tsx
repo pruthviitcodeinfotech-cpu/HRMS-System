@@ -9,9 +9,7 @@ import {
   Trash2,
   ChevronLeft,
   MoreVertical,
-  Calendar,
   X,
-  Settings,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -376,7 +374,7 @@ export default function WeekOffPage() {
                 </h3>
                 <button
                   onClick={() => setIsDrawerOpen(false)}
-                  className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-850 rounded-md text-slate-505 hover:text-slate-850 cursor-pointer focus:outline-none"
+                  className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md text-slate-500 hover:text-slate-800 cursor-pointer focus:outline-none"
                 >
                   <X className="h-4 w-4" />
                 </button>

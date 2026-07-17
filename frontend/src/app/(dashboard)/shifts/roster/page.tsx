@@ -3,10 +3,8 @@
 import React, { useState, useMemo } from "react";
 import {
   Search,
-  SlidersHorizontal,
   ChevronLeft,
   ChevronRight,
-  Plus,
   Calendar as CalendarIcon,
   Sparkles,
   X,
@@ -14,7 +12,6 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import { ProtectedRoute } from "@/features/auth";
@@ -383,7 +380,7 @@ export default function RosterPage() {
                 </h3>
                 <button
                   onClick={() => setIsGeneratorOpen(false)}
-                  className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md text-slate-505 hover:text-slate-850 cursor-pointer focus:outline-none"
+                  className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md text-slate-500 hover:text-slate-800 cursor-pointer focus:outline-none"
                 >
                   <X className="h-4 w-4" />
                 </button>

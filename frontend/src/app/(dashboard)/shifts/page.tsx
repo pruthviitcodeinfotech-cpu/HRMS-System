@@ -1,22 +1,19 @@
 "use client";
 
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import {
   Search,
   SlidersHorizontal,
-  Plus,
-  Edit2,
-  Trash2,
-  ChevronLeft,
-  MoreVertical,
+  Download,
   Clock,
-  Check,
-  AlertTriangle,
   X,
+  Settings,
+  HelpCircle,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import { ProtectedRoute } from "@/features/auth";
@@ -25,573 +22,1195 @@ interface ShiftTiming {
   day: string;
   check_in: string;
   check_out: string;
-  break_duration: number; // in minutes
   is_working: boolean;
 }
 
 interface ShiftItem {
   shift_id: number;
   shift_name: string;
-  shift_type: "Regular" | "Flex" | "Split";
-  check_in_grace_mins: number;
   is_default: boolean;
-  is_active: boolean;
+  assigned_employees: number;
+  created_at: string;
+  remark?: string;
   timings: ShiftTiming[];
+  color?: string;
 }
 
 const INITIAL_SHIFTS: ShiftItem[] = [
   {
     shift_id: 1,
-    shift_name: "General Shift",
-    shift_type: "Regular",
-    check_in_grace_mins: 15,
+    shift_name: "Daily",
     is_default: true,
-    is_active: true,
+    assigned_employees: 39,
+    created_at: "2025-11-17",
+    remark: "Default organization general shift",
+    color: "#0B85C9",
     timings: [
-      { day: "Monday", check_in: "09:00", check_out: "18:00", break_duration: 60, is_working: true },
-      { day: "Tuesday", check_in: "09:00", check_out: "18:00", break_duration: 60, is_working: true },
-      { day: "Wednesday", check_in: "09:00", check_out: "18:00", break_duration: 60, is_working: true },
-      { day: "Thursday", check_in: "09:00", check_out: "18:00", break_duration: 60, is_working: true },
-      { day: "Friday", check_in: "09:00", check_out: "18:00", break_duration: 60, is_working: true },
-      { day: "Saturday", check_in: "09:00", check_out: "14:00", break_duration: 30, is_working: true },
-      { day: "Sunday", check_in: "00:00", check_out: "00:00", break_duration: 0, is_working: false },
+      { day: "Sunday", check_in: "09:20 AM", check_out: "06:50 PM", is_working: true },
+      { day: "Monday", check_in: "09:20 AM", check_out: "06:50 PM", is_working: true },
+      { day: "Tuesday", check_in: "09:20 AM", check_out: "06:50 PM", is_working: true },
+      { day: "Wednesday", check_in: "09:20 AM", check_out: "06:50 PM", is_working: true },
+      { day: "Thursday", check_in: "09:20 AM", check_out: "06:50 PM", is_working: true },
+      { day: "Friday", check_in: "09:20 AM", check_out: "06:50 PM", is_working: true },
+      { day: "Saturday", check_in: "09:20 AM", check_out: "06:50 PM", is_working: true },
     ],
   },
   {
     shift_id: 2,
-    shift_name: "Morning Shift",
-    shift_type: "Regular",
-    check_in_grace_mins: 10,
+    shift_name: "Night Shift Developer",
     is_default: false,
-    is_active: true,
+    assigned_employees: 0,
+    created_at: "2025-12-04",
+    remark: "Night shift for tech support & developers",
+    color: "#8B5CF6",
     timings: [
-      { day: "Monday", check_in: "06:00", check_out: "14:00", break_duration: 45, is_working: true },
-      { day: "Tuesday", check_in: "06:00", check_out: "14:00", break_duration: 45, is_working: true },
-      { day: "Wednesday", check_in: "06:00", check_out: "14:00", break_duration: 45, is_working: true },
-      { day: "Thursday", check_in: "06:00", check_out: "14:00", break_duration: 45, is_working: true },
-      { day: "Friday", check_in: "06:00", check_out: "14:00", break_duration: 45, is_working: true },
-      { day: "Saturday", check_in: "06:00", check_out: "12:00", break_duration: 30, is_working: true },
-      { day: "Sunday", check_in: "00:00", check_out: "00:00", break_duration: 0, is_working: false },
+      { day: "Sunday", check_in: "10:30 PM", check_out: "06:30 AM", is_working: true },
+      { day: "Monday", check_in: "10:30 PM", check_out: "06:30 AM", is_working: true },
+      { day: "Tuesday", check_in: "10:30 PM", check_out: "06:30 AM", is_working: true },
+      { day: "Wednesday", check_in: "10:30 PM", check_out: "06:30 AM", is_working: true },
+      { day: "Thursday", check_in: "10:30 PM", check_out: "06:30 AM", is_working: true },
+      { day: "Friday", check_in: "10:30 PM", check_out: "06:30 AM", is_working: true },
+      { day: "Saturday", check_in: "10:30 PM", check_out: "06:30 AM", is_working: true },
     ],
   },
   {
     shift_id: 3,
-    shift_name: "Night Shift",
-    shift_type: "Regular",
-    check_in_grace_mins: 15,
+    shift_name: "Khushi maam 8 to 6",
     is_default: false,
-    is_active: true,
+    assigned_employees: 1,
+    created_at: "2025-12-04",
+    remark: "Management custom hours",
+    color: "#EF4444",
     timings: [
-      { day: "Monday", check_in: "22:00", check_out: "06:00", break_duration: 60, is_working: true },
-      { day: "Tuesday", check_in: "22:00", check_out: "06:00", break_duration: 60, is_working: true },
-      { day: "Wednesday", check_in: "22:00", check_out: "06:00", break_duration: 60, is_working: true },
-      { day: "Thursday", check_in: "22:00", check_out: "06:00", break_duration: 60, is_working: true },
-      { day: "Friday", check_in: "22:00", check_out: "06:00", break_duration: 60, is_working: true },
-      { day: "Saturday", check_in: "22:00", check_out: "06:00", break_duration: 60, is_working: true },
-      { day: "Sunday", check_in: "00:00", check_out: "00:00", break_duration: 0, is_working: false },
+      { day: "Sunday", check_in: "08:30 AM", check_out: "06:00 PM", is_working: true },
+      { day: "Monday", check_in: "08:30 AM", check_out: "06:00 PM", is_working: true },
+      { day: "Tuesday", check_in: "08:30 AM", check_out: "06:00 PM", is_working: true },
+      { day: "Wednesday", check_in: "08:30 AM", check_out: "06:00 PM", is_working: true },
+      { day: "Thursday", check_in: "08:30 AM", check_out: "06:00 PM", is_working: true },
+      { day: "Friday", check_in: "08:30 AM", check_out: "06:00 PM", is_working: true },
+      { day: "Saturday", check_in: "08:30 AM", check_out: "06:00 PM", is_working: true },
+    ],
+  },
+  {
+    shift_id: 4,
+    shift_name: "Open Shift",
+    is_default: false,
+    assigned_employees: 0,
+    created_at: "2026-07-17",
+    remark: "Flexible hours",
+    color: "#10B981",
+    timings: [
+      { day: "Sunday", check_in: "N/A", check_out: "N/A", is_working: false },
+      { day: "Monday", check_in: "N/A", check_out: "N/A", is_working: false },
+      { day: "Tuesday", check_in: "N/A", check_out: "N/A", is_working: false },
+      { day: "Wednesday", check_in: "N/A", check_out: "N/A", is_working: false },
+      { day: "Thursday", check_in: "N/A", check_out: "N/A", is_working: false },
+      { day: "Friday", check_in: "N/A", check_out: "N/A", is_working: false },
+      { day: "Saturday", check_in: "N/A", check_out: "N/A", is_working: false },
     ],
   },
 ];
+
+const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 export default function ShiftsPage() {
   const router = useRouter();
   const [shifts, setShifts] = useState<ShiftItem[]>(INITIAL_SHIFTS);
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedType, setSelectedType] = useState<string>("All");
-  
-  // Drawer state
+
+  // View modes
+  const [isAdvancedMode, setIsAdvancedMode] = useState(false);
+  const [showSwitchModal, setShowSwitchModal] = useState(false);
+
+  // Sorting
+  const [sortField, setSortField] = useState<string>("shift_name");
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
+
+  // Pagination
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+
+  // Loading indicator simulator
+  const [isLoading, setIsLoading] = useState(false);
+
+  // Create/Edit Shift Drawer state
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
-  const [drawerMode, setDrawerMode] = useState<"add" | "edit">("add");
-  const [selectedShiftId, setSelectedShiftId] = useState<number | null>(null);
+  const [drawerMode, setDrawerMode] = useState<"add" | "edit">("edit");
+  const [selectedShift, setSelectedShift] = useState<ShiftItem | null>(null);
 
-  // Form Fields State
-  const [shiftName, setShiftName] = useState("");
-  const [shiftType, setShiftType] = useState<"Regular" | "Flex" | "Split">("Regular");
-  const [graceMins, setGraceMins] = useState("15");
-  const [isDefault, setIsDefault] = useState(false);
-  const [weeklyTimings, setWeeklyTimings] = useState<ShiftTiming[]>([
-    { day: "Monday", check_in: "09:00", check_out: "18:00", break_duration: 60, is_working: true },
-    { day: "Tuesday", check_in: "09:00", check_out: "18:00", break_duration: 60, is_working: true },
-    { day: "Wednesday", check_in: "09:00", check_out: "18:00", break_duration: 60, is_working: true },
-    { day: "Thursday", check_in: "09:00", check_out: "18:00", break_duration: 60, is_working: true },
-    { day: "Friday", check_in: "09:00", check_out: "18:00", break_duration: 60, is_working: true },
-    { day: "Saturday", check_in: "09:00", check_out: "14:00", break_duration: 30, is_working: true },
-    { day: "Sunday", check_in: "00:00", check_out: "00:00", break_duration: 0, is_working: false },
-  ]);
+  // Create Shift Form Fields State (Matching the screenshot exactly)
+  const [formName, setFormName] = useState("");
+  const [oneShiftTimeForAllDays, setOneShiftTimeForAllDays] = useState(true);
+  const [addBreakTime, setAddBreakTime] = useState(false);
+  const [formStartTime, setFormStartTime] = useState("");
+  const [formEndTime, setFormEndTime] = useState("");
+  const [formBreakStart, setFormBreakStart] = useState("");
+  const [formBreakEnd, setFormBreakEnd] = useState("");
+  const [shiftColor, setShiftColor] = useState("#0B85C9");
+  const [formRemark, setFormRemark] = useState("");
 
-  const [activeMenuId, setActiveMenuId] = useState<number | null>(null);
+  // Individual days timing states
+  const [dayTimings, setDayTimings] = useState<Record<string, { check_in: string; check_out: string; is_working: boolean }>>({});
 
-  // Filtered list
-  const filteredShifts = useMemo(() => {
+  // Adjust working hours Drawer state
+  const [isWorkingHoursOpen, setIsWorkingHoursOpen] = useState(false);
+  const [workingHoursType, setWorkingHoursType] = useState<"fixed" | "shift_wise">("fixed");
+  const [fullDayHours, setFullDayHours] = useState("08:00");
+  const [halfDayHours, setHalfDayHours] = useState("04:00");
+  const [attendanceMode, setAttendanceMode] = useState<"all" | "first_last" | "single" | "default">("all");
+  const [isConfigHistoryOpen, setIsConfigHistoryOpen] = useState(true);
+
+  // Validation Errors
+  const [errors, setErrors] = useState<Record<string, string>>({});
+
+  // Simulate loading on search/filters
+  useEffect(() => {
+    setIsLoading(true);
+    const timer = setTimeout(() => {
+      setIsLoading(false);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery, isAdvancedMode, currentPage, pageSize]);
+
+  // Form validation checker
+  const validateForm = () => {
+    const newErrors: Record<string, string> = {};
+    if (!formName.trim()) {
+      newErrors.shift_name = "Shift Name is required";
+    }
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  };
+
+  // Convert "09:20" to AM/PM string for displaying in the table
+  const convertToAMPM = (timeStr: string) => {
+    if (!timeStr || timeStr === "N/A") return "N/A";
+    try {
+      const [h, m] = timeStr.split(":");
+      const hour = parseInt(h);
+      const suffix = hour >= 12 ? "PM" : "AM";
+      const displayHour = hour % 12 || 12;
+      return `${String(displayHour).padStart(2, "0")}:${m} ${suffix}`;
+    } catch {
+      return timeStr;
+    }
+  };
+
+  // Convert e.g. "09:20 AM" to 24h "09:20"
+  const convertTo24Hour = (timeAMPM: string) => {
+    if (!timeAMPM || timeAMPM === "N/A") return "";
+    try {
+      const match = timeAMPM.match(/^(\d+):(\d+)\s*(AM|PM)$/i);
+      if (!match) return timeAMPM;
+      let hour = parseInt(match[1]);
+      const minute = match[2];
+      const suffix = match[3].toUpperCase();
+      if (suffix === "PM" && hour < 12) hour += 12;
+      if (suffix === "AM" && hour === 12) hour = 0;
+      return `${String(hour).padStart(2, "0")}:${minute}`;
+    } catch {
+      return "";
+    }
+  };
+
+  // Handle Sort
+  const handleSort = (field: string) => {
+    if (sortField === field) {
+      setSortDirection((prev) => (prev === "asc" ? "desc" : "asc"));
+    } else {
+      setSortField(field);
+      setSortDirection("asc");
+    }
+  };
+
+  // Filtered and Sorted Shifts
+  const processedShifts = useMemo(() => {
     let result = [...shifts];
+
+    // Local Search
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
-      result = result.filter((s) => s.shift_name.toLowerCase().includes(q));
+      result = result.filter(
+        (s) =>
+          s.shift_name.toLowerCase().includes(q) ||
+          (s.remark && s.remark.toLowerCase().includes(q))
+      );
     }
-    if (selectedType !== "All") {
-      result = result.filter((s) => s.shift_type === selectedType);
-    }
+
+    // Sorting
+    result.sort((a: any, b: any) => {
+      let valA = a[sortField];
+      let valB = b[sortField];
+
+      if (valA === undefined) valA = "";
+      if (valB === undefined) valB = "";
+
+      if (typeof valA === "string") {
+        return sortDirection === "asc"
+          ? valA.localeCompare(valB)
+          : valB.localeCompare(valA);
+      } else {
+        return sortDirection === "asc" ? valA - valB : valB - valA;
+      }
+    });
+
     return result;
-  }, [shifts, searchQuery, selectedType]);
+  }, [shifts, searchQuery, sortField, sortDirection]);
 
-  const handleToggleActive = (id: number) => {
-    setShifts((prev) =>
-      prev.map((s) => (s.shift_id === id ? { ...s, is_active: !s.is_active } : s))
-    );
-    const target = shifts.find((s) => s.shift_id === id);
-    toast.success(`Shift "${target?.shift_name}" status updated.`);
-    setActiveMenuId(null);
-  };
+  // Paginated Shifts
+  const paginatedShifts = useMemo(() => {
+    const startIndex = (currentPage - 1) * pageSize;
+    return processedShifts.slice(startIndex, startIndex + pageSize);
+  }, [processedShifts, currentPage, pageSize]);
 
-  const handleDeleteShift = (id: number) => {
-    const target = shifts.find((s) => s.shift_id === id);
-    if (target?.is_default) {
-      toast.error("Cannot delete the default shift.");
-      return;
-    }
-    setShifts((prev) => prev.filter((s) => s.shift_id !== id));
-    toast.success(`Shift "${target?.shift_name}" deleted.`);
-    setActiveMenuId(null);
-  };
+  const totalPages = Math.ceil(processedShifts.length / pageSize) || 1;
 
+  // Open Add Shift
   const handleOpenAdd = () => {
     setDrawerMode("add");
-    setShiftName("");
-    setShiftType("Regular");
-    setGraceMins("15");
-    setIsDefault(false);
-    setWeeklyTimings([
-      { day: "Monday", check_in: "09:00", check_out: "18:00", break_duration: 60, is_working: true },
-      { day: "Tuesday", check_in: "09:00", check_out: "18:00", break_duration: 60, is_working: true },
-      { day: "Wednesday", check_in: "09:00", check_out: "18:00", break_duration: 60, is_working: true },
-      { day: "Thursday", check_in: "09:00", check_out: "18:00", break_duration: 60, is_working: true },
-      { day: "Friday", check_in: "09:00", check_out: "18:00", break_duration: 60, is_working: true },
-      { day: "Saturday", check_in: "09:00", check_out: "14:00", break_duration: 30, is_working: true },
-      { day: "Sunday", check_in: "00:00", check_out: "00:00", break_duration: 0, is_working: false },
-    ]);
+    setSelectedShift(null);
+    setFormName("");
+    setOneShiftTimeForAllDays(true);
+    setAddBreakTime(false);
+    setFormStartTime("");
+    setFormEndTime("");
+    setFormBreakStart("");
+    setFormBreakEnd("");
+    setShiftColor("#0B85C9");
+    setFormRemark("");
+
+    const initialDays: Record<string, { check_in: string; check_out: string; is_working: boolean }> = {};
+    WEEKDAYS.forEach((d) => {
+      initialDays[d] = { check_in: "", check_out: "", is_working: true };
+    });
+    setDayTimings(initialDays);
+    setErrors({});
     setIsDrawerOpen(true);
   };
 
+  // Open Edit Shift
   const handleOpenEdit = (shift: ShiftItem) => {
     setDrawerMode("edit");
-    setSelectedShiftId(shift.shift_id);
-    setShiftName(shift.shift_name);
-    setShiftType(shift.shift_type);
-    setGraceMins(String(shift.check_in_grace_mins));
-    setIsDefault(shift.is_default);
-    setWeeklyTimings(shift.timings.map((t) => ({ ...t })));
+    setSelectedShift(shift);
+    setFormName(shift.shift_name);
+    setFormRemark(shift.remark || "");
+    setShiftColor(shift.color || "#0B85C9");
+
+    // Detect if timings are uniform
+    const firstActive = shift.timings.find((t) => t.is_working);
+    const uniformIn = firstActive ? convertTo24Hour(firstActive.check_in) : "";
+    const uniformOut = firstActive ? convertTo24Hour(firstActive.check_out) : "";
+
+    setFormStartTime(uniformIn);
+    setFormEndTime(uniformOut);
+
+    // If any day has different timings, we set oneShiftTimeForAllDays to false
+    let isUniform = true;
+    if (firstActive) {
+      shift.timings.forEach((t) => {
+        if (t.is_working && (t.check_in !== firstActive.check_in || t.check_out !== firstActive.check_out)) {
+          isUniform = false;
+        }
+      });
+    } else {
+      isUniform = false; // All off days
+    }
+    setOneShiftTimeForAllDays(isUniform);
+
+    // Map existing timings
+    const mappedDays: Record<string, { check_in: string; check_out: string; is_working: boolean }> = {};
+    WEEKDAYS.forEach((d) => {
+      const match = shift.timings.find((t) => t.day === d);
+      if (match) {
+        mappedDays[d] = {
+          check_in: match.check_in === "N/A" ? "" : convertTo24Hour(match.check_in),
+          check_out: match.check_out === "N/A" ? "" : convertTo24Hour(match.check_out),
+          is_working: match.is_working,
+        };
+      } else {
+        mappedDays[d] = { check_in: "", check_out: "", is_working: true };
+      }
+    });
+    setDayTimings(mappedDays);
+
+    setAddBreakTime(false);
+    setErrors({});
     setIsDrawerOpen(true);
-    setActiveMenuId(null);
   };
 
+  // Save Shift changes
   const handleSaveShift = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!shiftName.trim()) {
-      toast.error("Shift Name is required");
+    if (!validateForm()) {
+      toast.error("Please fill in the Shift Name.");
       return;
     }
+
+    const generatedTimings: ShiftTiming[] = WEEKDAYS.map((d) => {
+      if (oneShiftTimeForAllDays) {
+        return {
+          day: d,
+          check_in: formStartTime ? convertToAMPM(formStartTime) : "N/A",
+          check_out: formEndTime ? convertToAMPM(formEndTime) : "N/A",
+          is_working: !!(formStartTime && formEndTime),
+        };
+      } else {
+        const info = dayTimings[d] || { check_in: "", check_out: "", is_working: true };
+        return {
+          day: d,
+          check_in: info.is_working && info.check_in ? convertToAMPM(info.check_in) : "N/A",
+          check_out: info.is_working && info.check_out ? convertToAMPM(info.check_out) : "N/A",
+          is_working: !!(info.is_working && info.check_in && info.check_out),
+        };
+      }
+    });
 
     if (drawerMode === "add") {
       const newId = shifts.length > 0 ? Math.max(...shifts.map((s) => s.shift_id)) + 1 : 1;
       const newShift: ShiftItem = {
         shift_id: newId,
-        shift_name: shiftName,
-        shift_type: shiftType,
-        check_in_grace_mins: Number(graceMins) || 0,
-        is_default: isDefault,
-        is_active: true,
-        timings: weeklyTimings,
+        shift_name: formName.trim(),
+        is_default: false,
+        assigned_employees: 0,
+        created_at: new Date().toISOString().split("T")[0],
+        remark: formRemark.trim() || undefined,
+        timings: generatedTimings,
+        color: shiftColor,
       };
 
-      setShifts((prev) => {
-        let list = prev;
-        if (isDefault) {
-          list = list.map((s) => ({ ...s, is_default: false }));
-        }
-        return [...list, newShift];
-      });
-      toast.success("Shift template created successfully.");
+      setShifts((prev) => [...prev, newShift]);
+      toast.success("Shift Template created successfully.");
     } else {
-      setShifts((prev) => {
-        let list = prev;
-        if (isDefault) {
-          list = list.map((s) => ({ ...s, is_default: false }));
-        }
-        return list.map((s) =>
-          s.shift_id === selectedShiftId
+      if (!selectedShift) return;
+      setShifts((prev) =>
+        prev.map((s) =>
+          s.shift_id === selectedShift.shift_id
             ? {
                 ...s,
-                shift_name: shiftName,
-                shift_type: shiftType,
-                check_in_grace_mins: Number(graceMins) || 0,
-                is_default: isDefault,
-                timings: weeklyTimings,
+                shift_name: formName.trim(),
+                remark: formRemark.trim() || undefined,
+                timings: generatedTimings,
+                color: shiftColor,
               }
             : s
-        );
-      });
-      toast.success("Shift template updated successfully.");
+        )
+      );
+      toast.success("Shift Template modified successfully.");
     }
     setIsDrawerOpen(false);
   };
 
-  const handleTimingChange = (index: number, field: keyof ShiftTiming, value: any) => {
-    setWeeklyTimings((prev) =>
-      prev.map((item, idx) => (idx === index ? { ...item, [field]: value } : item))
-    );
+  // Reset Filters
+  const handleResetFilters = () => {
+    setSearchQuery("");
+    setCurrentPage(1);
   };
 
-  const formatShiftWorkingDays = (timings: ShiftTiming[]) => {
-    const days = timings.filter((t) => t.is_working).map((t) => t.day.substring(0, 3));
-    if (days.length === 7) return "All Days";
-    if (days.length === 6 && !timings.find((t) => t.day === "Sunday" && t.is_working)) return "Mon - Sat";
-    if (days.length === 5 && !timings.find((t) => (t.day === "Saturday" || t.day === "Sunday") && t.is_working)) return "Mon - Fri";
-    if (days.length === 0) return "None";
-    return days.join(", ");
+  // Toggle Mode Confirmation Dialog Trigger
+  const handleToggleModeClick = () => {
+    if (!isAdvancedMode) {
+      setShowSwitchModal(true);
+    } else {
+      setIsAdvancedMode(false);
+    }
   };
 
-  const getShiftTimeRange = (timings: ShiftTiming[]) => {
-    const active = timings.find((t) => t.is_working);
-    if (!active) return "Off Day";
-    return `${active.check_in} - ${active.check_out}`;
+  const handleConfirmSwitch = () => {
+    setIsAdvancedMode(true);
+    setShowSwitchModal(false);
   };
 
   return (
     <ProtectedRoute requiredPermission={{ feature: "shift", action: "read" }}>
       <div className="p-6 space-y-6 bg-slate-50/40 min-h-screen">
-        {/* Header */}
+        {/* Upper breadcrumbs */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex items-center gap-2">
             <button
               onClick={() => router.back()}
               className="flex items-center gap-1 text-sm font-semibold text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
             >
-              <ChevronLeft className="h-4 w-4" />
               <span>Dashboard</span>
             </button>
           </div>
-          <div>
-            <h1 className="text-xl font-bold text-slate-800 dark:text-slate-100">Shift Scheduler & Templates</h1>
+          <div className="text-right text-xs text-muted-foreground">
+            Active Workspace: <span className="font-semibold text-foreground">Itcode Infotech</span>
           </div>
         </div>
 
-        {/* Filters and Search toolbar */}
-        <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 p-4 rounded-xl shadow-xs flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-center gap-4 flex-1 min-w-[280px]">
-            <div className="relative w-full sm:max-w-xs">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-              <Input
-                type="text"
-                placeholder="Search shifts..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-9 w-full"
-              />
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Type:</span>
-              <div className="relative">
-                <select
-                  value={selectedType}
-                  onChange={(e) => setSelectedType(e.target.value)}
-                  className="appearance-none bg-slate-50 border border-slate-200 rounded-lg pl-3 pr-8 py-1.5 text-xs font-semibold text-slate-700 focus:outline-none focus:ring-1 focus:ring-primary cursor-pointer w-28"
-                >
-                  <option value="All">All Types</option>
-                  <option value="Regular">Regular</option>
-                  <option value="Flex">Flex</option>
-                  <option value="Split">Split</option>
-                </select>
-              </div>
-            </div>
+        {/* Title Block - Matching Layout with side-by-side buttons */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div>
+            <h1 className="text-xl font-bold text-slate-800 dark:text-slate-100 flex items-center gap-1">
+              Shifts <span className="text-[#0B85C9] font-bold">({shifts.length})</span>
+            </h1>
           </div>
 
-          <div className="flex items-center gap-2">
+          {/* Premium side-by-side buttons exactly as screenshot */}
+          <div className="flex flex-wrap items-center gap-2.5">
             <Button
-              variant="outline"
+              variant="primary"
               size="sm"
-              onClick={() => {
-                setSearchQuery("");
-                setSelectedType("All");
-              }}
-              className="gap-1.5 text-xs text-slate-500 border-slate-200 hover:bg-slate-50"
+              onClick={handleToggleModeClick}
+              className="h-9 px-4 text-xs font-bold bg-[#0B85C9] hover:bg-[#0974b0] text-white rounded-lg shadow-sm border-0"
             >
-              <SlidersHorizontal className="h-3.5 w-3.5" />
-              Reset
+              {isAdvancedMode ? "Switch To Weekly View" : "Switch To Advanced Shift"}
             </Button>
+
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => router.push("/shifts/assignments")}
+              className="h-9 px-4 text-xs font-bold bg-[#0B85C9] hover:bg-[#0974b0] text-white rounded-lg shadow-sm border-0"
+            >
+              Assign Shift
+            </Button>
+
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => setIsWorkingHoursOpen(true)}
+              className="h-9 px-4 text-xs font-bold bg-[#0B85C9] hover:bg-[#0974b0] text-white rounded-lg shadow-sm border-0"
+            >
+              Set Working Hours
+            </Button>
+
             <Button
               variant="primary"
               size="sm"
               onClick={handleOpenAdd}
-              className="gap-1.5 text-xs shadow-xs"
+              className="h-9 px-4 text-xs font-bold bg-[#0B85C9] hover:bg-[#0974b0] text-white rounded-lg shadow-sm border-0"
             >
-              <Plus className="h-3.5 w-3.5" />
-              Add Shift
+              Create Shift
             </Button>
           </div>
         </div>
 
-        {/* Table representation */}
-        <div className="w-full overflow-x-auto rounded-xl border border-slate-200/80 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs">
-          <table className="w-full text-left border-collapse text-sm">
-            <thead className="bg-[#f0f4f9] dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 font-semibold text-xs text-slate-500 uppercase tracking-wider">
-              <tr>
-                <th className="px-6 py-3.5 font-bold text-slate-700 dark:text-slate-300">Shift Name</th>
-                <th className="px-6 py-3.5 font-bold text-slate-700 dark:text-slate-300 text-center">Type</th>
-                <th className="px-6 py-3.5 font-bold text-slate-700 dark:text-slate-300 text-center">Timings</th>
-                <th className="px-6 py-3.5 font-bold text-slate-700 dark:text-slate-300 text-center">Working Days</th>
-                <th className="px-6 py-3.5 font-bold text-slate-700 dark:text-slate-300 text-center">Grace Period</th>
-                <th className="px-6 py-3.5 font-bold text-slate-700 dark:text-slate-300 text-center">Default</th>
-                <th className="px-6 py-3.5 font-bold text-slate-700 dark:text-slate-300 text-center">Status</th>
-                <th className="px-6 py-3.5 font-bold text-slate-700 dark:text-slate-300 text-right w-20">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-              {filteredShifts.length === 0 ? (
+        {/* Main Grid Wrapper */}
+        <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-xl shadow-xs overflow-hidden">
+          
+          {/* Toolbar */}
+          <div className="p-4 border-b border-slate-200/80 dark:border-slate-800 flex flex-col md:flex-row items-center justify-between gap-4 bg-slate-50/45 dark:bg-slate-950/20">
+            
+            {/* Left search */}
+            <div className="relative w-full md:max-w-xs shrink-0">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 dark:text-slate-500" />
+              <Input
+                type="text"
+                placeholder="Search shifts..."
+                value={searchQuery}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value);
+                  setCurrentPage(1);
+                }}
+                className="pl-9 h-9 text-xs w-full bg-white dark:bg-slate-955 text-slate-800 dark:text-slate-100 placeholder:text-slate-450 dark:placeholder:text-slate-500 border border-slate-200 dark:border-slate-800 focus-visible:ring-blue-500/20 focus-visible:border-blue-500"
+              />
+            </div>
+
+            {/* Middle Filters */}
+            <div className="flex flex-wrap items-center gap-3 w-full md:w-auto md:justify-end">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleResetFilters}
+                className="h-8 text-xs font-semibold text-slate-655 dark:text-slate-300 border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800/50"
+              >
+                <SlidersHorizontal className="h-3.5 w-3.5 mr-1" />
+                Reset Filters
+              </Button>
+
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => toast.success("Export initiated.")}
+                className="h-8 text-xs font-semibold text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800/50"
+              >
+                <Download className="h-3.5 w-3.5 mr-1 text-slate-400 dark:text-slate-500" />
+                Export
+              </Button>
+            </div>
+          </div>
+
+          {/* Table Container */}
+          <div className="overflow-x-auto relative min-h-[250px]">
+            <table className="w-full text-left border-collapse text-xs">
+              
+              <thead className="bg-[#f8fafc] dark:bg-slate-950 border-b border-slate-200/80 dark:border-slate-800 uppercase text-[10px] tracking-wider text-slate-500 font-bold">
                 <tr>
-                  <td colSpan={8} className="px-6 py-12 text-center text-slate-500">
-                    No shift templates found matching filters.
-                  </td>
+                  <th
+                    onClick={() => handleSort("shift_name")}
+                    className="px-6 py-3.5 cursor-pointer hover:text-slate-800 transition-colors select-none font-bold"
+                  >
+                    <div className="flex items-center gap-1.5">
+                      Shift Name
+                      <span className="text-[9px] text-slate-400">
+                        {sortField === "shift_name" ? (sortDirection === "asc" ? "▲" : "▼") : "↕"}
+                      </span>
+                    </div>
+                  </th>
+                  
+                  {/* Ordered Weekdays starting with Sunday as requested */}
+                  <th className="px-3 py-3.5 font-bold text-center">Sunday</th>
+                  <th className="px-3 py-3.5 font-bold text-center">Monday</th>
+                  <th className="px-3 py-3.5 font-bold text-center">Tuesday</th>
+                  <th className="px-3 py-3.5 font-bold text-center">Wednesday</th>
+                  <th className="px-3 py-3.5 font-bold text-center">Thursday</th>
+                  <th className="px-3 py-3.5 font-bold text-center">Friday</th>
+                  <th className="px-3 py-3.5 font-bold text-center">Saturday</th>
+                  
+                  <th
+                    onClick={() => handleSort("assigned_employees")}
+                    className="px-4 py-3.5 cursor-pointer hover:text-slate-800 transition-colors text-center select-none font-bold whitespace-nowrap"
+                  >
+                    <div className="flex items-center justify-center gap-1.5">
+                      Assigned Employees
+                      <span className="text-[9px] text-slate-400">
+                        {sortField === "assigned_employees" ? (sortDirection === "asc" ? "▲" : "▼") : "↕"}
+                      </span>
+                    </div>
+                  </th>
+
+                  {/* Created On Column */}
+                  <th className="px-4 py-3.5 font-bold text-left whitespace-nowrap">
+                    Created
+                  </th>
+
+                  <th className="px-6 py-3.5 text-right font-bold">Actions</th>
                 </tr>
-              ) : (
-                filteredShifts.map((shift) => (
-                  <tr key={shift.shift_id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/20 transition-colors">
-                    <td className="px-6 py-4 font-semibold text-slate-800 dark:text-slate-200 whitespace-nowrap">
-                      <div className="flex items-center gap-2">
-                        <div className="p-1.5 rounded-lg bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-450 shrink-0">
-                          <Clock className="h-4 w-4" />
+              </thead>
+
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                {isLoading ? (
+                  Array.from({ length: 4 }).map((_, idx) => (
+                    <tr key={idx} className="border-b border-slate-100 dark:border-slate-800">
+                      <td className="px-6 py-5">
+                        <div className="flex items-center gap-2">
+                          <div className="h-7 w-7 rounded-lg bg-slate-100 dark:bg-slate-800 animate-pulse" />
+                          <div className="h-4 w-28 bg-slate-100 dark:bg-slate-800 rounded animate-pulse" />
                         </div>
-                        {shift.shift_name}
+                      </td>
+                      {Array.from({ length: 9 }).map((_, i) => (
+                        <td key={i} className="px-3 py-5">
+                          <div className="h-4 w-16 bg-slate-100 dark:bg-slate-800 rounded mx-auto animate-pulse" />
+                        </td>
+                      ))}
+                      <td className="px-6 py-5 text-right">
+                        <div className="h-8 w-12 bg-slate-100 dark:bg-slate-800 rounded-lg ml-auto animate-pulse" />
+                      </td>
+                    </tr>
+                  ))
+                ) : paginatedShifts.length === 0 ? (
+                  <tr>
+                    <td colSpan={11} className="px-6 py-16 text-center">
+                      <div className="flex flex-col items-center justify-center space-y-4 max-w-sm mx-auto">
+                        <div className="h-14 w-14 rounded-full bg-slate-50 dark:bg-slate-850 flex items-center justify-center text-slate-400">
+                          <HelpCircle className="h-7 w-7" />
+                        </div>
+                        <div>
+                          <h4 className="text-sm font-semibold text-slate-800 dark:text-slate-200">No Shifts Found</h4>
+                        </div>
                       </div>
                     </td>
-                    <td className="px-6 py-4 text-center whitespace-nowrap">
-                      <Badge variant="info">{shift.shift_type}</Badge>
-                    </td>
-                    <td className="px-6 py-4 text-center font-medium text-slate-600 dark:text-slate-400 whitespace-nowrap">
-                      {getShiftTimeRange(shift.timings)}
-                    </td>
-                    <td className="px-6 py-4 text-center text-xs text-slate-500 dark:text-slate-400 whitespace-nowrap">
-                      {formatShiftWorkingDays(shift.timings)}
-                    </td>
-                    <td className="px-6 py-4 text-center text-slate-650 dark:text-slate-400 whitespace-nowrap font-medium">
-                      {shift.check_in_grace_mins} mins
-                    </td>
-                    <td className="px-6 py-4 text-center whitespace-nowrap">
-                      {shift.is_default ? (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-200/35">
-                          <Check className="h-3 w-3" /> Default
-                        </span>
-                      ) : (
-                        "-"
-                      )}
-                    </td>
-                    <td className="px-6 py-4 text-center whitespace-nowrap">
-                      <span
-                        className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold border border-border/40 ${
-                          shift.is_active
-                            ? "bg-emerald-500/5 text-emerald-700 dark:text-emerald-400 border-emerald-500/10"
-                            : "bg-yellow-500/5 text-yellow-750 dark:text-yellow-450 border-yellow-500/10"
-                        }`}
-                      >
-                        <span
-                          className={`h-1.5 w-1.5 rounded-full ${
-                            shift.is_active ? "bg-emerald-500" : "bg-yellow-500"
-                          }`}
-                        />
-                        {shift.is_active ? "Active" : "Inactive"}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 text-right relative whitespace-nowrap">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setActiveMenuId(activeMenuId === shift.shift_id ? null : shift.shift_id);
-                        }}
-                        className="p-1 hover:bg-slate-100 dark:hover:bg-slate-850 rounded-md transition-colors text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 cursor-pointer focus:outline-none"
-                      >
-                        <MoreVertical className="h-4 w-4" />
-                      </button>
-                      {activeMenuId === shift.shift_id && (
-                        <div className="absolute right-6 top-10 w-32 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg shadow-lg py-1.5 z-50 animate-in fade-in slide-in-from-top-1 duration-100">
-                          <button
-                            onClick={() => handleOpenEdit(shift)}
-                            className="w-full text-left px-3.5 py-2 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-850 cursor-pointer flex items-center gap-2"
-                          >
-                            <Edit2 className="h-3.5 w-3.5 text-slate-400" />
-                            Edit
-                          </button>
-                          <button
-                            onClick={() => handleToggleActive(shift.shift_id)}
-                            className="w-full text-left px-3.5 py-2 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-850 cursor-pointer flex items-center gap-2"
-                          >
-                            <Check className="h-3.5 w-3.5 text-slate-400" />
-                            {shift.is_active ? "Deactivate" : "Activate"}
-                          </button>
-                          <button
-                            onClick={() => handleDeleteShift(shift.shift_id)}
-                            className="w-full text-left px-3.5 py-2 text-xs font-semibold text-red-650 hover:bg-red-50 dark:hover:bg-red-950/20 cursor-pointer flex items-center gap-2"
-                          >
-                            <Trash2 className="h-3.5 w-3.5 text-red-550" />
-                            Delete
-                          </button>
-                        </div>
-                      )}
-                    </td>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+                ) : (
+                  paginatedShifts.map((shift) => (
+                    <tr
+                      key={shift.shift_id}
+                      className="hover:bg-slate-50/40 dark:hover:bg-slate-800/10 transition-colors border-b border-slate-100 dark:border-slate-800/60 align-middle"
+                    >
+                      <td className="px-6 py-4.5 font-bold text-slate-800 dark:text-slate-200 whitespace-nowrap">
+                        <div className="flex items-center gap-2.5">
+                          <div
+                            className="p-2 rounded-xl border border-slate-100 dark:border-slate-800/60 shrink-0"
+                            style={{ color: shift.color || "#0B85C9", backgroundColor: `${shift.color || "#0B85C9"}12` }}
+                          >
+                            <Clock className="h-4.5 w-4.5" />
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-1.5">
+                              <span className="hover:text-blue-600 transition-colors cursor-pointer" onClick={() => handleOpenEdit(shift)}>
+                                {shift.shift_name}
+                              </span>
+                              {shift.is_default && (
+                                <span className="px-2 py-0.5 text-[9px] font-bold rounded bg-blue-50 text-blue-600 border border-blue-200/50">
+                                  Default
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </td>
+
+                      {/* Display daily timings starting with Sunday as requested */}
+                      {WEEKDAYS.map((dayName, idx) => {
+                        const t = shift.timings.find((tim) => tim.day === dayName) || { check_in: "N/A", check_out: "N/A", is_working: false };
+                        const isOff = t.check_in === "N/A" || !t.is_working;
+                        return (
+                          <td key={idx} className="px-3 py-4 text-center whitespace-nowrap border-l border-slate-100 dark:border-slate-850">
+                            {isOff ? (
+                              <span className="text-slate-400 font-semibold text-[10px]">N/A</span>
+                            ) : (
+                              <div className="flex flex-col gap-0.5">
+                                <span className="text-[11px] font-semibold text-slate-700 dark:text-slate-350">
+                                  {t.check_in.replace(" AM", "").replace(" PM", "")} - {t.check_out.replace(" AM", "").replace(" PM", "")}
+                                </span>
+                                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">
+                                  {t.check_in.split(" ")[1]} - {t.check_out.split(" ")[1]}
+                                </span>
+                              </div>
+                            )}
+                          </td>
+                        );
+                      })}
+
+                      <td className="px-4 py-4 text-center whitespace-nowrap font-bold text-slate-700 dark:text-slate-300">
+                        {shift.assigned_employees}
+                      </td>
+
+                      <td className="px-4 py-4 text-left whitespace-nowrap font-semibold text-slate-650 dark:text-slate-400">
+                        {shift.created_at}
+                      </td>
+
+                      {/* Actions column: High contrast Edit button in both light and dark mode */}
+                      <td className="px-6 py-4 text-right whitespace-nowrap">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleOpenEdit(shift)}
+                          className="h-8 px-3.5 text-xs font-bold text-blue-600 dark:text-blue-450 border-blue-200 dark:border-blue-800/80 bg-white dark:bg-slate-900 hover:bg-blue-50 dark:hover:bg-blue-950/30 cursor-pointer"
+                        >
+                          Edit
+                        </Button>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Pagination Footer */}
+          <div className="p-4 border-t border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4 bg-slate-50/20 dark:bg-slate-950/10">
+            <div className="text-xs text-slate-500 font-semibold">
+              Showing{" "}
+              <span className="font-bold text-slate-800 dark:text-slate-200">
+                {processedShifts.length === 0 ? 0 : (currentPage - 1) * pageSize + 1}
+              </span>{" "}
+              to{" "}
+              <span className="font-bold text-slate-800 dark:text-slate-200">
+                {Math.min(currentPage * pageSize, processedShifts.length)}
+              </span>{" "}
+              of <span className="font-bold text-slate-800 dark:text-slate-200">{processedShifts.length}</span> Results
+            </div>
+
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs text-slate-400 font-bold uppercase tracking-wider">Page Size:</span>
+                <select
+                  value={pageSize}
+                  onChange={(e) => {
+                    setPageSize(Number(e.target.value));
+                    setCurrentPage(1);
+                  }}
+                  className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-md px-2 py-1 text-xs font-semibold text-slate-700 dark:text-slate-350 focus:outline-none"
+                >
+                  {[5, 10, 20, 50].map((size) => (
+                    <option key={size} value={size}>
+                      {size} / Page
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
+                  disabled={currentPage === 1 || totalPages <= 1}
+                  className="h-8 px-2.5 text-xs text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800/50"
+                >
+                  Previous
+                </Button>
+                <div className="h-8 px-3 flex items-center justify-center text-xs font-bold bg-[#0B85C9]/10 text-[#0B85C9] border border-[#0B85C9]/20 rounded-md">
+                  {currentPage}
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentPage((prev) => Math.min(prev + 1, totalPages))}
+                  disabled={currentPage === totalPages || totalPages <= 1}
+                  className="h-8 px-2.5 text-xs text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800/50"
+                >
+                  Next
+                </Button>
+              </div>
+            </div>
+          </div>
         </div>
 
-        {/* Drawer: Add / Edit Shift */}
-        {isDrawerOpen && (
-          <div className="fixed inset-0 z-[100] flex justify-end">
+        {/* SWITCH CONFIRMATION MODAL */}
+        {showSwitchModal && (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
             <div
               className="absolute inset-0 bg-black/60 backdrop-blur-xs transition-opacity"
-              onClick={() => setIsDrawerOpen(false)}
+              onClick={() => setShowSwitchModal(false)}
             />
-            <div className="relative w-full max-w-2xl bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 h-full shadow-2xl flex flex-col justify-between z-10 animate-in slide-in-from-right duration-250">
-              <div className="p-5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50 dark:bg-slate-950">
-                <h3 className="text-sm font-bold text-slate-800 dark:text-slate-100">
-                  {drawerMode === "add" ? "Create Shift Template" : "Modify Shift Template"}
+            <div className="relative w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl shadow-2xl p-6 z-10 space-y-4 animate-in zoom-in-95 duration-150">
+              <div className="flex items-start gap-4">
+                <div className="p-2.5 bg-blue-50 text-blue-600 rounded-full shrink-0">
+                  <Settings className="h-6 w-6" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-800 dark:text-slate-200">Switch to Advanced Shift Mode?</h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1.5 leading-relaxed">
+                    Are you sure you want to switch to Advanced Shift mode? This will display detailed grace periods, check-in thresholds, break times, and validation parameters.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100 dark:border-slate-800">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowSwitchModal(false)}
+                  className="text-xs h-9 px-4 font-semibold text-slate-650 dark:text-slate-355"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={handleConfirmSwitch}
+                  className="text-xs h-9 px-4 font-semibold bg-[#0B85C9] hover:bg-[#0974b0] text-white"
+                >
+                  Yes, Switch
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ADJUST FULL DAY/HALF DAY HOURS DRAWER */}
+        {isWorkingHoursOpen && (
+          <div className="fixed inset-0 z-[100] flex justify-end">
+            <div
+              className="absolute inset-0 bg-black/50 transition-opacity"
+              onClick={() => setIsWorkingHoursOpen(false)}
+            />
+            
+            <div className="relative w-full max-w-lg bg-white dark:bg-slate-900 h-full shadow-2xl flex flex-col justify-between z-10 animate-in slide-in-from-right duration-200">
+              {/* Header: light blue bg, Adjust Full Day/Half Day Hours */}
+              <div className="p-5 border-b border-slate-200/60 dark:border-slate-800 flex items-center justify-between bg-[#EBF5FF] dark:bg-slate-950">
+                <h3 className="text-base font-bold text-slate-800 dark:text-slate-100">
+                  Adjust Full Day/Half Day Hours
                 </h3>
                 <button
-                  onClick={() => setIsDrawerOpen(false)}
-                  className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md text-slate-500 hover:text-slate-850 cursor-pointer focus:outline-none"
+                  onClick={() => setIsWorkingHoursOpen(false)}
+                  className="p-1.5 hover:bg-slate-200/50 dark:hover:bg-slate-800/50 rounded-md text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 transition-colors cursor-pointer focus:outline-none"
                 >
-                  <X className="h-4 w-4" />
+                  <X className="h-5 w-5" />
                 </button>
               </div>
 
+              {/* Body */}
               <div className="flex-1 overflow-y-auto p-6 space-y-6">
-                <form onSubmit={handleSaveShift} className="space-y-6">
-                  <div className="space-y-4">
-                    <div className="space-y-1.5">
-                      <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                        Shift Name <span className="text-red-500">*</span>
-                      </label>
-                      <Input
-                        value={shiftName}
-                        onChange={(e) => setShiftName(e.target.value)}
-                        placeholder="e.g. General Shift"
-                        className="h-10 text-xs w-full bg-card"
+                <div className="space-y-5">
+                  {/* Two Radio Buttons side by side */}
+                  <div className="flex items-center gap-6">
+                    <label className="flex items-center gap-2 text-xs font-bold text-slate-700 dark:text-slate-350 cursor-pointer select-none">
+                      <input
+                        type="radio"
+                        name="workingHoursType"
+                        checked={workingHoursType === "fixed"}
+                        onChange={() => setWorkingHoursType("fixed")}
+                        className="h-4.5 w-4.5 border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
                       />
-                    </div>
+                      <span>Fixed Working Hours Per Day</span>
+                      <HelpCircle className="h-4 w-4 text-slate-400 hover:text-slate-655" />
+                    </label>
 
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                      <div className="space-y-1.5">
-                        <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">Shift Type</label>
-                        <select
-                          value={shiftType}
-                          onChange={(e) => setShiftType(e.target.value as any)}
-                          className="w-full rounded-md border border-input bg-card px-3 h-10 text-xs focus:ring-2 focus:ring-ring focus:ring-offset-2"
-                        >
-                          <option value="Regular">Regular</option>
-                          <option value="Flex">Flex</option>
-                          <option value="Split">Split</option>
-                        </select>
-                      </div>
+                    <label className="flex items-center gap-2 text-xs font-bold text-slate-750 dark:text-slate-400 cursor-pointer select-none">
+                      <input
+                        type="radio"
+                        name="workingHoursType"
+                        checked={workingHoursType === "shift_wise"}
+                        onChange={() => setWorkingHoursType("shift_wise")}
+                        className="h-4.5 w-4.5 border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                      />
+                      <span>Shift Wise Working Hour</span>
+                      <HelpCircle className="h-4 w-4 text-slate-400 hover:text-slate-655" />
+                    </label>
+                  </div>
 
-                      <div className="space-y-1.5">
-                        <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">Grace Period (Minutes)</label>
-                        <Input
-                          type="number"
-                          value={graceMins}
-                          onChange={(e) => setGraceMins(e.target.value)}
-                          className="h-10 text-xs w-full bg-card"
-                        />
-                      </div>
-
-                      <div className="space-y-1.5 flex flex-col justify-end pb-2">
-                        <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-slate-700 dark:text-slate-300">
-                          <input
-                            type="checkbox"
-                            checked={isDefault}
-                            onChange={(e) => setIsDefault(e.target.checked)}
-                            className="h-4 w-4 rounded border-slate-300 text-primary focus:ring-primary cursor-pointer"
-                          />
-                          Set as Default Shift
-                        </label>
-                      </div>
+                  {/* Full Day Working Hours input */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                      Full Day Working Hours
+                    </label>
+                    <div className="relative">
+                      <Clock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 dark:text-slate-500" />
+                      <input
+                        type="text"
+                        value={fullDayHours}
+                        onChange={(e) => setFullDayHours(e.target.value)}
+                        className="pl-9 w-full rounded-md border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 h-10 text-xs font-medium text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-blue-500/20 focus:outline-none"
+                      />
                     </div>
                   </div>
 
-                  {/* Day-wise Timings Schedule */}
-                  <div className="space-y-3">
-                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">Shift Day Timings</h4>
-                    <div className="border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden divide-y divide-slate-100 dark:divide-slate-800">
-                      {weeklyTimings.map((timing, idx) => (
-                        <div key={timing.day} className={`p-3 grid grid-cols-12 gap-3 items-center ${timing.is_working ? "bg-white dark:bg-slate-900" : "bg-slate-50/50 dark:bg-slate-950/20"}`}>
-                          <div className="col-span-3 flex items-center gap-2">
-                            <input
-                              type="checkbox"
-                              checked={timing.is_working}
-                              onChange={(e) => handleTimingChange(idx, "is_working", e.target.checked)}
-                              className="h-4 w-4 rounded border-slate-300 text-primary focus:ring-primary cursor-pointer"
-                            />
-                            <span className="text-xs font-bold text-slate-700 dark:text-slate-300">{timing.day}</span>
-                          </div>
-                          
-                          {timing.is_working ? (
-                            <>
-                              <div className="col-span-3 space-y-1">
-                                <span className="text-[10px] text-slate-400 font-bold block">Check In</span>
-                                <input
-                                  type="time"
-                                  value={timing.check_in}
-                                  onChange={(e) => handleTimingChange(idx, "check_in", e.target.value)}
-                                  className="w-full bg-slate-50 border border-slate-200 rounded px-2 py-1 text-xs font-semibold focus:outline-none"
-                                />
-                              </div>
-                              <div className="col-span-3 space-y-1">
-                                <span className="text-[10px] text-slate-400 font-bold block">Check Out</span>
-                                <input
-                                  type="time"
-                                  value={timing.check_out}
-                                  onChange={(e) => handleTimingChange(idx, "check_out", e.target.value)}
-                                  className="w-full bg-slate-50 border border-slate-200 rounded px-2 py-1 text-xs font-semibold focus:outline-none"
-                                />
-                              </div>
-                              <div className="col-span-3 space-y-1">
-                                <span className="text-[10px] text-slate-400 font-bold block">Break (Mins)</span>
-                                <input
-                                  type="number"
-                                  value={timing.break_duration}
-                                  onChange={(e) => handleTimingChange(idx, "break_duration", Number(e.target.value) || 0)}
-                                  className="w-full bg-slate-50 border border-slate-200 rounded px-2 py-1 text-xs font-semibold focus:outline-none"
-                                />
-                              </div>
-                            </>
-                          ) : (
-                            <div className="col-span-9 text-xs text-slate-400 italic font-semibold">
-                              Weekly Off / Rest Day
-                            </div>
-                          )}
-                        </div>
+                  {/* Half Working Day Hours input */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                      Half Working Day Hours
+                    </label>
+                    <div className="relative">
+                      <Clock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 dark:text-slate-500" />
+                      <input
+                        type="text"
+                        value={halfDayHours}
+                        onChange={(e) => setHalfDayHours(e.target.value)}
+                        className="pl-9 w-full rounded-md border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 h-10 text-xs font-medium text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-blue-500/20 focus:outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Attendance Mode Radio Buttons list */}
+                  <div className="space-y-3 pt-2">
+                    <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block">
+                      Attendance Mode
+                    </label>
+                    <div className="space-y-2.5 pl-0.5">
+                      {[
+                        { key: "all", label: "Consider All Punch" },
+                        { key: "first_last", label: "Consider First and Last Punch Only" },
+                        { key: "single", label: "Full Day on Single Punch" },
+                        { key: "default", label: "Default Full Day" },
+                      ].map((mode) => (
+                        <label key={mode.key} className="flex items-center gap-2.5 text-xs font-semibold text-slate-700 dark:text-slate-300 cursor-pointer select-none">
+                          <input
+                            type="radio"
+                            name="attendanceMode"
+                            checked={attendanceMode === mode.key}
+                            onChange={() => setAttendanceMode(mode.key as any)}
+                            className="h-4.5 w-4.5 border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                          />
+                          <span>{mode.label}</span>
+                        </label>
                       ))}
                     </div>
+                  </div>
+
+                  {/* Note block light blue background */}
+                  <div className="p-4 bg-blue-50 dark:bg-blue-950/20 border border-blue-100 dark:border-blue-900/50 rounded-xl space-y-1">
+                    <span className="text-xs font-bold text-blue-600 dark:text-blue-400 block">Note:</span>
+                    <p className="text-[11px] text-blue-600/90 dark:text-blue-400/90 font-medium">
+                      The changes you made will take effect from tomorrow onwards.
+                    </p>
+                  </div>
+
+                  {/* Configuration History accordion */}
+                  <div className="border border-blue-100 dark:border-blue-900/50 rounded-xl overflow-hidden">
+                    <button
+                      onClick={() => setIsConfigHistoryOpen(!isConfigHistoryOpen)}
+                      className="w-full flex items-center justify-between p-3.5 bg-blue-50 dark:bg-slate-950 text-xs font-bold text-slate-700 dark:text-slate-205 focus:outline-none"
+                    >
+                      <span>Configuration History</span>
+                      {isConfigHistoryOpen ? <ChevronUp className="h-4 w-4 text-slate-400" /> : <ChevronDown className="h-4 w-4 text-slate-400" />}
+                    </button>
+                    {isConfigHistoryOpen && (
+                      <div className="p-3.5 bg-white dark:bg-slate-900 border-t border-blue-50 dark:border-blue-900/50 space-y-2 text-[11px] text-slate-500 dark:text-slate-400">
+                        <div className="flex justify-between border-b border-slate-50 dark:border-slate-800 pb-1.5">
+                          <span className="font-semibold">Fixed Working Hours: 08:00</span>
+                          <span>Today, 12:44 PM</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="font-semibold">Attendance Mode: Consider All Punch</span>
+                          <span>Yesterday, 09:30 AM</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="p-4 border-t border-slate-200/60 dark:border-slate-800 bg-[#EBF5FF] dark:bg-slate-950 flex items-center justify-end">
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={() => {
+                    toast.success("Working hours setting updated.");
+                    setIsWorkingHoursOpen(false);
+                  }}
+                  className="text-xs h-9 px-6 font-semibold bg-[#0B85C9] hover:bg-[#0974b0] text-white shadow-sm rounded-lg"
+                >
+                  Save
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* CREATE / EDIT SHIFT TEMPLATE DRAWER */}
+        {isDrawerOpen && (
+          <div className="fixed inset-0 z-[100] flex justify-end">
+            {/* Backdrop */}
+            <div
+              className="absolute inset-0 bg-black/50 transition-opacity"
+              onClick={() => setIsDrawerOpen(false)}
+            />
+            
+            {/* Drawer Panel */}
+            <div className="relative w-full max-w-lg bg-white dark:bg-slate-900 h-full shadow-2xl flex flex-col justify-between z-10 animate-in slide-in-from-right duration-200">
+              
+              {/* Header: light blue background, close button */}
+              <div className="p-5 border-b border-slate-200/60 dark:border-slate-800 flex items-center justify-between bg-[#EBF5FF] dark:bg-slate-950">
+                <h3 className="text-base font-bold text-slate-800 dark:text-slate-100">
+                  {drawerMode === "add" ? "Create Shift" : "Edit Shift"}
+                </h3>
+                <button
+                  onClick={() => setIsDrawerOpen(false)}
+                  className="p-1.5 hover:bg-slate-200/50 dark:hover:bg-slate-800/50 rounded-md text-slate-550 hover:text-slate-800 dark:hover:text-slate-200 transition-colors cursor-pointer focus:outline-none"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+
+              {/* Body: white background, padding */}
+              <div className="flex-1 overflow-y-auto p-6 space-y-5">
+                <form onSubmit={handleSaveShift} className="space-y-5">
+                  
+                  {/* Shift Name Field */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                      Shift Name <span className="text-red-500">*</span>
+                    </label>
+                    <Input
+                      value={formName}
+                      onChange={(e) => {
+                        setFormName(e.target.value);
+                        if (errors.shift_name) {
+                          setErrors((prev) => {
+                            const copy = { ...prev };
+                            delete copy.shift_name;
+                            return copy;
+                          });
+                        }
+                      }}
+                      placeholder="Write Shift Name Here"
+                      className={`h-10 text-xs w-full bg-white dark:bg-slate-955 text-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-800 placeholder:text-slate-400 dark:placeholder:text-slate-500 ${
+                        errors.shift_name ? "border-red-500 focus-visible:ring-red-500" : ""
+                      }`}
+                    />
+                    {errors.shift_name && (
+                      <p className="text-[10px] font-semibold text-red-500 mt-0.5">{errors.shift_name}</p>
+                    )}
+                  </div>
+
+                  {/* Toggle: One shift time for all days */}
+                  <div className="flex items-center gap-2.5 py-1">
+                    <input
+                      type="checkbox"
+                      id="oneShiftTime"
+                      checked={oneShiftTimeForAllDays}
+                      onChange={(e) => setOneShiftTimeForAllDays(e.target.checked)}
+                      className="h-4.5 w-4.5 rounded border-slate-300 dark:border-slate-700 text-blue-650 focus:ring-blue-500 cursor-pointer"
+                    />
+                    <label htmlFor="oneShiftTime" className="text-xs font-bold text-slate-700 dark:text-slate-300 cursor-pointer select-none">
+                      One shift time for all days.
+                    </label>
+                  </div>
+
+                  {/* Toggle: Add break time */}
+                  <div className="flex items-center gap-2.5 py-1">
+                    <input
+                      type="checkbox"
+                      id="addBreak"
+                      checked={addBreakTime}
+                      onChange={(e) => setAddBreakTime(e.target.checked)}
+                      className="h-4.5 w-4.5 rounded border-slate-300 dark:border-slate-700 text-blue-655 focus:ring-blue-500 cursor-pointer"
+                    />
+                    <label htmlFor="addBreak" className="text-xs font-bold text-slate-700 dark:text-slate-300 cursor-pointer select-none">
+                      Add break time
+                    </label>
+                  </div>
+
+                  {/* Conditional Timings grid */}
+                  {oneShiftTimeForAllDays ? (
+                    /* Uniform start and end times */
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                            Start Time <span className="text-red-500">*</span>
+                          </label>
+                          <div className="relative">
+                            <Clock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 dark:text-slate-500" />
+                            <input
+                              type="time"
+                              value={formStartTime}
+                              placeholder="Choose From Time"
+                              onChange={(e) => setFormStartTime(e.target.value)}
+                              className="pl-9 w-full rounded-md border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 h-10 text-xs text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-blue-500/20 focus:outline-none"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                            End Time <span className="text-red-500">*</span>
+                          </label>
+                          <div className="relative">
+                            <Clock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 dark:text-slate-500" />
+                            <input
+                              type="time"
+                              value={formEndTime}
+                              placeholder="Choose To Time"
+                              onChange={(e) => setFormEndTime(e.target.value)}
+                              className="pl-9 w-full rounded-md border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 h-10 text-xs text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-blue-500/20 focus:outline-none"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Optional break time fields */}
+                      {addBreakTime && (
+                        <div className="grid grid-cols-2 gap-4 p-3 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-100 dark:border-slate-800">
+                          <div className="space-y-1.5">
+                            <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">Break Start</label>
+                            <input
+                              type="time"
+                              value={formBreakStart}
+                              onChange={(e) => setFormBreakStart(e.target.value)}
+                              className="w-full rounded-md border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 h-10 px-3 text-xs text-slate-850 dark:text-slate-100 focus:outline-none focus:ring-2"
+                            />
+                          </div>
+                          <div className="space-y-1.5">
+                            <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">Break End</label>
+                            <input
+                              type="time"
+                              value={formBreakEnd}
+                              onChange={(e) => setFormBreakEnd(e.target.value)}
+                              className="w-full rounded-md border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 h-10 px-3 text-xs text-slate-855 dark:text-slate-100 focus:outline-none focus:ring-2"
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    /* Day-wise timing parameters */
+                    <div className="space-y-3 p-3 bg-slate-50/50 dark:bg-slate-950 rounded-xl border border-slate-100 dark:border-slate-800">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Individual Days Schedule</span>
+                      <div className="divide-y divide-slate-100 dark:divide-slate-800">
+                        {WEEKDAYS.map((d) => {
+                          const info = dayTimings[d] || { check_in: "", check_out: "", is_working: true };
+                          return (
+                            <div key={d} className="py-2.5 grid grid-cols-12 gap-2 items-center">
+                              <div className="col-span-4 flex items-center gap-2">
+                                <input
+                                  type="checkbox"
+                                  checked={info.is_working}
+                                  onChange={(e) => {
+                                    setDayTimings((prev) => ({
+                                      ...prev,
+                                      [d]: { ...info, is_working: e.target.checked },
+                                    }));
+                                  }}
+                                  className="h-4 w-4 rounded border-slate-300 dark:border-slate-700 text-blue-650 cursor-pointer"
+                                />
+                                <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">{d}</span>
+                              </div>
+                              {info.is_working ? (
+                                <>
+                                  <div className="col-span-4">
+                                    <input
+                                      type="time"
+                                      value={info.check_in}
+                                      onChange={(e) => {
+                                        setDayTimings((prev) => ({
+                                          ...prev,
+                                          [d]: { ...info, check_in: e.target.value },
+                                        }));
+                                      }}
+                                      className="w-full border border-slate-200 dark:border-slate-800 rounded px-2 py-1 text-xs bg-white dark:bg-slate-950 text-slate-850 dark:text-slate-100"
+                                    />
+                                  </div>
+                                  <div className="col-span-4">
+                                    <input
+                                      type="time"
+                                      value={info.check_out}
+                                      onChange={(e) => {
+                                        setDayTimings((prev) => ({
+                                          ...prev,
+                                          [d]: { ...info, check_out: e.target.value },
+                                        }));
+                                      }}
+                                      className="w-full border border-slate-200 dark:border-slate-800 rounded px-2 py-1 text-xs bg-white dark:bg-slate-955 text-slate-850 dark:text-slate-100"
+                                    />
+                                  </div>
+                                </>
+                              ) : (
+                                <div className="col-span-8 text-xs text-slate-400 italic">Off Day</div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Choose Shift Color Dropdown */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                      Choose Shift Color <span className="text-red-500">*</span>
+                    </label>
+                    <select
+                      value={shiftColor}
+                      onChange={(e) => setShiftColor(e.target.value)}
+                      className="w-full rounded-md border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 h-10 px-3 text-xs text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                    >
+                      <option value="#0B85C9">Blue</option>
+                      <option value="#10B981">Green</option>
+                      <option value="#EF4444">Red</option>
+                      <option value="#8B5CF6">Purple</option>
+                      <option value="#F59E0B">Orange</option>
+                    </select>
+                  </div>
+
+                  {/* Remark / Textarea field */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">Remark</label>
+                    <textarea
+                      value={formRemark}
+                      onChange={(e) => setFormRemark(e.target.value)}
+                      placeholder="Write your remarks or comments here..."
+                      rows={4}
+                      className="w-full border border-slate-200 dark:border-slate-800 rounded-lg p-3 text-xs focus:ring-2 focus:ring-blue-500/20 focus:outline-none bg-white dark:bg-slate-950 text-slate-800 dark:text-slate-100 resize-none placeholder:text-slate-400 dark:placeholder:text-slate-500"
+                    />
                   </div>
 
                   <button type="submit" className="hidden" id="drawer-submit-btn" />
                 </form>
               </div>
 
-              <div className="p-4 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 flex items-center justify-end gap-2.5">
-                <Button variant="outline" size="sm" onClick={() => setIsDrawerOpen(false)} className="text-xs">
-                  Cancel
-                </Button>
+              {/* Footer: light blue background, Save button aligned right */}
+              <div className="p-4 border-t border-slate-200/60 dark:border-slate-800 bg-[#EBF5FF] dark:bg-slate-950 flex items-center justify-end">
                 <Button
                   variant="primary"
                   size="sm"
                   onClick={() => document.getElementById("drawer-submit-btn")?.click()}
-                  className="text-xs shadow-xs"
+                  className="text-xs h-9 px-6 font-semibold bg-[#0B85C9] hover:bg-[#0974b0] text-white shadow-sm rounded-lg"
+                  disabled={!formName.trim()}
                 >
-                  Save Shift
+                  Save
                 </Button>
               </div>
             </div>
           </div>
         )}
+
       </div>
     </ProtectedRoute>
   );
