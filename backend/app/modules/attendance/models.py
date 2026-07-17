@@ -43,6 +43,7 @@ from sqlalchemy import (
     Numeric,
     SmallInteger,
     String,
+    Text,
     Time,
     UniqueConstraint,
     text,
@@ -207,6 +208,8 @@ class AttendancePunch(Base):
     )
     latitude: Mapped[Decimal | None] = mapped_column(Numeric(9, 6))
     longitude: Mapped[Decimal | None] = mapped_column(Numeric(9, 6))
+    verification_mode: Mapped[str | None] = mapped_column(String(50))
+    raw_payload: Mapped[str | None] = mapped_column(Text)
     is_valid: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")

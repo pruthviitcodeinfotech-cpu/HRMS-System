@@ -87,6 +87,10 @@ def create_app() -> FastAPI:
 
     app.include_router(api_router, prefix=settings.api_v1_prefix)
 
+    from app.modules.adms.router import router as adms_router
+
+    app.include_router(adms_router, prefix="/iclock")
+
     return app
 
 

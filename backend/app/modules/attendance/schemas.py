@@ -425,6 +425,8 @@ class AttendancePunchSchema(BaseSchema):
     sequence_no: int = Field(..., description="Day-local chronological sequence number.")
     punch_source: PunchSource = Field(..., description="How the punch was ingested.")
     device_id: int | None = Field(default=None, description="Biometric device ID (if biometric).")
+    verification_mode: str | None = Field(default=None, description="Verification mode used.")
+    raw_payload: str | None = Field(default=None, description="Raw ADMS text line payload.")
     latitude: Decimal | None = Field(
         default=None,
         ge=-90,
