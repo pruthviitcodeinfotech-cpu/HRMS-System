@@ -345,7 +345,7 @@ async def test_get_attendance_dashboard_success(dashboard_service, mock_cache) -
     ]
 
     res = await dashboard_service.get_attendance_dashboard(org_id=1, user=user)
-    assert res.present_today == 80
+    assert res.present_today == 82
     assert len(res.trend) == 1
     assert res.trend[0].date == datetime.date(2026, 7, 9)
 

@@ -113,3 +113,215 @@ export interface UpdateShiftRequest {
   is_advanced_mode?: boolean;
   day_timings?: ShiftDayTimingInput[] | null;
 }
+
+// ---------------------------------------------------------------------------
+// Shift Assignments
+// ---------------------------------------------------------------------------
+
+export interface ShiftAssignmentSchema {
+  assignment_id: number;
+  org_id: number;
+  employee_id: number;
+  shift_id: number;
+  effective_from: string;
+  effective_to?: string | null;
+  assigned_by?: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ShiftAssignmentListResponse {
+  items: ShiftAssignmentSchema[];
+  pagination: PaginationMeta;
+}
+
+export interface ShiftAssignmentQuery {
+  page?: number;
+  page_size?: number;
+  employee_id?: number;
+  shift_id?: number;
+  active_on?: string;
+  date?: string;
+}
+
+export interface ShiftAssignmentBulkRequest {
+  employee_ids: number[];
+  shift_id: number;
+  effective_from: string;
+  effective_to?: string | null;
+}
+
+export interface ShiftAssignmentBulkItemResult {
+  employee_id: number;
+  status: "created" | "skipped";
+  reason?: string | null;
+  assignment_id?: number | null;
+}
+
+export interface ShiftAssignmentBulkResponse {
+  created_count: number;
+  skipped_count: number;
+  results: ShiftAssignmentBulkItemResult[];
+}
+
+// ---------------------------------------------------------------------------
+// Week Off Management
+// ---------------------------------------------------------------------------
+
+export type WeekoffType = "working" | "week_off" | "occasional_week_off";
+export type DayOfWeek = 0 | 1 | 2 | 3 | 4 | 5 | 6; // 0=Sunday … 6=Saturday
+
+export interface WeeklyOffSchema {
+  weekoff_id: number;
+  employee_id: number;
+  day_of_week: DayOfWeek;
+  weekoff_type: WeekoffType;
+  occurrence_1st: boolean;
+  occurrence_2nd: boolean;
+  occurrence_3rd: boolean;
+  occurrence_4th: boolean;
+  occurrence_5th: boolean;
+  effective_from: string | null;
+  effective_to: string | null;
+  updated_by: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WeeklyOffListResponse {
+  items: WeeklyOffSchema[];
+  pagination: PaginationMeta;
+}
+
+export interface WeekoffItemInput {
+  day_of_week: DayOfWeek;
+  weekoff_type: WeekoffType;
+  occurrence_1st?: boolean;
+  occurrence_2nd?: boolean;
+  occurrence_3rd?: boolean;
+  occurrence_4th?: boolean;
+  occurrence_5th?: boolean;
+  effective_from?: string | null;
+  effective_to?: string | null;
+}
+
+export interface WeekoffConfigureRequest {
+  weekoffs: WeekoffItemInput[];
+}
+
+export interface WeekoffPatchRequest {
+  weekoff_type?: WeekoffType;
+  occurrence_1st?: boolean;
+  occurrence_2nd?: boolean;
+  occurrence_3rd?: boolean;
+  occurrence_4th?: boolean;
+  occurrence_5th?: boolean;
+  effective_to?: string | null;
+}
+
+export interface WeeklyOffUpdateRequest {
+  employee_id?: number | null;
+  department_id?: number | null;
+  day_of_week: DayOfWeek;
+  weekoff_type: WeekoffType;
+  occurrence_1st?: boolean;
+  occurrence_2nd?: boolean;
+  occurrence_3rd?: boolean;
+  occurrence_4th?: boolean;
+  occurrence_5th?: boolean;
+  effective_from?: string | null;
+  effective_to?: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Roster / Shift Calendar
+// ---------------------------------------------------------------------------
+
+export interface RosterEntrySchema {
+  roster_id: number;
+  org_id: number;
+  employee_id: number;
+  roster_date: string;
+  shift_id: number | null;
+  is_week_off: boolean;
+  created_by: number | null;
+  updated_by: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RosterListResponse {
+  items: RosterEntrySchema[];
+  pagination: PaginationMeta;
+}
+
+export interface RosterQuery {
+  page?: number;
+  page_size?: number;
+  date_from?: string;
+  date_to?: string;
+  month?: string;
+  branch_id?: number;
+  dept_id?: number;
+  employee_id?: number;
+  shift_id?: number;
+}
+
+export interface RosterUpsertRequest {
+  employee_id: number;
+  roster_date: string;
+  shift_id?: number | null;
+  is_week_off?: boolean;
+}
+
+export interface RosterUpsertResult {
+  created: boolean;
+  entry: RosterEntrySchema;
+}
+
+export interface RosterBulkEntry {
+  employee_id: number;
+  roster_date: string;
+  shift_id?: number | null;
+  is_week_off?: boolean;
+}
+
+export interface RosterBulkRequest {
+  entries: RosterBulkEntry[];
+}
+
+export interface RosterBulkItemResult {
+  employee_id: number;
+  roster_date: string;
+  status: "created" | "updated" | "skipped";
+  reason?: string | null;
+  roster_id?: number | null;
+}
+
+export interface RosterBulkResponse {
+  created_count: number;
+  updated_count: number;
+  skipped_count: number;
+  results: RosterBulkItemResult[];
+}
+
+export interface RosterUpdateRequest {
+  shift_id?: number | null;
+  is_week_off?: boolean;
+}
+
+export interface ShiftResolveQuery {
+  employee_id: number;
+  date: string;
+}
+
+export interface ShiftResolveResponse {
+  employee_id: number;
+  date: string;
+  effective_shift_id: number | null;
+  is_weekly_off: boolean;
+  is_working_day: boolean;
+  resolution_source: "roster" | "weekoff" | "assignment" | "default";
+}
+
+

@@ -1,173 +1,237 @@
 "use client";
 
-import React, { useState, useMemo } from "react";
-import { ChevronLeft, X, Search, SlidersHorizontal } from "lucide-react";
+import { useState, useMemo, useCallback } from "react";
+import { useRouter } from "next/navigation";
+import { isAxiosError } from "axios";
+import { toast } from "sonner";
+import {
+  ChevronLeft,
+  X,
+  ArrowUpDown,
+  Search,
+  Filter,
+  Loader2,
+  AlertCircle,
+  Check,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { toast } from "sonner";
-import { useRouter } from "next/navigation";
 import { ProtectedRoute } from "@/features/auth";
+import { useEmployees } from "@/features/employees/hooks";
+import { EmployeeSortBy, SortOrder } from "@/features/employees/types";
+import {
+  useShifts,
+  useShiftAssignments,
+  useBulkAssignShift,
+} from "@/features/shifts/hooks";
+import { ShiftSummarySchema } from "@/features/shifts/types";
 
-interface EmployeeAssignment {
-  employee_id: string;
-  name: string;
-  department: string;
-  designation: string;
-  branch: string;
-  shift_name: string;
-}
+const getErrorMessage = (err: unknown): string => {
+  if (isAxiosError(err)) {
+    return (
+      err.response?.data?.message ||
+      err.response?.data?.detail ||
+      "An unexpected error occurred."
+    );
+  }
+  if (err instanceof Error) {
+    return err.message;
+  }
+  return "An unexpected error occurred.";
+};
 
-const INITIAL_ASSIGNMENTS: EmployeeAssignment[] = [
-  { employee_id: "58", name: "Savan Kamuni", department: "Marketing", designation: "marketing", branch: "Itcode Infotech", shift_name: "Daily" },
-  { employee_id: "57", name: "Tulsi baladhiya", department: "Marketing", designation: "Graphic Designer", branch: "Itcode Infotech", shift_name: "Daily" },
-  { employee_id: "56", name: "Hetal Gohil", department: "Marketing", designation: "marketing", branch: "Itcode Infotech", shift_name: "Daily" },
-  { employee_id: "55", name: "Mansi Baghra", department: "Developer", designation: "Python", branch: "Itcode Infotech", shift_name: "Daily" },
-  { employee_id: "54", name: "Divyesh Pipaliya", department: "Marketing", designation: "marketing", branch: "Itcode Infotech", shift_name: "Daily" },
-  { employee_id: "53", name: "Pratik raval", department: "Marketing", designation: "marketing", branch: "Itcode Infotech", shift_name: "Daily" },
-  { employee_id: "52", name: "Krishna Chodvadiya", department: "BDM", designation: "BDM", branch: "Itcode Infotech", shift_name: "Daily" },
-  { employee_id: "51", name: "Kunalji Kikani", department: "video editing", designation: "video editing", branch: "Itcode Infotech", shift_name: "Daily" },
-  { employee_id: "50", name: "Vivek Rathod", department: "Graphic Designer", designation: "Graphic Designer", branch: "Itcode Infotech", shift_name: "Daily" },
-  { employee_id: "49", name: "Rahi Patel", department: "video editing", designation: "video editing", branch: "Itcode Infotech", shift_name: "Daily" },
-];
+const getTodayString = (): string => {
+  const d = new Date();
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
 
 export default function ShiftAssignmentsPage() {
   const router = useRouter();
-  const [assignments, setAssignments] = useState<EmployeeAssignment[]>(INITIAL_ASSIGNMENTS);
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  
-  // Search, Filters & Pagination
-  const [searchQuery, setSearchQuery] = useState("");
-  const [deptFilter, setDeptFilter] = useState("All");
-  const [shiftFilter, setShiftFilter] = useState("All");
-  const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize, setPageSize] = useState(10);
 
-  // Sorting
-  const [sortField, setSortField] = useState<string>("employee_id");
-  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
+  // Search & Pagination State
+  const [searchQuery, setSearchQuery] = useState<string>("");
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [pageSize, setPageSize] = useState<number>(10);
 
-  // Drawer state
-  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
-  const [targetShift, setTargetShift] = useState("Daily");
+  // Server-side Sorting State
+  const [sortField, setSortField] = useState<EmployeeSortBy>("employee_code");
+  const [sortDirection, setSortDirection] = useState<SortOrder>("asc");
+
+  // Selection & Drawer State
+  const [selectedEmpIds, setSelectedEmpIds] = useState<number[]>([]);
+  const [isDrawerOpen, setIsDrawerOpen] = useState<boolean>(false);
+  const [selectedShiftId, setSelectedShiftId] = useState<number | null>(null);
+  const [effectiveFrom, setEffectiveFrom] = useState<string>(getTodayString());
+
+  // Confirmation Modal State
+  const [isConfirmOpen, setIsConfirmOpen] = useState<boolean>(false);
+
+  // 1. Fetch Employees (Server-side paginated, searched, sorted)
+  const {
+    data: employeesData,
+    isLoading: isLoadingEmployees,
+    isError: isErrorEmployees,
+    error: employeesError,
+    refetch: refetchEmployees,
+  } = useEmployees({
+    page: currentPage,
+    page_size: pageSize,
+    q: searchQuery.trim() || undefined,
+    sort_by: sortField,
+    sort_order: sortDirection,
+  });
+
+  // 2. Fetch Active Shift Definitions (for selection inside drawer)
+  const {
+    data: shiftsData,
+    isLoading: isLoadingShifts,
+  } = useShifts({ page_size: 100 });
+
+  // 3. Fetch Active Shift Assignments (for current shift column mapping)
+  const todayStr = useMemo(() => getTodayString(), []);
+  const { data: assignmentsData } = useShiftAssignments({
+    active_on: todayStr,
+    page_size: 200,
+  });
+
+  // 4. Bulk Assign Mutation
+  const bulkAssignMutation = useBulkAssignShift();
+
+  // Map employee_id -> shift_name for display
+  const shiftMap = useMemo(() => {
+    const map = new Map<number, string>();
+    if (!shiftsData?.items) return map;
+    const shiftDict = new Map<number, string>();
+    shiftsData.items.forEach((s: ShiftSummarySchema) => {
+      shiftDict.set(s.shift_id, s.shift_name);
+    });
+
+    if (assignmentsData?.items) {
+      assignmentsData.items.forEach((a) => {
+        const name = shiftDict.get(a.shift_id) || "Assigned";
+        map.set(a.employee_id, name);
+      });
+    }
+    return map;
+  }, [shiftsData, assignmentsData]);
+
+  // Statistics calculation
+  const totalEmployees = employeesData?.pagination.total_records || 0;
+  const assignedCount = useMemo(() => {
+    if (!employeesData?.items) return 0;
+    return employeesData.items.filter((emp) => shiftMap.has(emp.employee_id)).length;
+  }, [employeesData, shiftMap]);
+  const unassignedCount = Math.max(0, totalEmployees - assignedCount);
+
+  // Current page employees
+  const currentEmployees = useMemo(
+    () => employeesData?.items || [],
+    [employeesData?.items]
+  );
+  const currentPageEmpIds = useMemo(
+    () => currentEmployees.map((e) => e.employee_id),
+    [currentEmployees]
+  );
+
+  // Selection Logic
+  const isAllOnPageSelected =
+    currentPageEmpIds.length > 0 &&
+    currentPageEmpIds.every((id) => selectedEmpIds.includes(id));
+
+  const handleSelectAll = useCallback(() => {
+    if (isAllOnPageSelected) {
+      setSelectedEmpIds((prev) =>
+        prev.filter((id) => !currentPageEmpIds.includes(id))
+      );
+    } else {
+      setSelectedEmpIds((prev) =>
+        Array.from(new Set([...prev, ...currentPageEmpIds]))
+      );
+    }
+  }, [isAllOnPageSelected, currentPageEmpIds]);
+
+  const handleSelectRow = useCallback((empId: number) => {
+    setSelectedEmpIds((prev) =>
+      prev.includes(empId) ? prev.filter((id) => id !== empId) : [...prev, empId]
+    );
+  }, []);
 
   // Sorting Handler
-  const handleSort = (field: string) => {
+  const handleSort = (field: EmployeeSortBy) => {
     if (sortField === field) {
       setSortDirection((prev) => (prev === "asc" ? "desc" : "asc"));
     } else {
       setSortField(field);
       setSortDirection("asc");
     }
-  };
-
-  // Toggle selection
-  const handleSelectRow = (empId: string) => {
-    setSelectedIds((prev) =>
-      prev.includes(empId) ? prev.filter((id) => id !== empId) : [...prev, empId]
-    );
-  };
-
-  const handleSelectAll = (filteredIds: string[]) => {
-    if (selectedIds.length === filteredIds.length) {
-      setSelectedIds([]);
-    } else {
-      setSelectedIds(filteredIds);
-    }
-  };
-
-  // Reset Filters
-  const handleResetFilters = () => {
-    setSearchQuery("");
-    setDeptFilter("All");
-    setShiftFilter("All");
     setCurrentPage(1);
   };
 
-  // Open Assign Drawer
+  // Open Drawer
   const handleOpenAssign = () => {
-    if (selectedIds.length === 0) {
-      toast.warning("Please select at least one employee to assign a shift.");
-      return;
-    }
+    if (selectedEmpIds.length === 0) return;
     setIsDrawerOpen(true);
   };
 
-  // Save Assignment
-  const handleSaveAssignment = (e: React.FormEvent) => {
-    e.preventDefault();
-    setAssignments((prev) =>
-      prev.map((a) =>
-        selectedIds.includes(a.employee_id) ? { ...a, shift_name: targetShift } : a
-      )
-    );
-    toast.success(`Assigned "${targetShift}" shift to ${selectedIds.length} employees.`);
-    setIsDrawerOpen(false);
-    setSelectedIds([]);
+  // Submit Assignment
+  const handleConfirmAssignment = () => {
+    if (!selectedShiftId) {
+      toast.error("Please choose a shift to assign.");
+      return;
+    }
+    if (!effectiveFrom) {
+      toast.error("Please select an effective date.");
+      return;
+    }
+    setIsConfirmOpen(true);
   };
 
-  // Filtered and Sorted list
-  const processedAssignments = useMemo(() => {
-    let result = [...assignments];
+  const executeBulkAssign = async () => {
+    if (!selectedShiftId) return;
 
-    // Search query
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      result = result.filter(
-        (a) =>
-          a.employee_id.toLowerCase().includes(q) ||
-          a.name.toLowerCase().includes(q) ||
-          a.department.toLowerCase().includes(q) ||
-          a.designation.toLowerCase().includes(q)
-      );
-    }
+    try {
+      const result = await bulkAssignMutation.mutateAsync({
+        employee_ids: selectedEmpIds,
+        shift_id: selectedShiftId,
+        effective_from: effectiveFrom,
+      });
 
-    // Dept Filter
-    if (deptFilter !== "All") {
-      result = result.filter((a) => a.department === deptFilter);
-    }
-
-    // Shift Filter
-    if (shiftFilter !== "All") {
-      result = result.filter((a) => a.shift_name === shiftFilter);
-    }
-
-    // Sorting
-    result.sort((a: any, b: any) => {
-      let valA = a[sortField];
-      let valB = b[sortField];
-
-      if (sortField === "employee_id") {
-        const numA = parseInt(valA) || 0;
-        const numB = parseInt(valB) || 0;
-        return sortDirection === "asc" ? numA - numB : numB - numA;
-      }
-
-      if (typeof valA === "string") {
-        return sortDirection === "asc"
-          ? valA.localeCompare(valB)
-          : valB.localeCompare(valA);
+      if (result.skipped_count > 0) {
+        const reasons = result.results
+          .filter((r) => r.status === "skipped" && r.reason)
+          .map((r) => r.reason)
+          .join(", ");
+        toast.warning(
+          `Assigned shift to ${result.created_count} employee(s). Skipped ${result.skipped_count}${reasons ? `: ${reasons}` : ""}`
+        );
       } else {
-        return sortDirection === "asc" ? valA - valB : valB - valA;
+        toast.success(
+          `Successfully assigned shift to ${result.created_count} employee(s).`
+        );
       }
-    });
 
-    return result;
-  }, [assignments, searchQuery, deptFilter, shiftFilter, sortField, sortDirection]);
+      setIsConfirmOpen(false);
+      setIsDrawerOpen(false);
+      setSelectedEmpIds([]);
+      setSelectedShiftId(null);
+    } catch (err: unknown) {
+      toast.error(getErrorMessage(err));
+    }
+  };
 
-  // Paginated list
-  const paginatedAssignments = useMemo(() => {
-    const startIndex = (currentPage - 1) * pageSize;
-    return processedAssignments.slice(startIndex, startIndex + pageSize);
-  }, [processedAssignments, currentPage, pageSize]);
-
-  const totalPages = Math.ceil(processedAssignments.length / pageSize) || 1;
-  const filteredIdsList = processedAssignments.map((a) => a.employee_id);
+  const selectedShiftObj = useMemo(() => {
+    if (!shiftsData?.items || !selectedShiftId) return null;
+    return shiftsData.items.find((s) => s.shift_id === selectedShiftId) || null;
+  }, [shiftsData, selectedShiftId]);
 
   return (
-    <ProtectedRoute requiredPermission={{ feature: "shift", action: "read" }}>
+    <ProtectedRoute requiredPermission={{ feature: "shift_assignment", action: "create" }}>
       <div className="p-6 space-y-6 bg-slate-50/40 min-h-screen">
-        
-        {/* Title area matching screenshot */}
+
+        {/* Page Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="space-y-1">
             <div className="flex items-center gap-2">
@@ -181,11 +245,16 @@ export default function ShiftAssignmentsPage() {
                 Assign Shifts To Employees
               </h1>
             </div>
-            {/* Stats matching screenshot */}
-            <div className="text-xs text-slate-500 dark:text-slate-400 font-semibold pl-8">
-              Assigned: <span className="text-slate-800 dark:text-slate-200">40</span>
-              <span className="mx-2 text-slate-300 dark:text-slate-700">|</span>
-              Unassigned: <span className="text-slate-800 dark:text-slate-200">0</span>
+            {/* Statistics */}
+            <div className="text-xs text-slate-500 dark:text-slate-400 font-medium pl-8 space-x-3">
+              <span>
+                Assigned:{" "}
+                <strong className="text-slate-700 dark:text-slate-200">{assignedCount}</strong>
+              </span>
+              <span>
+                Unassigned:{" "}
+                <strong className="text-slate-700 dark:text-slate-200">{unassignedCount}</strong>
+              </span>
             </div>
           </div>
 
@@ -193,10 +262,11 @@ export default function ShiftAssignmentsPage() {
             <Button
               variant="primary"
               size="sm"
+              disabled={selectedEmpIds.length === 0}
               onClick={handleOpenAssign}
-              className="h-9 px-5 text-xs font-bold bg-[#0B85C9] hover:bg-[#0974b0] text-white rounded-lg shadow-sm border-0"
+              className="h-9 px-5 text-xs font-bold bg-[#0B85C9] hover:bg-[#0974b0] disabled:bg-slate-300 disabled:cursor-not-allowed text-white rounded-lg shadow-sm border-0"
             >
-              Assign Shift
+              Assign Shift ({selectedEmpIds.length})
             </Button>
           </div>
         </div>
@@ -204,11 +274,9 @@ export default function ShiftAssignmentsPage() {
         {/* Main Grid Wrapper */}
         <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-xl shadow-xs overflow-hidden">
           
-          {/* Toolbar */}
-          <div className="p-4 border-b border-slate-200/80 dark:border-slate-800 flex flex-col md:flex-row items-center justify-between gap-4 bg-slate-50/45 dark:bg-slate-950/20">
-            
-            {/* Left search */}
-            <div className="relative w-full md:max-w-xs shrink-0">
+          {/* Search & Filter Bar */}
+          <div className="p-4 border-b border-slate-200/80 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4 bg-slate-50/45 dark:bg-slate-950/20">
+            <div className="relative w-full sm:max-w-xs shrink-0">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 dark:text-slate-500" />
               <Input
                 type="text"
@@ -218,215 +286,206 @@ export default function ShiftAssignmentsPage() {
                   setSearchQuery(e.target.value);
                   setCurrentPage(1);
                 }}
-                className="pl-9 h-9 text-xs w-full bg-white dark:bg-slate-950 text-slate-800 dark:text-slate-100 placeholder:text-slate-450 dark:placeholder:text-slate-500 border border-slate-200 dark:border-slate-800 focus-visible:ring-blue-500/20 focus-visible:border-blue-500"
+                className="pl-9 h-9 text-xs w-full bg-white dark:bg-slate-950 text-slate-800 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 border border-slate-200 dark:border-slate-800 focus-visible:ring-blue-500/20 focus-visible:border-blue-500"
               />
             </div>
 
-            {/* Middle Filters */}
-            <div className="flex flex-wrap items-center gap-3 w-full md:w-auto md:justify-end">
-              <div className="flex items-center gap-1.5">
-                <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Dept:</span>
-                <select
-                  value={deptFilter}
-                  onChange={(e) => {
-                    setDeptFilter(e.target.value);
-                    setCurrentPage(1);
-                  }}
-                  className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-md px-2 py-1 h-8 text-xs font-semibold text-slate-700 dark:text-slate-350 focus:outline-none"
-                >
-                  <option value="All">All Departments</option>
-                  <option value="Marketing">Marketing</option>
-                  <option value="Developer">Developer</option>
-                  <option value="BDM">BDM</option>
-                  <option value="video editing">video editing</option>
-                </select>
-              </div>
-
-              <div className="flex items-center gap-1.5">
-                <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Shift:</span>
-                <select
-                  value={shiftFilter}
-                  onChange={(e) => {
-                    setShiftFilter(e.target.value);
-                    setCurrentPage(1);
-                  }}
-                  className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-md px-2 py-1 h-8 text-xs font-semibold text-slate-700 dark:text-slate-350 focus:outline-none"
-                >
-                  <option value="All">All Shifts</option>
-                  <option value="Daily">Daily</option>
-                  <option value="Night Shift Developer">Night Shift Developer</option>
-                  <option value="Khushi maam 8 to 6">Khushi maam 8 to 6</option>
-                  <option value="Open Shift">Open Shift</option>
-                </select>
-              </div>
-
+            <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
               <Button
                 variant="outline"
                 size="sm"
-                onClick={handleResetFilters}
-                className="h-8 text-xs font-semibold text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800/50"
+                onClick={() => {
+                  setSearchQuery("");
+                  setCurrentPage(1);
+                }}
+                className="h-9 px-3 text-xs text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900"
               >
-                <SlidersHorizontal className="h-3.5 w-3.5 mr-1" />
-                Reset
+                <Filter className="h-3.5 w-3.5 mr-1" />
+                Clear Search
               </Button>
             </div>
           </div>
 
-          {/* Table representation matching screenshot exactly */}
-          <div className="w-full overflow-x-auto relative min-h-[250px]">
-            <table className="w-full text-left border-collapse text-xs">
-              <thead className="bg-[#EBF5FF] dark:bg-slate-950/80 border-b border-slate-200/80 dark:border-slate-800 uppercase text-[10px] tracking-wider text-slate-650 dark:text-slate-400 font-bold">
-                <tr>
-                  <th className="px-5 py-3.5 w-12 text-center">
-                    <input
-                      type="checkbox"
-                      checked={selectedIds.length === filteredIdsList.length && filteredIdsList.length > 0}
-                      onChange={() => handleSelectAll(filteredIdsList)}
-                      className="h-4 w-4 rounded border-slate-300 dark:border-slate-700 text-blue-600 focus:ring-blue-500 cursor-pointer"
-                    />
-                  </th>
-                  <th
-                    onClick={() => handleSort("employee_id")}
-                    className="px-6 py-3.5 font-bold text-slate-700 dark:text-slate-300 cursor-pointer hover:text-slate-800 transition-colors select-none"
-                  >
-                    <div className="flex items-center gap-1">
-                      Employee ID
-                      <span className="text-[9px] text-slate-400">
-                        {sortField === "employee_id" ? (sortDirection === "asc" ? "▲" : "▼") : "↕"}
-                      </span>
-                    </div>
-                  </th>
-                  <th
-                    onClick={() => handleSort("name")}
-                    className="px-6 py-3.5 font-bold text-slate-700 dark:text-slate-300 cursor-pointer hover:text-slate-800 transition-colors select-none"
-                  >
-                    <div className="flex items-center gap-1">
-                      Employee Name
-                      <span className="text-[9px] text-slate-400">
-                        {sortField === "name" ? (sortDirection === "asc" ? "▲" : "▼") : "↕"}
-                      </span>
-                    </div>
-                  </th>
-                  <th
-                    onClick={() => handleSort("department")}
-                    className="px-6 py-3.5 font-bold text-slate-700 dark:text-slate-300 cursor-pointer hover:text-slate-800 transition-colors select-none"
-                  >
-                    <div className="flex items-center gap-1">
-                      Department
-                      <span className="text-[9px] text-slate-400">
-                        {sortField === "department" ? (sortDirection === "asc" ? "▲" : "▼") : "↕"}
-                      </span>
-                    </div>
-                  </th>
-                  <th
-                    onClick={() => handleSort("designation")}
-                    className="px-6 py-3.5 font-bold text-slate-700 dark:text-slate-300 cursor-pointer hover:text-slate-800 transition-colors select-none"
-                  >
-                    <div className="flex items-center gap-1">
-                      Designation
-                      <span className="text-[9px] text-slate-400">
-                        {sortField === "designation" ? (sortDirection === "asc" ? "▲" : "▼") : "↕"}
-                      </span>
-                    </div>
-                  </th>
-                  <th
-                    onClick={() => handleSort("branch")}
-                    className="px-6 py-3.5 font-bold text-slate-700 dark:text-slate-300 cursor-pointer hover:text-slate-800 transition-colors select-none"
-                  >
-                    <div className="flex items-center gap-1">
-                      Branch
-                      <span className="text-[9px] text-slate-400">
-                        {sortField === "branch" ? (sortDirection === "asc" ? "▲" : "▼") : "↕"}
-                      </span>
-                    </div>
-                  </th>
-                  <th
-                    onClick={() => handleSort("shift_name")}
-                    className="px-6 py-3.5 font-bold text-slate-700 dark:text-slate-300 cursor-pointer hover:text-slate-800 transition-colors select-none"
-                  >
-                    <div className="flex items-center gap-1">
-                      Shifts
-                      <span className="text-[9px] text-slate-400">
-                        {sortField === "shift_name" ? (sortDirection === "asc" ? "▲" : "▼") : "↕"}
-                      </span>
-                    </div>
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800/65">
-                {paginatedAssignments.length === 0 ? (
+          {/* Table Area */}
+          <div className="w-full overflow-x-auto relative min-h-[300px]">
+            {isErrorEmployees ? (
+              <div className="p-8 text-center flex flex-col items-center justify-center space-y-3">
+                <AlertCircle className="h-10 w-10 text-rose-500" />
+                <p className="text-sm font-semibold text-slate-700 dark:text-slate-300">
+                  Failed to load employee list.
+                </p>
+                <p className="text-xs text-slate-500 max-w-md">
+                  {getErrorMessage(employeesError)}
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => refetchEmployees()}
+                  className="mt-2 text-xs"
+                >
+                  Retry
+                </Button>
+              </div>
+            ) : (
+              <table className="w-full text-left border-collapse text-xs">
+                <thead className="bg-[#EBF5FF] dark:bg-slate-950/80 border-b border-slate-200/80 dark:border-slate-800 uppercase text-[11px] tracking-wider text-slate-700 dark:text-slate-300 font-bold sticky top-0 z-10">
                   <tr>
-                    <td colSpan={7} className="px-6 py-12 text-center text-slate-400 font-semibold">
-                      No shift assignments matching filters.
-                    </td>
+                    <th className="px-4 py-3.5 w-12 text-center">
+                      <input
+                        type="checkbox"
+                        checked={isAllOnPageSelected}
+                        onChange={handleSelectAll}
+                        disabled={currentEmployees.length === 0}
+                        className="h-4 w-4 rounded border-slate-300 dark:border-slate-700 text-[#0B85C9] focus:ring-[#0B85C9] cursor-pointer disabled:cursor-not-allowed"
+                      />
+                    </th>
+                    <th
+                      onClick={() => handleSort("employee_code")}
+                      className="px-5 py-3.5 font-bold text-slate-700 dark:text-slate-300 cursor-pointer hover:text-slate-900 transition-colors select-none"
+                    >
+                      <div className="flex items-center gap-1">
+                        Employee ID
+                        <ArrowUpDown className="h-3 w-3 text-slate-400" />
+                      </div>
+                    </th>
+                    <th
+                      onClick={() => handleSort("employee_name")}
+                      className="px-5 py-3.5 font-bold text-slate-700 dark:text-slate-300 cursor-pointer hover:text-slate-900 transition-colors select-none"
+                    >
+                      <div className="flex items-center gap-1">
+                        Employee Name
+                        <ArrowUpDown className="h-3 w-3 text-slate-400" />
+                      </div>
+                    </th>
+                    <th className="px-5 py-3.5 font-bold text-slate-700 dark:text-slate-300 select-none">
+                      Department
+                    </th>
+                    <th className="px-5 py-3.5 font-bold text-slate-700 dark:text-slate-300 select-none">
+                      Designation
+                    </th>
+                    <th className="px-5 py-3.5 font-bold text-slate-700 dark:text-slate-300 select-none">
+                      Branch
+                    </th>
+                    <th className="px-5 py-3.5 font-bold text-slate-700 dark:text-slate-300 select-none">
+                      Shifts
+                    </th>
                   </tr>
-                ) : (
-                  paginatedAssignments.map((assign) => {
-                    const isSelected = selectedIds.includes(assign.employee_id);
-                    return (
-                      <tr
-                        key={assign.employee_id}
-                        className="hover:bg-slate-50/40 dark:hover:bg-slate-800/10 transition-colors border-b border-slate-100 dark:border-slate-800/60 align-middle"
-                      >
-                        <td className="px-5 py-4 text-center">
-                          <input
-                            type="checkbox"
-                            checked={isSelected}
-                            onChange={() => handleSelectRow(assign.employee_id)}
-                            className="h-4 w-4 rounded border-slate-300 dark:border-slate-700 text-blue-600 focus:ring-blue-500 cursor-pointer"
-                          />
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800/65">
+                  {isLoadingEmployees ? (
+                    // Skeleton Loading Rows
+                    Array.from({ length: pageSize }).map((_, i) => (
+                      <tr key={i} className="animate-pulse">
+                        <td className="px-4 py-3.5 text-center">
+                          <div className="h-4 w-4 bg-slate-200 dark:bg-slate-800 rounded mx-auto" />
                         </td>
-                        <td className="px-6 py-4 font-semibold text-slate-600 dark:text-slate-400 whitespace-nowrap">
-                          {assign.employee_id}
+                        <td className="px-5 py-3.5">
+                          <div className="h-4 w-12 bg-slate-200 dark:bg-slate-800 rounded" />
                         </td>
-                        <td className="px-6 py-4 font-bold text-slate-800 dark:text-slate-200 whitespace-nowrap">
-                          {assign.name}
+                        <td className="px-5 py-3.5">
+                          <div className="h-4 w-32 bg-slate-200 dark:bg-slate-800 rounded" />
                         </td>
-                        <td className="px-6 py-4 font-semibold text-slate-600 dark:text-slate-400 whitespace-nowrap">
-                          {assign.department}
+                        <td className="px-5 py-3.5">
+                          <div className="h-4 w-24 bg-slate-200 dark:bg-slate-800 rounded" />
                         </td>
-                        <td className="px-6 py-4 font-semibold text-slate-600 dark:text-slate-400 whitespace-nowrap">
-                          {assign.designation}
+                        <td className="px-5 py-3.5">
+                          <div className="h-4 w-24 bg-slate-200 dark:bg-slate-800 rounded" />
                         </td>
-                        <td className="px-6 py-4 font-semibold text-slate-600 dark:text-slate-400 whitespace-nowrap">
-                          {assign.branch}
+                        <td className="px-5 py-3.5">
+                          <div className="h-4 w-24 bg-slate-200 dark:bg-slate-800 rounded" />
                         </td>
-                        {/* Shift name column rendered as plain text matching screenshot exactly */}
-                        <td className="px-6 py-4 font-bold text-slate-700 dark:text-slate-300 whitespace-nowrap">
-                          {assign.shift_name}
+                        <td className="px-5 py-3.5">
+                          <div className="h-4 w-16 bg-slate-200 dark:bg-slate-800 rounded" />
                         </td>
                       </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
+                    ))
+                  ) : currentEmployees.length === 0 ? (
+                    // Empty State
+                    <tr>
+                      <td colSpan={7} className="px-6 py-12 text-center text-slate-400 font-medium">
+                        No employees found matching query.
+                      </td>
+                    </tr>
+                  ) : (
+                    // Live Employee Rows
+                    currentEmployees.map((emp) => {
+                      const isSelected = selectedEmpIds.includes(emp.employee_id);
+                      const currentShiftName = shiftMap.get(emp.employee_id) || "Daily";
+
+                      return (
+                        <tr
+                          key={emp.employee_id}
+                          className={`hover:bg-slate-50/70 dark:hover:bg-slate-800/30 transition-colors border-b border-slate-100 dark:border-slate-800/60 align-middle ${
+                            isSelected ? "bg-blue-50/30 dark:bg-blue-950/20" : ""
+                          }`}
+                        >
+                          <td className="px-4 py-3.5 text-center">
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => handleSelectRow(emp.employee_id)}
+                              className="h-4 w-4 rounded border-slate-300 dark:border-slate-700 text-[#0B85C9] focus:ring-[#0B85C9] cursor-pointer"
+                            />
+                          </td>
+                          <td className="px-5 py-3.5 font-medium text-slate-600 dark:text-slate-400 whitespace-nowrap">
+                            {emp.employee_code}
+                          </td>
+                          <td className="px-5 py-3.5 font-semibold text-slate-800 dark:text-slate-200 whitespace-nowrap">
+                            {emp.employee_name}
+                          </td>
+                          <td className="px-5 py-3.5 font-medium text-slate-600 dark:text-slate-400 whitespace-nowrap">
+                            {emp.department_name || "-"}
+                          </td>
+                          <td className="px-5 py-3.5 font-medium text-slate-600 dark:text-slate-400 whitespace-nowrap">
+                            {emp.designation_name || "-"}
+                          </td>
+                          <td className="px-5 py-3.5 font-medium text-slate-600 dark:text-slate-400 whitespace-nowrap">
+                            {emp.branch_name || "-"}
+                          </td>
+                          <td className="px-5 py-3.5 font-semibold text-slate-700 dark:text-slate-300 whitespace-nowrap">
+                            <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                              {currentShiftName}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            )}
           </div>
 
           {/* Pagination Footer */}
           <div className="p-4 border-t border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4 bg-slate-50/20 dark:bg-slate-950/10">
-            <div className="text-xs text-slate-500 font-semibold">
+            <div className="text-xs text-slate-500 font-medium">
               Showing{" "}
-              <span className="font-bold text-slate-800 dark:text-slate-200">
-                {processedAssignments.length === 0 ? 0 : (currentPage - 1) * pageSize + 1}
+              <span className="font-semibold text-slate-800 dark:text-slate-200">
+                {totalEmployees === 0 ? 0 : (currentPage - 1) * pageSize + 1}
               </span>{" "}
               to{" "}
-              <span className="font-bold text-slate-800 dark:text-slate-200">
-                {Math.min(currentPage * pageSize, processedAssignments.length)}
+              <span className="font-semibold text-slate-800 dark:text-slate-200">
+                {Math.min(currentPage * pageSize, totalEmployees)}
               </span>{" "}
-              of <span className="font-bold text-slate-800 dark:text-slate-200">{processedAssignments.length}</span> Results
+              of{" "}
+              <span className="font-semibold text-slate-800 dark:text-slate-200">
+                {totalEmployees}
+              </span>{" "}
+              Results
             </div>
 
             <div className="flex items-center gap-3">
               <div className="flex items-center gap-1.5">
-                <span className="text-xs text-slate-400 font-bold uppercase tracking-wider">Page Size:</span>
+                <span className="text-xs text-slate-400 font-medium uppercase tracking-wider">
+                  Page Size:
+                </span>
                 <select
                   value={pageSize}
                   onChange={(e) => {
                     setPageSize(Number(e.target.value));
                     setCurrentPage(1);
                   }}
-                  className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-md px-2 py-1 text-xs font-semibold text-slate-700 dark:text-slate-350 focus:outline-none"
+                  className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-md px-2 py-1 text-xs font-semibold text-slate-700 dark:text-slate-300 focus:outline-none"
                 >
                   {[5, 10, 20, 50].map((size) => (
                     <option key={size} value={size}>
@@ -441,7 +500,7 @@ export default function ShiftAssignmentsPage() {
                   variant="outline"
                   size="sm"
                   onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
-                  disabled={currentPage === 1 || totalPages <= 1}
+                  disabled={currentPage === 1 || !employeesData?.pagination.has_previous}
                   className="h-8 px-2.5 text-xs text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800/50"
                 >
                   Previous
@@ -452,8 +511,8 @@ export default function ShiftAssignmentsPage() {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => setCurrentPage((prev) => Math.min(prev + 1, totalPages))}
-                  disabled={currentPage === totalPages || totalPages <= 1}
+                  onClick={() => setCurrentPage((prev) => prev + 1)}
+                  disabled={!employeesData?.pagination.has_next}
                   className="h-8 px-2.5 text-xs text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800/50"
                 >
                   Next
@@ -463,77 +522,172 @@ export default function ShiftAssignmentsPage() {
           </div>
         </div>
 
-        {/* ASSIGN SHIFT DRAWER */}
+        {/* CHOOSE SHIFT TO ASSIGN DRAWER */}
         {isDrawerOpen && (
           <div className="fixed inset-0 z-[100] flex justify-end">
-            {/* Backdrop */}
             <div
-              className="absolute inset-0 bg-black/50 transition-opacity"
+              className="absolute inset-0 bg-black/40 backdrop-blur-[1px] transition-opacity"
               onClick={() => setIsDrawerOpen(false)}
             />
             
-            {/* Drawer Panel */}
-            <div className="relative w-full max-w-md bg-white dark:bg-slate-900 h-full shadow-2xl flex flex-col justify-between z-10 animate-in slide-in-from-right duration-200">
+            <div className="relative w-full max-w-lg bg-white dark:bg-slate-900 h-full shadow-2xl flex flex-col justify-between z-10 animate-in slide-in-from-right duration-200">
               
-              {/* Header: light blue background, close button */}
-              <div className="p-5 border-b border-slate-200/60 dark:border-slate-800 flex items-center justify-between bg-[#EBF5FF] dark:bg-slate-950">
-                <h3 className="text-base font-bold text-slate-800 dark:text-slate-100">
-                  Assign Shift
-                </h3>
+              {/* Drawer Header */}
+              <div className="px-6 py-4 border-b border-slate-200/80 dark:border-slate-800 flex items-center justify-between bg-[#F0F7FF] dark:bg-slate-950">
+                <div>
+                  <h2 className="text-base font-semibold text-slate-800 dark:text-slate-100">
+                    Choose Shift To Assign
+                  </h2>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Assigning shift to {selectedEmpIds.length} employee(s)
+                  </p>
+                </div>
                 <button
                   onClick={() => setIsDrawerOpen(false)}
-                  className="p-1.5 hover:bg-slate-200/50 dark:hover:bg-slate-800/50 rounded-md text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 transition-colors cursor-pointer focus:outline-none"
+                  className="p-1 hover:bg-slate-200/60 dark:hover:bg-slate-800/60 rounded text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors focus:outline-none"
                 >
                   <X className="h-5 w-5" />
                 </button>
               </div>
 
-              {/* Body: white background, padding */}
-              <div className="flex-1 overflow-y-auto p-6 space-y-5">
-                <form onSubmit={handleSaveAssignment} className="space-y-5" id="assign-shift-form">
-                  
-                  {/* Selected Employees list info */}
-                  <div className="p-3 bg-blue-50/50 dark:bg-blue-950/20 border border-blue-100 dark:border-blue-900/50 rounded-xl space-y-1.5">
-                    <span className="text-[10px] font-bold text-blue-500 uppercase tracking-wider block">
-                      Target Employees ({selectedIds.length})
-                    </span>
-                    <p className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                      {assignments
-                        .filter((a) => selectedIds.includes(a.employee_id))
-                        .map((a) => a.name)
-                        .join(", ")}
-                    </p>
+              {/* Drawer Content Body */}
+              <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                
+                {/* Effective Date Selection */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                    Effective From Date
+                  </label>
+                  <Input
+                    type="date"
+                    value={effectiveFrom}
+                    onChange={(e) => setEffectiveFrom(e.target.value)}
+                    className="h-9 text-xs w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800"
+                  />
+                </div>
+
+                {/* Shift Options Table */}
+                <div className="border border-slate-200/80 dark:border-slate-800 rounded-lg overflow-hidden bg-white dark:bg-slate-900">
+                  <div className="bg-slate-50 dark:bg-slate-950/80 px-6 py-3 border-b border-slate-200/80 dark:border-slate-800 text-center font-bold text-xs text-slate-700 dark:text-slate-300">
+                    Shift Name
                   </div>
 
-                  {/* Choose Shift template */}
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                      Choose Shift Template
-                    </label>
-                    <select
-                      value={targetShift}
-                      onChange={(e) => setTargetShift(e.target.value)}
-                      className="w-full rounded-md border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 h-10 px-3 text-xs text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                    >
-                      <option value="Daily">Daily (09:20 AM - 06:50 PM)</option>
-                      <option value="Night Shift Developer">Night Shift Developer (10:30 PM - 06:30 AM)</option>
-                      <option value="Khushi maam 8 to 6">Khushi maam 8 to 6 (08:30 AM - 06:00 PM)</option>
-                      <option value="Open Shift">Open Shift (Flexible)</option>
-                    </select>
+                  <div className="divide-y divide-slate-100 dark:divide-slate-800 max-h-[380px] overflow-y-auto">
+                    {isLoadingShifts ? (
+                      <div className="p-8 text-center flex items-center justify-center gap-2 text-xs text-slate-500">
+                        <Loader2 className="h-4 w-4 animate-spin text-[#0B85C9]" />
+                        Loading available shifts...
+                      </div>
+                    ) : !shiftsData?.items || shiftsData.items.length === 0 ? (
+                      <div className="p-6 text-center text-xs text-slate-400">
+                        No active shifts available.
+                      </div>
+                    ) : (
+                      shiftsData.items.map((shift: ShiftSummarySchema) => {
+                        const isSelected = selectedShiftId === shift.shift_id;
+                        return (
+                          <div
+                            key={shift.shift_id}
+                            onClick={() => setSelectedShiftId(shift.shift_id)}
+                            className={`px-6 py-4 flex items-center gap-6 cursor-pointer hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors ${
+                              isSelected ? "bg-blue-50/40 dark:bg-blue-950/20" : ""
+                            }`}
+                          >
+                            <input
+                              type="radio"
+                              name="selected_shift"
+                              checked={isSelected}
+                              onChange={() => setSelectedShiftId(shift.shift_id)}
+                              className="h-4 w-4 border-slate-300 text-[#0B85C9] focus:ring-[#0B85C9] cursor-pointer shrink-0"
+                            />
+                            <div className="flex flex-col">
+                              <span className="text-xs font-semibold text-slate-800 dark:text-slate-200">
+                                {shift.shift_name}
+                              </span>
+                              {shift.is_open_shift && (
+                                <span className="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5">
+                                  Flexible timing based on punch
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
                   </div>
+                </div>
 
-                </form>
               </div>
 
-              {/* Footer: light blue background, Assign button aligned right */}
-              <div className="p-4 border-t border-slate-200/60 dark:border-slate-800 bg-[#EBF5FF] dark:bg-slate-950 flex items-center justify-end">
+              {/* Drawer Footer */}
+              <div className="px-6 py-4 border-t border-slate-200/80 dark:border-slate-800 bg-[#F0F7FF] dark:bg-slate-950 flex items-center justify-end gap-4">
+                <button
+                  type="button"
+                  onClick={() => setIsDrawerOpen(false)}
+                  className="text-xs font-semibold text-[#0B85C9] hover:underline cursor-pointer px-2 py-1"
+                >
+                  Close
+                </button>
                 <Button
                   variant="primary"
                   size="sm"
-                  onClick={() => document.getElementById("assign-shift-form")?.dispatchEvent(new Event("submit", { cancelable: true, bubbles: true }))}
-                  className="text-xs h-9 px-6 font-semibold bg-[#0B85C9] hover:bg-[#0974b0] text-white shadow-sm rounded-lg"
+                  disabled={!selectedShiftId}
+                  onClick={handleConfirmAssignment}
+                  className="text-xs h-9 px-5 font-bold bg-[#0B85C9] hover:bg-[#0974b0] disabled:bg-slate-300 disabled:cursor-not-allowed text-white rounded-md shadow-xs border-0"
                 >
-                  Assign
+                  Assign Shift
+                </Button>
+              </div>
+
+            </div>
+          </div>
+        )}
+
+        {/* CONFIRMATION DIALOG */}
+        {isConfirmOpen && selectedShiftObj && (
+          <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
+            <div
+              className="absolute inset-0 bg-black/50 backdrop-blur-[1px]"
+              onClick={() => setIsConfirmOpen(false)}
+            />
+            <div className="relative w-full max-w-md bg-white dark:bg-slate-900 rounded-xl shadow-xl border border-slate-200 dark:border-slate-800 p-6 space-y-4 z-10 animate-in fade-in zoom-in-95 duration-150">
+              <div className="flex items-center gap-3 text-slate-800 dark:text-slate-100 font-semibold text-base">
+                <div className="p-2 bg-blue-50 dark:bg-blue-950/40 text-[#0B85C9] rounded-lg">
+                  <Check className="h-5 w-5" />
+                </div>
+                Confirm Shift Assignment
+              </div>
+              <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
+                Are you sure you want to assign shift{" "}
+                <strong className="text-slate-800 dark:text-slate-200">{selectedShiftObj.shift_name}</strong> to{" "}
+                <strong className="text-slate-800 dark:text-slate-200">{selectedEmpIds.length}</strong> selected employee(s) effective from{" "}
+                <strong className="text-slate-800 dark:text-slate-200">{effectiveFrom}</strong>?
+              </p>
+              <div className="flex items-center justify-end gap-3 pt-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setIsConfirmOpen(false)}
+                  disabled={bulkAssignMutation.isPending}
+                  className="text-xs h-9 px-4"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={executeBulkAssign}
+                  disabled={bulkAssignMutation.isPending}
+                  className="text-xs h-9 px-5 font-bold bg-[#0B85C9] hover:bg-[#0974b0] text-white rounded-md border-0"
+                >
+                  {bulkAssignMutation.isPending ? (
+                    <>
+                      <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
+                      Assigning...
+                    </>
+                  ) : (
+                    "Confirm & Assign"
+                  )}
                 </Button>
               </div>
             </div>

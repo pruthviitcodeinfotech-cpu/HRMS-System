@@ -43,8 +43,8 @@ if config.config_file_name is not None:
 
 def _sync_database_url() -> str:
     """Return a synchronous SQLAlchemy URL for Alembic to use."""
-    url = os.getenv("DATABASE_URL", "")
-    return url.replace("+asyncpg", "+psycopg2")
+    from app.core.config.settings import settings
+    return settings.sync_database_url
 
 
 _url = _sync_database_url()

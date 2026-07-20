@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import {
   Search,
   SlidersHorizontal,
@@ -17,128 +17,67 @@ import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import { ProtectedRoute } from "@/features/auth";
+import { isAxiosError } from "axios";
+import {
+  useShifts,
+  useShift,
+  useCreateShift,
+  useUpdateShift,
+  useDeleteShift,
+} from "@/features/shifts/hooks";
+import type {
+  ShiftSummarySchema,
+  ShiftSortBy,
+} from "@/features/shifts/types";
+import { useDebouncedValue } from "@/features/employees/hooks";
 
-interface ShiftTiming {
-  day: string;
-  check_in: string;
-  check_out: string;
-  is_working: boolean;
+interface ApiErrorData {
+  error?: { message?: string };
 }
 
-interface ShiftItem {
-  shift_id: number;
-  shift_name: string;
-  is_default: boolean;
-  assigned_employees: number;
-  created_at: string;
-  remark?: string;
-  timings: ShiftTiming[];
-  color?: string;
-}
-
-const INITIAL_SHIFTS: ShiftItem[] = [
-  {
-    shift_id: 1,
-    shift_name: "Daily",
-    is_default: true,
-    assigned_employees: 39,
-    created_at: "2025-11-17",
-    remark: "Default organization general shift",
-    color: "#0B85C9",
-    timings: [
-      { day: "Sunday", check_in: "09:20 AM", check_out: "06:50 PM", is_working: true },
-      { day: "Monday", check_in: "09:20 AM", check_out: "06:50 PM", is_working: true },
-      { day: "Tuesday", check_in: "09:20 AM", check_out: "06:50 PM", is_working: true },
-      { day: "Wednesday", check_in: "09:20 AM", check_out: "06:50 PM", is_working: true },
-      { day: "Thursday", check_in: "09:20 AM", check_out: "06:50 PM", is_working: true },
-      { day: "Friday", check_in: "09:20 AM", check_out: "06:50 PM", is_working: true },
-      { day: "Saturday", check_in: "09:20 AM", check_out: "06:50 PM", is_working: true },
-    ],
-  },
-  {
-    shift_id: 2,
-    shift_name: "Night Shift Developer",
-    is_default: false,
-    assigned_employees: 0,
-    created_at: "2025-12-04",
-    remark: "Night shift for tech support & developers",
-    color: "#8B5CF6",
-    timings: [
-      { day: "Sunday", check_in: "10:30 PM", check_out: "06:30 AM", is_working: true },
-      { day: "Monday", check_in: "10:30 PM", check_out: "06:30 AM", is_working: true },
-      { day: "Tuesday", check_in: "10:30 PM", check_out: "06:30 AM", is_working: true },
-      { day: "Wednesday", check_in: "10:30 PM", check_out: "06:30 AM", is_working: true },
-      { day: "Thursday", check_in: "10:30 PM", check_out: "06:30 AM", is_working: true },
-      { day: "Friday", check_in: "10:30 PM", check_out: "06:30 AM", is_working: true },
-      { day: "Saturday", check_in: "10:30 PM", check_out: "06:30 AM", is_working: true },
-    ],
-  },
-  {
-    shift_id: 3,
-    shift_name: "Khushi maam 8 to 6",
-    is_default: false,
-    assigned_employees: 1,
-    created_at: "2025-12-04",
-    remark: "Management custom hours",
-    color: "#EF4444",
-    timings: [
-      { day: "Sunday", check_in: "08:30 AM", check_out: "06:00 PM", is_working: true },
-      { day: "Monday", check_in: "08:30 AM", check_out: "06:00 PM", is_working: true },
-      { day: "Tuesday", check_in: "08:30 AM", check_out: "06:00 PM", is_working: true },
-      { day: "Wednesday", check_in: "08:30 AM", check_out: "06:00 PM", is_working: true },
-      { day: "Thursday", check_in: "08:30 AM", check_out: "06:00 PM", is_working: true },
-      { day: "Friday", check_in: "08:30 AM", check_out: "06:00 PM", is_working: true },
-      { day: "Saturday", check_in: "08:30 AM", check_out: "06:00 PM", is_working: true },
-    ],
-  },
-  {
-    shift_id: 4,
-    shift_name: "Open Shift",
-    is_default: false,
-    assigned_employees: 0,
-    created_at: "2026-07-17",
-    remark: "Flexible hours",
-    color: "#10B981",
-    timings: [
-      { day: "Sunday", check_in: "N/A", check_out: "N/A", is_working: false },
-      { day: "Monday", check_in: "N/A", check_out: "N/A", is_working: false },
-      { day: "Tuesday", check_in: "N/A", check_out: "N/A", is_working: false },
-      { day: "Wednesday", check_in: "N/A", check_out: "N/A", is_working: false },
-      { day: "Thursday", check_in: "N/A", check_out: "N/A", is_working: false },
-      { day: "Friday", check_in: "N/A", check_out: "N/A", is_working: false },
-      { day: "Saturday", check_in: "N/A", check_out: "N/A", is_working: false },
-    ],
-  },
-];
+const getErrMsg = (err: unknown, fallback: string): string => {
+  if (isAxiosError(err)) {
+    const d = err.response?.data as ApiErrorData | undefined;
+    return d?.error?.message || fallback;
+  }
+  if (err instanceof Error) return err.message;
+  return fallback;
+};
 
 const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
+/** Format ISO datetime → YYYY-MM-DD for display. */
+const fmtDate = (iso: string): string => {
+  try { return iso.slice(0, 10); } catch { return iso; }
+};
+
 export default function ShiftsPage() {
   const router = useRouter();
-  const [shifts, setShifts] = useState<ShiftItem[]>(INITIAL_SHIFTS);
   const [searchQuery, setSearchQuery] = useState("");
+  const debouncedSearch = useDebouncedValue(searchQuery, 400);
 
   // View modes
   const [isAdvancedMode, setIsAdvancedMode] = useState(false);
   const [showSwitchModal, setShowSwitchModal] = useState(false);
 
-  // Sorting
-  const [sortField, setSortField] = useState<string>("shift_name");
+  // Sorting — server-side
+  const [sortField, setSortField] = useState<ShiftSortBy>("shift_name");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
 
-  // Pagination
+  // Pagination — server-side
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
 
-  // Loading indicator simulator
-  const [isLoading, setIsLoading] = useState(false);
+  // Delete confirmation
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [shiftToDelete, setShiftToDelete] = useState<number | null>(null);
 
   // Create/Edit Shift Drawer state
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
-  const [drawerMode, setDrawerMode] = useState<"add" | "edit">("edit");
-  const [selectedShift, setSelectedShift] = useState<ShiftItem | null>(null);
+  const [drawerMode, setDrawerMode] = useState<"add" | "edit">("add");
+  const [selectedShiftId, setSelectedShiftId] = useState<number | null>(null);
 
-  // Create Shift Form Fields State (Matching the screenshot exactly)
+  // Form Fields
   const [formName, setFormName] = useState("");
   const [oneShiftTimeForAllDays, setOneShiftTimeForAllDays] = useState(true);
   const [addBreakTime, setAddBreakTime] = useState(false);
@@ -148,11 +87,9 @@ export default function ShiftsPage() {
   const [formBreakEnd, setFormBreakEnd] = useState("");
   const [shiftColor, setShiftColor] = useState("#0B85C9");
   const [formRemark, setFormRemark] = useState("");
-
-  // Individual days timing states
   const [dayTimings, setDayTimings] = useState<Record<string, { check_in: string; check_out: string; is_working: boolean }>>({});
 
-  // Adjust working hours Drawer state
+  // Working hours Drawer
   const [isWorkingHoursOpen, setIsWorkingHoursOpen] = useState(false);
   const [workingHoursType, setWorkingHoursType] = useState<"fixed" | "shift_wise">("fixed");
   const [fullDayHours, setFullDayHours] = useState("08:00");
@@ -163,112 +100,87 @@ export default function ShiftsPage() {
   // Validation Errors
   const [errors, setErrors] = useState<Record<string, string>>({});
 
-  // Simulate loading on search/filters
-  useEffect(() => {
-    setIsLoading(true);
-    const timer = setTimeout(() => {
-      setIsLoading(false);
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [searchQuery, isAdvancedMode, currentPage, pageSize]);
+  // ---- React Query ----
+  const shiftsQuery = useShifts({
+    page: currentPage,
+    page_size: pageSize,
+    q: debouncedSearch.trim() || undefined,
+    sort_by: sortField,
+    sort_order: sortDirection,
+  });
 
-  // Form validation checker
+  const shiftDetailQuery = useShift(
+    selectedShiftId ?? 0,
+    drawerMode === "edit" && !!selectedShiftId
+  );
+
+  const createMutation = useCreateShift();
+  const updateMutation = useUpdateShift();
+  const deleteMutation = useDeleteShift();
+
+  const isSaving = createMutation.isPending || updateMutation.isPending;
+  const isDeleting = deleteMutation.isPending;
+
+  const shifts = shiftsQuery.data?.items ?? [];
+  const pagination = shiftsQuery.data?.pagination;
+  const totalRecords = pagination?.total_records ?? 0;
+  const totalPages = pagination?.total_pages ?? 1;
+  const isLoading = shiftsQuery.isLoading;
+
+  // Form validation
   const validateForm = () => {
     const newErrors: Record<string, string> = {};
-    if (!formName.trim()) {
-      newErrors.shift_name = "Shift Name is required";
-    }
+    if (!formName.trim()) newErrors.shift_name = "Shift Name is required";
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
 
-  // Convert "09:20" to AM/PM string for displaying in the table
-  const convertToAMPM = (timeStr: string) => {
-    if (!timeStr || timeStr === "N/A") return "N/A";
-    try {
-      const [h, m] = timeStr.split(":");
-      const hour = parseInt(h);
-      const suffix = hour >= 12 ? "PM" : "AM";
-      const displayHour = hour % 12 || 12;
-      return `${String(displayHour).padStart(2, "0")}:${m} ${suffix}`;
-    } catch {
-      return timeStr;
-    }
-  };
+  // Populate form from backend detail when editDrawer detail loads
+  useEffect(() => {
+    if (drawerMode === "edit" && shiftDetailQuery.data) {
+      const s = shiftDetailQuery.data;
+      setFormName(s.shift_name);
+      setFormRemark(s.remark || "");
+      setShiftColor(s.shift_color || "#0B85C9");
+      setOneShiftTimeForAllDays(s.is_uniform_time);
+      setAddBreakTime(s.has_break_time);
 
-  // Convert e.g. "09:20 AM" to 24h "09:20"
-  const convertTo24Hour = (timeAMPM: string) => {
-    if (!timeAMPM || timeAMPM === "N/A") return "";
-    try {
-      const match = timeAMPM.match(/^(\d+):(\d+)\s*(AM|PM)$/i);
-      if (!match) return timeAMPM;
-      let hour = parseInt(match[1]);
-      const minute = match[2];
-      const suffix = match[3].toUpperCase();
-      if (suffix === "PM" && hour < 12) hour += 12;
-      if (suffix === "AM" && hour === 12) hour = 0;
-      return `${String(hour).padStart(2, "0")}:${minute}`;
-    } catch {
-      return "";
-    }
-  };
+      // Find uniform timing row (day_of_week === null) or first row
+      const uniformRow = s.day_timings.find((t) => t.day_of_week === null) ?? s.day_timings[0];
+      setFormStartTime(uniformRow?.start_time?.slice(0, 5) ?? "");
+      setFormEndTime(uniformRow?.end_time?.slice(0, 5) ?? "");
+      setFormBreakStart(uniformRow?.break_start_time?.slice(0, 5) ?? "");
+      setFormBreakEnd(uniformRow?.break_end_time?.slice(0, 5) ?? "");
 
-  // Handle Sort
-  const handleSort = (field: string) => {
+      // Per-day timings (day_of_week 0=Sun … 6=Sat)
+      const mapped: Record<string, { check_in: string; check_out: string; is_working: boolean }> = {};
+      WEEKDAYS.forEach((day, idx) => {
+        const row = s.day_timings.find((t) => t.day_of_week === idx);
+        mapped[day] = {
+          check_in: row?.start_time?.slice(0, 5) ?? "",
+          check_out: row?.end_time?.slice(0, 5) ?? "",
+          is_working: row?.is_working_day ?? true,
+        };
+      });
+      setDayTimings(mapped);
+    }
+  }, [drawerMode, shiftDetailQuery.data]);
+
+  // Handle Sort (server-side)
+  const handleSort = (field: ShiftSortBy) => {
     if (sortField === field) {
       setSortDirection((prev) => (prev === "asc" ? "desc" : "asc"));
     } else {
       setSortField(field);
       setSortDirection("asc");
     }
+    setCurrentPage(1);
   };
-
-  // Filtered and Sorted Shifts
-  const processedShifts = useMemo(() => {
-    let result = [...shifts];
-
-    // Local Search
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      result = result.filter(
-        (s) =>
-          s.shift_name.toLowerCase().includes(q) ||
-          (s.remark && s.remark.toLowerCase().includes(q))
-      );
-    }
-
-    // Sorting
-    result.sort((a: any, b: any) => {
-      let valA = a[sortField];
-      let valB = b[sortField];
-
-      if (valA === undefined) valA = "";
-      if (valB === undefined) valB = "";
-
-      if (typeof valA === "string") {
-        return sortDirection === "asc"
-          ? valA.localeCompare(valB)
-          : valB.localeCompare(valA);
-      } else {
-        return sortDirection === "asc" ? valA - valB : valB - valA;
-      }
-    });
-
-    return result;
-  }, [shifts, searchQuery, sortField, sortDirection]);
-
-  // Paginated Shifts
-  const paginatedShifts = useMemo(() => {
-    const startIndex = (currentPage - 1) * pageSize;
-    return processedShifts.slice(startIndex, startIndex + pageSize);
-  }, [processedShifts, currentPage, pageSize]);
-
-  const totalPages = Math.ceil(processedShifts.length / pageSize) || 1;
 
   // Open Add Shift
   const handleOpenAdd = () => {
     setDrawerMode("add");
-    setSelectedShift(null);
+    setSelectedShiftId(null);
     setFormName("");
     setOneShiftTimeForAllDays(true);
     setAddBreakTime(false);
@@ -278,67 +190,62 @@ export default function ShiftsPage() {
     setFormBreakEnd("");
     setShiftColor("#0B85C9");
     setFormRemark("");
-
     const initialDays: Record<string, { check_in: string; check_out: string; is_working: boolean }> = {};
-    WEEKDAYS.forEach((d) => {
-      initialDays[d] = { check_in: "", check_out: "", is_working: true };
-    });
+    WEEKDAYS.forEach((d) => { initialDays[d] = { check_in: "", check_out: "", is_working: true }; });
     setDayTimings(initialDays);
     setErrors({});
     setIsDrawerOpen(true);
   };
 
-  // Open Edit Shift
-  const handleOpenEdit = (shift: ShiftItem) => {
+  // Open Edit Shift — load from backend via useShift()
+  const handleOpenEdit = (shift: ShiftSummarySchema) => {
     setDrawerMode("edit");
-    setSelectedShift(shift);
+    setSelectedShiftId(shift.shift_id);
+    // Pre-populate from summary while detail loads
     setFormName(shift.shift_name);
-    setFormRemark(shift.remark || "");
-    setShiftColor(shift.color || "#0B85C9");
-
-    // Detect if timings are uniform
-    const firstActive = shift.timings.find((t) => t.is_working);
-    const uniformIn = firstActive ? convertTo24Hour(firstActive.check_in) : "";
-    const uniformOut = firstActive ? convertTo24Hour(firstActive.check_out) : "";
-
-    setFormStartTime(uniformIn);
-    setFormEndTime(uniformOut);
-
-    // If any day has different timings, we set oneShiftTimeForAllDays to false
-    let isUniform = true;
-    if (firstActive) {
-      shift.timings.forEach((t) => {
-        if (t.is_working && (t.check_in !== firstActive.check_in || t.check_out !== firstActive.check_out)) {
-          isUniform = false;
-        }
-      });
-    } else {
-      isUniform = false; // All off days
-    }
-    setOneShiftTimeForAllDays(isUniform);
-
-    // Map existing timings
-    const mappedDays: Record<string, { check_in: string; check_out: string; is_working: boolean }> = {};
-    WEEKDAYS.forEach((d) => {
-      const match = shift.timings.find((t) => t.day === d);
-      if (match) {
-        mappedDays[d] = {
-          check_in: match.check_in === "N/A" ? "" : convertTo24Hour(match.check_in),
-          check_out: match.check_out === "N/A" ? "" : convertTo24Hour(match.check_out),
-          is_working: match.is_working,
-        };
-      } else {
-        mappedDays[d] = { check_in: "", check_out: "", is_working: true };
-      }
-    });
-    setDayTimings(mappedDays);
-
-    setAddBreakTime(false);
+    setShiftColor(shift.shift_color || "#0B85C9");
+    setFormRemark("");
+    setOneShiftTimeForAllDays(shift.is_uniform_time);
+    setAddBreakTime(shift.has_break_time);
+    setFormStartTime("");
+    setFormEndTime("");
+    setFormBreakStart("");
+    setFormBreakEnd("");
+    const initialDays: Record<string, { check_in: string; check_out: string; is_working: boolean }> = {};
+    WEEKDAYS.forEach((d) => { initialDays[d] = { check_in: "", check_out: "", is_working: true }; });
+    setDayTimings(initialDays);
     setErrors({});
     setIsDrawerOpen(true);
   };
 
-  // Save Shift changes
+  // Build day_timings payload from form state
+  const buildDayTimingsPayload = () => {
+    if (oneShiftTimeForAllDays) {
+      return [{
+        day_of_week: null,
+        start_time: formStartTime || null,
+        end_time: formEndTime || null,
+        break_start_time: addBreakTime && formBreakStart ? formBreakStart : null,
+        break_end_time: addBreakTime && formBreakEnd ? formBreakEnd : null,
+        is_working_day: !!(formStartTime && formEndTime),
+        crosses_midnight: false,
+      }];
+    }
+    return WEEKDAYS.map((day, idx) => {
+      const info = dayTimings[day] || { check_in: "", check_out: "", is_working: true };
+      return {
+        day_of_week: idx,
+        start_time: info.is_working && info.check_in ? info.check_in : null,
+        end_time: info.is_working && info.check_out ? info.check_out : null,
+        break_start_time: null,
+        break_end_time: null,
+        is_working_day: info.is_working,
+        crosses_midnight: false,
+      };
+    });
+  };
+
+  // Save Shift — calls backend
   const handleSaveShift = (e: React.FormEvent) => {
     e.preventDefault();
     if (!validateForm()) {
@@ -346,58 +253,60 @@ export default function ShiftsPage() {
       return;
     }
 
-    const generatedTimings: ShiftTiming[] = WEEKDAYS.map((d) => {
-      if (oneShiftTimeForAllDays) {
-        return {
-          day: d,
-          check_in: formStartTime ? convertToAMPM(formStartTime) : "N/A",
-          check_out: formEndTime ? convertToAMPM(formEndTime) : "N/A",
-          is_working: !!(formStartTime && formEndTime),
-        };
-      } else {
-        const info = dayTimings[d] || { check_in: "", check_out: "", is_working: true };
-        return {
-          day: d,
-          check_in: info.is_working && info.check_in ? convertToAMPM(info.check_in) : "N/A",
-          check_out: info.is_working && info.check_out ? convertToAMPM(info.check_out) : "N/A",
-          is_working: !!(info.is_working && info.check_in && info.check_out),
-        };
-      }
-    });
+    const payload = {
+      shift_name: formName.trim(),
+      shift_color: shiftColor || null,
+      remark: formRemark.trim() || null,
+      is_uniform_time: oneShiftTimeForAllDays,
+      has_break_time: addBreakTime,
+      day_timings: buildDayTimingsPayload(),
+    };
 
     if (drawerMode === "add") {
-      const newId = shifts.length > 0 ? Math.max(...shifts.map((s) => s.shift_id)) + 1 : 1;
-      const newShift: ShiftItem = {
-        shift_id: newId,
-        shift_name: formName.trim(),
-        is_default: false,
-        assigned_employees: 0,
-        created_at: new Date().toISOString().split("T")[0],
-        remark: formRemark.trim() || undefined,
-        timings: generatedTimings,
-        color: shiftColor,
-      };
-
-      setShifts((prev) => [...prev, newShift]);
-      toast.success("Shift Template created successfully.");
+      createMutation.mutate(payload, {
+        onSuccess: () => {
+          toast.success("Shift created successfully.");
+          setIsDrawerOpen(false);
+        },
+        onError: (err: unknown) => {
+          toast.error(getErrMsg(err, "Failed to create shift"));
+        },
+      });
     } else {
-      if (!selectedShift) return;
-      setShifts((prev) =>
-        prev.map((s) =>
-          s.shift_id === selectedShift.shift_id
-            ? {
-                ...s,
-                shift_name: formName.trim(),
-                remark: formRemark.trim() || undefined,
-                timings: generatedTimings,
-                color: shiftColor,
-              }
-            : s
-        )
+      if (!selectedShiftId) return;
+      updateMutation.mutate(
+        { id: selectedShiftId, data: payload },
+        {
+          onSuccess: () => {
+            toast.success("Shift updated successfully.");
+            setIsDrawerOpen(false);
+          },
+          onError: (err: unknown) => {
+            toast.error(getErrMsg(err, "Failed to update shift"));
+          },
+        }
       );
-      toast.success("Shift Template modified successfully.");
     }
-    setIsDrawerOpen(false);
+  };
+
+  // Delete shift
+  const initiateDelete = (shiftId: number) => {
+    setShiftToDelete(shiftId);
+    setIsDeleteModalOpen(true);
+  };
+
+  const confirmDelete = () => {
+    if (!shiftToDelete) return;
+    deleteMutation.mutate(shiftToDelete, {
+      onSuccess: () => {
+        toast.success("Shift deleted successfully.");
+        setIsDeleteModalOpen(false);
+        setShiftToDelete(null);
+      },
+      onError: (err: unknown) => {
+        toast.error(getErrMsg(err, "Failed to delete shift"));
+      },
+    });
   };
 
   // Reset Filters
@@ -442,7 +351,7 @@ export default function ShiftsPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-xl font-bold text-slate-800 dark:text-slate-100 flex items-center gap-1">
-              Shifts <span className="text-[#0B85C9] font-bold">({shifts.length})</span>
+              Shifts <span className="text-[#0B85C9] font-bold">({totalRecords})</span>
             </h1>
           </div>
 
@@ -559,13 +468,13 @@ export default function ShiftsPage() {
                   <th className="px-3 py-3.5 font-bold text-center">Saturday</th>
                   
                   <th
-                    onClick={() => handleSort("assigned_employees")}
+                    onClick={() => handleSort("created_at")}
                     className="px-4 py-3.5 cursor-pointer hover:text-slate-800 transition-colors text-center select-none font-bold whitespace-nowrap"
                   >
                     <div className="flex items-center justify-center gap-1.5">
                       Assigned Employees
                       <span className="text-[9px] text-slate-400">
-                        {sortField === "assigned_employees" ? (sortDirection === "asc" ? "▲" : "▼") : "↕"}
+                        {sortField === "created_at" ? (sortDirection === "asc" ? "▲" : "▼") : "↕"}
                       </span>
                     </div>
                   </th>
@@ -599,7 +508,24 @@ export default function ShiftsPage() {
                       </td>
                     </tr>
                   ))
-                ) : paginatedShifts.length === 0 ? (
+                ) : shiftsQuery.isError ? (
+                  <tr>
+                    <td colSpan={11} className="px-6 py-16 text-center">
+                      <div className="flex flex-col items-center justify-center space-y-4 max-w-sm mx-auto">
+                        <div className="h-14 w-14 rounded-full bg-red-50 flex items-center justify-center text-red-400">
+                          <HelpCircle className="h-7 w-7" />
+                        </div>
+                        <div>
+                          <h4 className="text-sm font-semibold text-slate-800 dark:text-slate-200">Failed to Load Shifts</h4>
+                          <p className="text-xs text-slate-500 mt-1">Please try again.</p>
+                        </div>
+                        <Button variant="outline" size="sm" onClick={() => shiftsQuery.refetch()} className="text-xs">
+                          Retry
+                        </Button>
+                      </div>
+                    </td>
+                  </tr>
+                ) : shifts.length === 0 ? (
                   <tr>
                     <td colSpan={11} className="px-6 py-16 text-center">
                       <div className="flex flex-col items-center justify-center space-y-4 max-w-sm mx-auto">
@@ -613,7 +539,7 @@ export default function ShiftsPage() {
                     </td>
                   </tr>
                 ) : (
-                  paginatedShifts.map((shift) => (
+                  shifts.map((shift) => (
                     <tr
                       key={shift.shift_id}
                       className="hover:bg-slate-50/40 dark:hover:bg-slate-800/10 transition-colors border-b border-slate-100 dark:border-slate-800/60 align-middle"
@@ -622,7 +548,7 @@ export default function ShiftsPage() {
                         <div className="flex items-center gap-2.5">
                           <div
                             className="p-2 rounded-xl border border-slate-100 dark:border-slate-800/60 shrink-0"
-                            style={{ color: shift.color || "#0B85C9", backgroundColor: `${shift.color || "#0B85C9"}12` }}
+                            style={{ color: shift.shift_color || "#0B85C9", backgroundColor: `${shift.shift_color || "#0B85C9"}12` }}
                           >
                             <Clock className="h-4.5 w-4.5" />
                           </div>
@@ -636,51 +562,56 @@ export default function ShiftsPage() {
                                   Default
                                 </span>
                               )}
+                              {shift.is_open_shift && (
+                                <span className="px-2 py-0.5 text-[9px] font-bold rounded bg-emerald-50 text-emerald-600 border border-emerald-200/50">
+                                  Open
+                                </span>
+                              )}
                             </div>
                           </div>
                         </div>
                       </td>
 
-                      {/* Display daily timings starting with Sunday as requested */}
-                      {WEEKDAYS.map((dayName, idx) => {
-                        const t = shift.timings.find((tim) => tim.day === dayName) || { check_in: "N/A", check_out: "N/A", is_working: false };
-                        const isOff = t.check_in === "N/A" || !t.is_working;
-                        return (
-                          <td key={idx} className="px-3 py-4 text-center whitespace-nowrap border-l border-slate-100 dark:border-slate-850">
-                            {isOff ? (
-                              <span className="text-slate-400 font-semibold text-[10px]">N/A</span>
-                            ) : (
-                              <div className="flex flex-col gap-0.5">
-                                <span className="text-[11px] font-semibold text-slate-700 dark:text-slate-350">
-                                  {t.check_in.replace(" AM", "").replace(" PM", "")} - {t.check_out.replace(" AM", "").replace(" PM", "")}
-                                </span>
-                                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">
-                                  {t.check_in.split(" ")[1]} - {t.check_out.split(" ")[1]}
-                                </span>
-                              </div>
-                            )}
-                          </td>
-                        );
-                      })}
+                      {/* Day columns — show schedule badge since list API does not include per-day timings */}
+                      {WEEKDAYS.map((_, idx) => (
+                        <td key={idx} className="px-3 py-4 text-center whitespace-nowrap border-l border-slate-100 dark:border-slate-850">
+                          {shift.is_open_shift ? (
+                            <span className="text-emerald-500 font-semibold text-[10px]">Open</span>
+                          ) : shift.is_uniform_time ? (
+                            <span className="text-blue-500 font-semibold text-[10px]">Uniform</span>
+                          ) : (
+                            <span className="text-slate-400 font-semibold text-[10px]">Varied</span>
+                          )}
+                        </td>
+                      ))}
 
                       <td className="px-4 py-4 text-center whitespace-nowrap font-bold text-slate-700 dark:text-slate-300">
-                        {shift.assigned_employees}
+                        —
                       </td>
 
                       <td className="px-4 py-4 text-left whitespace-nowrap font-semibold text-slate-650 dark:text-slate-400">
-                        {shift.created_at}
+                        {fmtDate(shift.created_at)}
                       </td>
 
-                      {/* Actions column: High contrast Edit button in both light and dark mode */}
                       <td className="px-6 py-4 text-right whitespace-nowrap">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleOpenEdit(shift)}
-                          className="h-8 px-3.5 text-xs font-bold text-blue-600 dark:text-blue-450 border-blue-200 dark:border-blue-800/80 bg-white dark:bg-slate-900 hover:bg-blue-50 dark:hover:bg-blue-950/30 cursor-pointer"
-                        >
-                          Edit
-                        </Button>
+                        <div className="flex items-center justify-end gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleOpenEdit(shift)}
+                            className="h-8 px-3.5 text-xs font-bold text-blue-600 dark:text-blue-450 border-blue-200 dark:border-blue-800/80 bg-white dark:bg-slate-900 hover:bg-blue-50 dark:hover:bg-blue-950/30 cursor-pointer"
+                          >
+                            Edit
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => initiateDelete(shift.shift_id)}
+                            className="h-8 px-3.5 text-xs font-bold text-red-600 dark:text-red-400 border-red-200 dark:border-red-800/80 bg-white dark:bg-slate-900 hover:bg-red-50 dark:hover:bg-red-950/30 cursor-pointer"
+                          >
+                            Delete
+                          </Button>
+                        </div>
                       </td>
                     </tr>
                   ))
@@ -694,13 +625,13 @@ export default function ShiftsPage() {
             <div className="text-xs text-slate-500 font-semibold">
               Showing{" "}
               <span className="font-bold text-slate-800 dark:text-slate-200">
-                {processedShifts.length === 0 ? 0 : (currentPage - 1) * pageSize + 1}
+                {totalRecords === 0 ? 0 : (currentPage - 1) * pageSize + 1}
               </span>{" "}
               to{" "}
               <span className="font-bold text-slate-800 dark:text-slate-200">
-                {Math.min(currentPage * pageSize, processedShifts.length)}
+                {Math.min(currentPage * pageSize, totalRecords)}
               </span>{" "}
-              of <span className="font-bold text-slate-800 dark:text-slate-200">{processedShifts.length}</span> Results
+              of <span className="font-bold text-slate-800 dark:text-slate-200">{totalRecords}</span> Results
             </div>
 
             <div className="flex items-center gap-3">
@@ -785,6 +716,49 @@ export default function ShiftsPage() {
                   className="text-xs h-9 px-4 font-semibold bg-[#0B85C9] hover:bg-[#0974b0] text-white"
                 >
                   Yes, Switch
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* DELETE CONFIRMATION MODAL */}
+        {isDeleteModalOpen && (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
+            <div
+              className="absolute inset-0 bg-black/60 backdrop-blur-xs transition-opacity"
+              onClick={() => { setIsDeleteModalOpen(false); setShiftToDelete(null); }}
+            />
+            <div className="relative w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl shadow-2xl p-6 z-10 space-y-4 animate-in zoom-in-95 duration-150">
+              <div className="flex items-start gap-4">
+                <div className="p-2.5 bg-red-50 text-red-600 rounded-full shrink-0">
+                  <HelpCircle className="h-6 w-6" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-800 dark:text-slate-200">Delete Shift?</h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1.5 leading-relaxed">
+                    This action cannot be undone. The shift will be deleted and may be blocked if active assignments reference it.
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100 dark:border-slate-800">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => { setIsDeleteModalOpen(false); setShiftToDelete(null); }}
+                  disabled={isDeleting}
+                  className="text-xs h-9 px-4 font-semibold"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={confirmDelete}
+                  disabled={isDeleting}
+                  className="text-xs h-9 px-4 font-semibold bg-red-600 hover:bg-red-700 text-white"
+                >
+                  {isDeleting ? "Deleting..." : "Yes, Delete"}
                 </Button>
               </div>
             </div>
@@ -1202,9 +1176,9 @@ export default function ShiftsPage() {
                   size="sm"
                   onClick={() => document.getElementById("drawer-submit-btn")?.click()}
                   className="text-xs h-9 px-6 font-semibold bg-[#0B85C9] hover:bg-[#0974b0] text-white shadow-sm rounded-lg"
-                  disabled={!formName.trim()}
+                  disabled={!formName.trim() || isSaving}
                 >
-                  Save
+                  {isSaving ? "Saving..." : "Save"}
                 </Button>
               </div>
             </div>
