@@ -85,6 +85,11 @@ export const NavigationMenu = ({ sidebarOpen }: NavigationMenuProps) => {
       hasChevron: true,
       isNew: false,
       permission: { feature: "leave_request", action: "read" },
+      items: [
+        { href: "/leaves/create", label: "Leave Create" },
+        { href: "/leaves/holidays/create", label: "Holiday Create" },
+        { href: "/leaves/holidays/assign", label: "Holiday Assign" },
+      ] as const,
     },
     {
       href: "/approvals",
@@ -180,7 +185,7 @@ export const NavigationMenu = ({ sidebarOpen }: NavigationMenuProps) => {
       {filteredItems.map((item) => {
         const Icon = item.icon;
         const hasChildren = "items" in item;
-        
+
         // Parent is active if current path starts with parent href OR matches any child href
         const isParentActive = hasChildren
           ? pathname.startsWith(item.href) || item.items.some((child) => pathname === child.href)
@@ -195,9 +200,7 @@ export const NavigationMenu = ({ sidebarOpen }: NavigationMenuProps) => {
               <button
                 onClick={() => toggleExpand(item.label)}
                 className={`w-full flex items-center justify-between rounded-lg transition-all duration-200 cursor-pointer ${
-                  sidebarOpen
-                    ? "px-3 py-2 text-xs font-semibold"
-                    : "p-2.5 justify-center"
+                  sidebarOpen ? "px-3 py-2 text-xs font-semibold" : "p-2.5 justify-center"
                 } ${
                   isParentActive
                     ? "bg-blue-600 text-white shadow-xs"
@@ -206,7 +209,9 @@ export const NavigationMenu = ({ sidebarOpen }: NavigationMenuProps) => {
                 title={item.label}
               >
                 <div className="flex items-center space-x-3 min-w-0">
-                  <Icon className={`h-4.5 w-4.5 shrink-0 ${isParentActive ? "text-white" : "text-slate-500 dark:text-slate-400"}`} />
+                  <Icon
+                    className={`h-4.5 w-4.5 shrink-0 ${isParentActive ? "text-white" : "text-slate-500 dark:text-slate-400"}`}
+                  />
                   {sidebarOpen && <span className="truncate">{item.label}</span>}
                 </div>
 
@@ -229,9 +234,7 @@ export const NavigationMenu = ({ sidebarOpen }: NavigationMenuProps) => {
               <Link
                 href={item.href}
                 className={`flex items-center justify-between rounded-lg transition-all duration-200 cursor-pointer ${
-                  sidebarOpen
-                    ? "px-3 py-2 text-xs font-semibold"
-                    : "p-2.5 justify-center"
+                  sidebarOpen ? "px-3 py-2 text-xs font-semibold" : "p-2.5 justify-center"
                 } ${
                   isParentActive
                     ? "bg-blue-600 text-white shadow-xs"
@@ -240,7 +243,9 @@ export const NavigationMenu = ({ sidebarOpen }: NavigationMenuProps) => {
                 title={item.label}
               >
                 <div className="flex items-center space-x-3 min-w-0">
-                  <Icon className={`h-4.5 w-4.5 shrink-0 ${isParentActive ? "text-white" : "text-slate-500 dark:text-slate-400"}`} />
+                  <Icon
+                    className={`h-4.5 w-4.5 shrink-0 ${isParentActive ? "text-white" : "text-slate-500 dark:text-slate-400"}`}
+                  />
                   {sidebarOpen && <span className="truncate">{item.label}</span>}
                 </div>
 
@@ -252,7 +257,9 @@ export const NavigationMenu = ({ sidebarOpen }: NavigationMenuProps) => {
                       </span>
                     )}
                     {item.hasChevron && (
-                      <ChevronRight className={`h-3 w-3 ${isParentActive ? "text-white" : "text-slate-400 dark:text-slate-500"}`} />
+                      <ChevronRight
+                        className={`h-3 w-3 ${isParentActive ? "text-white" : "text-slate-400 dark:text-slate-500"}`}
+                      />
                     )}
                   </div>
                 )}
