@@ -7,7 +7,7 @@ import {
   LayoutDashboard,
   Users,
   Calendar,
-  Trees,
+  Palmtree,
   CheckSquare,
   CreditCard,
   Briefcase,
@@ -31,6 +31,7 @@ export const NavigationMenu = ({ sidebarOpen }: NavigationMenuProps) => {
   // Expanded sub-menus tracking state
   const [expandedItems, setExpandedItems] = useState<Record<string, boolean>>({
     Employees: true, // Default open per the user request reference screenshot
+    "Leaves & Holidays": true,
   });
 
   const toggleExpand = (label: string) => {
@@ -81,12 +82,14 @@ export const NavigationMenu = ({ sidebarOpen }: NavigationMenuProps) => {
     {
       href: "/leaves",
       label: "Leaves & Holidays",
-      icon: Trees,
+      icon: Palmtree,
       hasChevron: true,
       isNew: false,
       permission: { feature: "leave_request", action: "read" },
       items: [
         { href: "/leaves/create", label: "Leave Create" },
+        { href: "/leaves/assign", label: "Leave Assign" },
+        { href: "/leaves/balance", label: "Leave Balance" },
         { href: "/leaves/holidays/create", label: "Holiday Create" },
         { href: "/leaves/holidays/assign", label: "Holiday Assign" },
       ] as const,
