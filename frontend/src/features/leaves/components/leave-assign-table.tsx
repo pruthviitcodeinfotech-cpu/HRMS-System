@@ -9,6 +9,8 @@ interface LeaveAssignTableProps {
   employees: LeaveAssignEmployee[];
   leaveTypes: string[];
   isLoading?: boolean;
+  selectedIds?: string[];
+  onSelectionChange?: (ids: string[]) => void;
   onToggleAssignment: (employeeId: string, leaveType: string) => void;
 }
 
@@ -16,33 +18,27 @@ export function LeaveAssignTable({
   employees,
   leaveTypes,
   isLoading = false,
+  selectedIds: controlledSelectedIds,
+  onSelectionChange,
   onToggleAssignment,
 }: LeaveAssignTableProps) {
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [sortField, setSortField] = useState<"employeeId" | "name" | "department" | "designation">("employeeId");
+  const [internalSelectedIds, setInternalSelectedIds] = useState<string[]>([]);
+  const selectedIds = controlledSelectedIds ?? internalSelectedIds;
+
+  const updateSelectedIds = (newIds: string[]) => {
+    if (onSelectionChange) {
+      onSelectionChange(newIds);
+    } else {
+      setInternalSelectedIds(newIds);
+    }
+  };
+
+  const [sortField, setSortField] = useState<"employeeId" | "name" | "department" | "designation">(
+    "employeeId"
+  );
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [pageSize, setPageSize] = useState<number>(10);
-
-  // Toggle single row selection
-  const toggleSelectRow = (id: string) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
-  // Toggle select all on current page
-  const isAllSelected = employees.length > 0 && selectedIds.size === employees.length;
-  const toggleSelectAll = () => {
-    if (isAllSelected) {
-      setSelectedIds(new Set());
-    } else {
-      setSelectedIds(new Set(employees.map((e) => e.id)));
-    }
-  };
 
   // Sort logic
   const sortedEmployees = useMemo(() => {
@@ -84,6 +80,30 @@ export function LeaveAssignTable({
   const paginatedEmployees = useMemo(() => {
     return sortedEmployees.slice(startIndex, startIndex + pageSize);
   }, [sortedEmployees, startIndex, pageSize]);
+
+  // Toggle single row selection
+  const toggleSelectRow = (id: string) => {
+    if (selectedIds.includes(id)) {
+      updateSelectedIds(selectedIds.filter((item) => item !== id));
+    } else {
+      updateSelectedIds([...selectedIds, id]);
+    }
+  };
+
+  // Toggle select all on current page
+  const isAllSelected =
+    paginatedEmployees.length > 0 &&
+    paginatedEmployees.every((emp) => selectedIds.includes(emp.id));
+
+  const toggleSelectAll = () => {
+    if (isAllSelected) {
+      const currentPageIds = paginatedEmployees.map((e) => e.id);
+      updateSelectedIds(selectedIds.filter((id) => !currentPageIds.includes(id)));
+    } else {
+      const currentPageIds = paginatedEmployees.map((e) => e.id);
+      updateSelectedIds(Array.from(new Set([...selectedIds, ...currentPageIds])));
+    }
+  };
 
   return (
     <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg shadow-2xs overflow-hidden flex flex-col">
@@ -156,19 +176,34 @@ export function LeaveAssignTable({
             {isLoading ? (
               Array.from({ length: pageSize }).map((_, idx) => (
                 <tr key={idx} className="animate-pulse">
-                  <td className="px-4 py-3 text-center"><div className="h-4 w-4 bg-slate-200 dark:bg-slate-800 rounded mx-auto" /></td>
-                  <td className="px-4 py-3"><div className="h-3.5 w-12 bg-slate-200 dark:bg-slate-800 rounded" /></td>
-                  <td className="px-4 py-3"><div className="h-3.5 w-28 bg-slate-200 dark:bg-slate-800 rounded" /></td>
-                  <td className="px-4 py-3"><div className="h-3.5 w-20 bg-slate-200 dark:bg-slate-800 rounded" /></td>
-                  <td className="px-4 py-3"><div className="h-3.5 w-24 bg-slate-200 dark:bg-slate-800 rounded" /></td>
+                  <td className="px-4 py-3 text-center">
+                    <div className="h-4 w-4 bg-slate-200 dark:bg-slate-800 rounded mx-auto" />
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="h-3.5 w-12 bg-slate-200 dark:bg-slate-800 rounded" />
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="h-3.5 w-28 bg-slate-200 dark:bg-slate-800 rounded" />
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="h-3.5 w-20 bg-slate-200 dark:bg-slate-800 rounded" />
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="h-3.5 w-24 bg-slate-200 dark:bg-slate-800 rounded" />
+                  </td>
                   {leaveTypes.map((t) => (
-                    <td key={t} className="px-4 py-3 text-center"><div className="h-4 w-4 bg-slate-200 dark:bg-slate-800 rounded mx-auto" /></td>
+                    <td key={t} className="px-4 py-3 text-center">
+                      <div className="h-4 w-4 bg-slate-200 dark:bg-slate-800 rounded mx-auto" />
+                    </td>
                   ))}
                 </tr>
               ))
             ) : totalRecords === 0 ? (
               <tr>
-                <td colSpan={5 + leaveTypes.length} className="px-6 py-16 text-center text-slate-400">
+                <td
+                  colSpan={5 + leaveTypes.length}
+                  className="px-6 py-16 text-center text-slate-400"
+                >
                   No employee records found.
                 </td>
               </tr>
@@ -181,7 +216,7 @@ export function LeaveAssignTable({
                   <td className="px-4 py-3 text-center">
                     <input
                       type="checkbox"
-                      checked={selectedIds.has(emp.id)}
+                      checked={selectedIds.includes(emp.id)}
                       onChange={() => toggleSelectRow(emp.id)}
                       className="h-4 w-4 rounded border-slate-300 text-sky-600 focus:ring-sky-500 cursor-pointer"
                     />
@@ -207,7 +242,11 @@ export function LeaveAssignTable({
                         <button
                           onClick={() => onToggleAssignment(emp.id, type)}
                           className="inline-flex items-center justify-center p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-                          title={isAssigned ? "Leave Assigned (Click to unassign)" : "Leave Unassigned (Click to assign)"}
+                          title={
+                            isAssigned
+                              ? "Leave Assigned (Click to unassign)"
+                              : "Leave Unassigned (Click to assign)"
+                          }
                         >
                           {isAssigned ? (
                             <Check className="h-4 w-4 text-emerald-500 font-bold" />
@@ -228,11 +267,17 @@ export function LeaveAssignTable({
       {/* Pagination Footer */}
       <div className="px-4 py-3 border-t border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-600 dark:text-slate-400">
         <div>
-          Showing <span className="font-semibold text-slate-800 dark:text-slate-200">{totalRecords === 0 ? 0 : startIndex + 1}</span> to{" "}
+          Showing{" "}
+          <span className="font-semibold text-slate-800 dark:text-slate-200">
+            {totalRecords === 0 ? 0 : startIndex + 1}
+          </span>{" "}
+          to{" "}
           <span className="font-semibold text-slate-800 dark:text-slate-200">
             {Math.min(startIndex + pageSize, totalRecords)}
           </span>{" "}
-          of <span className="font-semibold text-slate-800 dark:text-slate-200">{totalRecords}</span> Results
+          of{" "}
+          <span className="font-semibold text-slate-800 dark:text-slate-200">{totalRecords}</span>{" "}
+          Results
         </div>
 
         <div className="flex items-center gap-3">

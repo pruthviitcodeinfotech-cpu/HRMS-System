@@ -6,3 +6,5 @@ export * from "./components/leave-create-table";
 export * from "./components/leave-assign-table";
 export * from "./components/leave-balance-table";
 export * from "./components/leave-bulk-adjust-drawer";
+export * from "./components/leave-bulk-assign-drawer";
+export * from "./components/leave-bulk-update-drawer";

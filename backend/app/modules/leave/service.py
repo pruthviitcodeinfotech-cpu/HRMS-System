@@ -942,26 +942,64 @@ class LeaveService(BaseService):
     async def create_holiday_group(
         self, org_id: int, data: dict[str, Any], created_by: int
     ) -> HolidayTemplate:
-        """Create a new holiday group template."""
-        name = data["name"]
+        """Atomically create a holiday group template together with its items.
+
+        Everything (template row, all item rows, holiday_count update, audit log)
+        executes inside ONE database transaction.  If any step fails, the entire
+        transaction is rolled back — no orphan template, no partial items.
+
+        ``data`` must contain:
+          - ``name``  (str)        — template name, unique (case-insensitive) per org.
+          - ``items`` (list[dict]) — zero or more holiday item payloads.
+        """
+        name: str = data["name"]
+        items_data: list[dict[str, Any]] = data.get("items", [])
+
+        # Pre-transaction read-only uniqueness check
         if await self.templates.name_exists(org_id, name):
             raise HolidayTemplateNameExistsException()
 
         async with self.transaction():
+            # 1. Create template row (flushed, not yet committed)
             template = await self.templates.create(
                 {"org_id": org_id, "name": name, "holiday_count": 0, "created_by": created_by}
             )
+
+            # 2. Bulk-insert all holiday items in one flush (same transaction)
+            if items_data:
+                await self.items.bulk_create(
+                    template.id,
+                    [
+                        {
+                            "name": item["name"],
+                            "start_date": item["start_date"],
+                            "end_date": item["end_date"],
+                            "day_of_week": item.get("day_of_week"),
+                            "duration_days": item.get("duration_days", 1),
+                            "created_by": created_by,
+                        }
+                        for item in items_data
+                    ],
+                )
+                # 3. Update holiday_count to match items inserted
+                await self.templates.update(template, {"holiday_count": len(items_data)})
+
+            # 4. Audit log (flushed in the same transaction)
             await self.audit.record(
                 org_id=org_id,
                 module="leave",
                 sub_module="holiday",
                 action_type=ActionType.INSERT,
                 title="Create Holiday Group",
-                description=f"Created holiday group template '{name}'",
+                description=(
+                    f"Created holiday group template '{name}' "
+                    f"with {len(items_data)} holiday item(s)"
+                ),
                 performed_by_user_id=created_by,
                 performed_by_name=f"User {created_by}",
             )
             return template
+
 
     async def list_holiday_groups(
         self, org_id: int, *, page: int = 1, page_size: int = 25

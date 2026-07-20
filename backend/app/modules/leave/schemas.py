@@ -307,9 +307,13 @@ class LeaveRequestListResponse(PaginatedResponse[LeaveRequestSchema]):
 
 
 class HolidayTemplateCreateRequest(BaseSchema):
-    """Request schema for creating a holiday template."""
+    """Request schema for creating a holiday template with its items atomically."""
 
     name: str = Field(..., max_length=150, description="Name of the holiday group.")
+    items: list["HolidayTemplateItemCreateRequest"] = Field(
+        default_factory=list,
+        description="Holiday items to create atomically with the template.",
+    )
 
 
 class HolidayTemplateUpdateRequest(BaseSchema):

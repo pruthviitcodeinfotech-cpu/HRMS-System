@@ -518,7 +518,7 @@ class HolidayTemplateRepository(BaseRepository[HolidayTemplate]):
         """Return whether a template with the same name exists (non-deleted)."""
         stmt = select(HolidayTemplate.id).where(
             HolidayTemplate.org_id == org_id,
-            HolidayTemplate.name == name,
+            func.lower(HolidayTemplate.name) == func.lower(name),
             HolidayTemplate.is_deleted.is_(False),
         )
         if exclude_id is not None:
@@ -650,6 +650,24 @@ class HolidayTemplateItemRepository(BaseRepository[HolidayTemplateItem]):
             .order_by(HolidayTemplateItem.start_date.asc())
         )
         return list((await self.session.execute(stmt)).scalars().all())
+
+    async def bulk_create(
+        self, template_id: int, items_data: list[dict[str, Any]]
+    ) -> list[HolidayTemplateItem]:
+        """Insert multiple holiday items for a template in a single flush.
+
+        All items participate in the caller's transaction — nothing is committed here.
+        """
+        instances: list[HolidayTemplateItem] = []
+        for data in items_data:
+            instance = HolidayTemplateItem(**{**data, "template_id": template_id})
+            self.session.add(instance)
+            instances.append(instance)
+        # Flush once for the whole batch
+        await self.session.flush()
+        for inst in instances:
+            await self.session.refresh(inst)
+        return instances
 
     async def soft_delete(self, instance: HolidayTemplateItem) -> HolidayTemplateItem:
         """Soft-delete a holiday item."""

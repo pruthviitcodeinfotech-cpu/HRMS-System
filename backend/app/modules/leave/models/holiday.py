@@ -59,9 +59,9 @@ class HolidayTemplate(Base):
 
     __table_args__ = (
         Index(
-            "uq_holiday_templates_org_id_name",
+            "uq_holiday_templates_org_id_name_ci",
             "org_id",
-            "name",
+            text("lower(name)"),
             unique=True,
             postgresql_where=text("is_deleted = false"),
         ),

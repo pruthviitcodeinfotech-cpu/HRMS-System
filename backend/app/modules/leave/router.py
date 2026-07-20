@@ -541,7 +541,7 @@ async def create_holiday_group(
     current_user: CurrentUserDep,
     org_id: OrgIdDep,
 ) -> dict[str, Any]:
-    """Create a new holiday group/template."""
+    """Create a new holiday group/template with all its items atomically."""
     result = await service.create_holiday_group(org_id, payload.model_dump(), current_user.user_id)
     return _ok(result, "Holiday group created successfully.")
 

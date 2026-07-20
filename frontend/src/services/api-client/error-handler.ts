@@ -39,14 +39,24 @@ export const handleApiError = (error: unknown): ApiError => {
       const data = axiosError.response?.data;
       if (data && typeof data === "object") {
         const errorData = data as Record<string, unknown>;
-        const msg = typeof errorData.message === "string" ? errorData.message : "";
-        const detail = typeof errorData.detail === "string" ? errorData.detail : "";
-        errorResponse.message = msg || detail || axiosError.message || errorResponse.message;
-        errorResponse.code = typeof errorData.code === "string" ? errorData.code : undefined;
-        errorResponse.errors = errorData.errors as Record<string, string[]> | undefined;
 
-        // Support standard nested backend ErrorResponse: { success: false, message, error: { code, message, details: [...] } }
-        if (errorData.error && typeof errorData.error === "object") {
+        // 1. Support FastAPI Pydantic validation error array: { detail: [{ loc, msg, type }] }
+        if (Array.isArray(errorData.detail)) {
+          const formattedDetails = errorData.detail
+            .map((err: unknown) => {
+              if (err && typeof err === "object") {
+                const e = err as Record<string, unknown>;
+                const field = Array.isArray(e.loc) ? e.loc[e.loc.length - 1] : null;
+                const msg = typeof e.msg === "string" ? e.msg : "Invalid field";
+                return field ? `${field}: ${msg}` : msg;
+              }
+              return String(err);
+            })
+            .join("; ");
+          errorResponse.message = formattedDetails || "Validation error occurred.";
+        }
+        // 2. Support standard nested backend ErrorResponse: { success: false, message, error: { code, message, details: [...] } }
+        else if (errorData.error && typeof errorData.error === "object") {
           const nestedError = errorData.error as Record<string, unknown>;
           if (typeof nestedError.message === "string" && nestedError.message) {
             errorResponse.message = nestedError.message;
@@ -73,6 +83,13 @@ export const handleApiError = (error: unknown): ApiError => {
             }
             errorResponse.errors = mappedErrors;
           }
+        }
+        // 3. Simple message or string detail
+        else {
+          const msg = typeof errorData.message === "string" ? errorData.message : "";
+          const detail = typeof errorData.detail === "string" ? errorData.detail : "";
+          errorResponse.message = msg || detail || axiosError.message || errorResponse.message;
+          errorResponse.code = typeof errorData.code === "string" ? errorData.code : undefined;
         }
       } else {
         errorResponse.message = axiosError.message || errorResponse.message;
