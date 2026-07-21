@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -11,242 +11,32 @@ import {
   FileSpreadsheet,
   FileText,
   AlertTriangle,
+  ChevronLeft,
+  ChevronRight,
   ChevronDown,
+  RefreshCw,
   CalendarDays,
 } from "lucide-react";
+import { useBranchOptions } from "@/features/employees/hooks";
+import { useMusterReport } from "../hooks/use-attendance";
 import {
   MusterReportQueryParams,
   MusterRow,
-  MusterReportData,
   MusterCell,
 } from "../services/attendance";
 
-// ==========================================
-// MOCK BRANCHES & EMPLOYEES (45 REALISTIC EMPLOYEES)
-// ==========================================
-
-export interface MockBranch {
-  branch_id: number;
-  branch_name: string;
-}
-
-const MOCK_BRANCHES: MockBranch[] = [
-  { branch_id: 1, branch_name: "Itcode Infotech (116478)" },
-  { branch_id: 2, branch_name: "Main HQ - Mumbai" },
-  { branch_id: 3, branch_name: "Tech Hub - Bengaluru" },
-  { branch_id: 4, branch_name: "North Hub - Delhi" },
-];
-
-const RAW_MOCK_EMPLOYEES = [
-  { id: 1, code: "1", name: "Balkrushn Koladiya", dept: "ceo", desig: "ceo", branchId: 1 },
-  { id: 3, code: "3", name: "Nakul verma", dept: "Developer", desig: "Angular", branchId: 1 },
-  { id: 6, code: "6", name: "tamvin kheni", dept: "Developer", desig: "Full Stack", branchId: 1 },
-  { id: 7, code: "7", name: "khushi bhut", dept: "Developer", desig: "Ui-ux", branchId: 1 },
-  { id: 8, code: "8", name: "Dneya patel", dept: "Developer", desig: "React.js", branchId: 1 },
-  { id: 9, code: "9", name: "krunal hirpara", dept: "Marketing", desig: "marketing", branchId: 1 },
-  { id: 10, code: "10", name: "Jay bodra", dept: "Developer", desig: "Full Stack", branchId: 1 },
-  { id: 11, code: "11", name: "Harsh Kumbhani", dept: "Developer", desig: "Full Stack", branchId: 1 },
-  { id: 16, code: "16", name: "Divya", dept: "Marketing", desig: "marketing", branchId: 1 },
-  { id: 19, code: "19", name: "Hardik Agravat", dept: "Intern", desig: "React.js", branchId: 1 },
-  { id: 20, code: "20", name: "Aarav Sharma", dept: "Developer", desig: "Senior Backend", branchId: 2 },
-  { id: 21, code: "21", name: "Ananya Patel", dept: "Human Resources", desig: "HR Lead", branchId: 2 },
-  { id: 22, code: "22", name: "Rohan Verma", dept: "Operations", desig: "Operations Manager", branchId: 2 },
-  { id: 23, code: "23", name: "Priya Gupta", dept: "Finance", desig: "Senior Accountant", branchId: 2 },
-  { id: 24, code: "24", name: "Vikram Singh", dept: "Sales", desig: "Sales Lead", branchId: 2 },
-  { id: 25, code: "25", name: "Neha Mehta", dept: "Developer", desig: "Frontend Architect", branchId: 2 },
-  { id: 26, code: "26", name: "Rahul Kumar", dept: "Support", desig: "Support Specialist", branchId: 2 },
-  { id: 27, code: "27", name: "Sneha Joshi", dept: "Quality Assurance", desig: "QA Lead", branchId: 2 },
-  { id: 28, code: "28", name: "Aditya Shah", dept: "Finance", desig: "Payroll Specialist", branchId: 2 },
-  { id: 29, code: "29", name: "Pooja Nair", dept: "Human Resources", desig: "Recruiter", branchId: 2 },
-  { id: 30, code: "30", name: "Karan Deshmukh", dept: "Operations", desig: "Logistics Analyst", branchId: 3 },
-  { id: 31, code: "31", name: "Kavya Reddy", dept: "Developer", desig: "DevOps Engineer", branchId: 3 },
-  { id: 32, code: "32", name: "Siddharth Rao", dept: "Sales", desig: "Account Manager", branchId: 3 },
-  { id: 33, code: "33", name: "Meera Chopra", dept: "Developer", desig: "Node.js Developer", branchId: 3 },
-  { id: 34, code: "34", name: "Amit Malhotra", dept: "Operations", desig: "Facility Supervisor", branchId: 3 },
-  { id: 35, code: "35", name: "Riya Bhatia", dept: "Human Resources", desig: "HR Executive", branchId: 3 },
-  { id: 36, code: "36", name: "Manish Kapoor", dept: "Finance", desig: "Financial Analyst", branchId: 3 },
-  { id: 37, code: "37", name: "Divya Saxena", dept: "Ui-ux", desig: "Product Designer", branchId: 3 },
-  { id: 38, code: "38", name: "Suresh Agarwal", dept: "Support", desig: "Support Manager", branchId: 3 },
-  { id: 39, code: "39", name: "Ishita Kulkarni", dept: "Marketing", desig: "Content Specialist", branchId: 3 },
-  { id: 40, code: "40", name: "Varun Pandey", dept: "Developer", desig: "Python Developer", branchId: 4 },
-  { id: 41, code: "41", name: "Sonam Dubal", dept: "Finance", desig: "Audit Specialist", branchId: 4 },
-  { id: 42, code: "42", name: "Gaurav Trivedi", dept: "Operations", desig: "Supply Chain Manager", branchId: 4 },
-  { id: 43, code: "43", name: "Simran Kaur", dept: "Human Resources", desig: "Talent Manager", branchId: 4 },
-  { id: 44, code: "44", name: "Abhishek Jain", dept: "Developer", desig: "Security Specialist", branchId: 4 },
-  { id: 45, code: "45", name: "Tanvi Saxena", dept: "Marketing", desig: "SEO Specialist", branchId: 4 },
-  { id: 46, code: "46", name: "Yashvardhan Roy", dept: "Developer", desig: "Mobile Lead", branchId: 4 },
-  { id: 47, code: "47", name: "Shweta Tripathi", dept: "Support", desig: "Client Manager", branchId: 4 },
-  { id: 48, code: "48", name: "Pranav Joshi", dept: "Quality Assurance", desig: "Automation Engineer", branchId: 4 },
-  { id: 49, code: "49", name: "Rishabh Shukla", dept: "Developer", desig: "Cloud Architect", branchId: 4 },
-  { id: 50, code: "50", name: "Deepika Padukone", dept: "Marketing", desig: "Brand Lead", branchId: 4 },
-  { id: 51, code: "51", name: "Ranveer Singh", dept: "Sales", desig: "Regional Lead", branchId: 4 },
-  { id: 52, code: "52", name: "Kartik Aaryan", dept: "Operations", desig: "Project Coordinator", branchId: 4 },
-  { id: 53, code: "53", name: "Kriti Sanon", dept: "Human Resources", desig: "Employee Engagement", branchId: 4 },
-  { id: 54, code: "54", name: "Ayushmann Khurrana", dept: "Developer", desig: "Full Stack Engineer", branchId: 4 },
-];
-
-// ==========================================
-// DETERMINISTIC MOCK GENERATOR FOR MUSTER REPORT
-// ==========================================
-
-const generateMockMusterReportData = (
-  params: MusterReportQueryParams,
-  searchTerm: string
-): MusterReportData => {
-  const dFromStr = params.date_from || "2026-07-01";
-  const dToStr = params.date_to || "2026-07-21";
-
-  // Build Date Strings
-  const dates: string[] = [];
-  const curr = new Date(dFromStr);
-  const end = new Date(dToStr);
-  let limitCount = 0;
-
-  while (curr <= end && limitCount < 31) {
-    dates.push(curr.toISOString().slice(0, 10));
-    curr.setDate(curr.getDate() + 1);
-    limitCount++;
-  }
-
-  // Filter Employees by Branch & Search
-  let filteredEmps = RAW_MOCK_EMPLOYEES;
-
-  if (params.branch_id) {
-    filteredEmps = filteredEmps.filter((emp) => emp.branchId === params.branch_id);
-  }
-
-  if (searchTerm.trim()) {
-    const term = searchTerm.toLowerCase().trim();
-    filteredEmps = filteredEmps.filter(
-      (emp) =>
-        emp.name.toLowerCase().includes(term) ||
-        emp.code.toLowerCase().includes(term) ||
-        emp.dept.toLowerCase().includes(term) ||
-        emp.desig.toLowerCase().includes(term)
-    );
-  }
-
-  const page = params.page || 1;
-  const pageSize = params.page_size || 10;
-  const totalRecords = filteredEmps.length;
-  const totalPages = Math.ceil(totalRecords / pageSize) || 1;
-
-  const startIndex = (page - 1) * pageSize;
-  const pageEmps = filteredEmps.slice(startIndex, startIndex + pageSize);
-
-  const items: MusterRow[] = pageEmps.map((emp) => {
-    const dailyStatus: Record<string, MusterCell> = {};
-    let totalPresent = 0;
-    let totalAbsent = 0;
-    let totalHalfDay = 0;
-    let totalLeave = 0;
-    let totalWeekOff = 0;
-    let totalHoliday = 0;
-
-    dates.forEach((dStr, dIdx) => {
-      const dObj = new Date(dStr);
-      const isSunday = dObj.getDay() === 0;
-
-      // Deterministic scenario distribution per employee and date index
-      const empSeed = (emp.id * 17 + dIdx * 13) % 100;
-
-      let cell: MusterCell;
-
-      if (isSunday) {
-        cell = { status: "WO", status_label: "Week Off", work_hours: 0 };
-        totalWeekOff += 1;
-      } else if (empSeed < 15) {
-        // Full Day with Overtime
-        cell = {
-          status: "FD",
-          status_label: "Full Day",
-          work_hours: 9.5,
-          is_overtime: true,
-          overtime_hours: 1.5,
-        };
-        totalPresent += 1;
-      } else if (empSeed < 55) {
-        // Standard Full Day
-        cell = { status: "FD", status_label: "Full Day", work_hours: 8 };
-        totalPresent += 1;
-      } else if (empSeed < 65) {
-        // Half Day
-        const hasOvertime = empSeed % 2 === 0;
-        cell = {
-          status: "HD",
-          status_label: "Half Day",
-          work_hours: 4.5,
-          is_overtime: hasOvertime,
-          overtime_hours: hasOvertime ? 0.5 : 0,
-        };
-        totalHalfDay += 1;
-      } else if (empSeed < 75) {
-        // Leaves: LWP, CL, SL, PL
-        const leaveTypes = ["LWP", "CL", "SL", "PL"];
-        const lType = leaveTypes[empSeed % leaveTypes.length];
-        cell = { status: lType, status_label: `Leave (${lType})`, work_hours: 0 };
-        totalLeave += 1;
-      } else if (empSeed < 85) {
-        // Absent with missing punch warning
-        const isMissing = empSeed % 3 === 0;
-        cell = {
-          status: "A",
-          status_label: isMissing ? "Absent (Missing Punch)" : "Absent",
-          work_hours: 0,
-          is_missing_punch: isMissing,
-        };
-        totalAbsent += 1;
-      } else if (empSeed < 92) {
-        // Absent standard
-        cell = { status: "A", status_label: "Absent", work_hours: 0 };
-        totalAbsent += 1;
-      } else {
-        // Holiday
-        cell = { status: "H", status_label: "Holiday", work_hours: 0 };
-        totalHoliday += 1;
-      }
-
-      dailyStatus[dStr] = cell;
-    });
-
-    return {
-      employee_id: emp.id,
-      employee_code: emp.code,
-      employee_name: emp.name,
-      department_name: emp.dept,
-      designation_name: emp.desig,
-      total_present: totalPresent,
-      total_absent: totalAbsent,
-      total_half_day: totalHalfDay,
-      total_leave: totalLeave,
-      total_week_off: totalWeekOff,
-      total_holiday: totalHoliday,
-      daily_status: dailyStatus,
-    };
-  });
-
-  return {
-    dates,
-    items,
-    pagination: {
-      page,
-      page_size: pageSize,
-      total_records: totalRecords,
-      total_pages: totalPages,
-    },
-  };
-};
-
 export const MusterReportView: React.FC = () => {
+  const todayStr = useMemo(() => new Date().toISOString().slice(0, 10), []);
+
   // Form Input States
   const [fromDate, setFromDate] = useState<string>("2026-07-01");
-  const [toDate, setToDate] = useState<string>("2026-07-21");
+  const [toDate, setToDate] = useState<string>(todayStr);
   const [branchId, setBranchId] = useState<string>("");
   const [isDropdownOpen, setIsDropdownOpen] = useState<boolean>(false);
 
   // Applied Filter States
   const [searchFromDate, setSearchFromDate] = useState<string>("2026-07-01");
-  const [searchToDate, setSearchToDate] = useState<string>("2026-07-21");
+  const [searchToDate, setSearchToDate] = useState<string>(todayStr);
   const [searchBranchId, setSearchBranchId] = useState<string>("");
 
   // Pagination & Search States
@@ -254,26 +44,43 @@ export const MusterReportView: React.FC = () => {
   const [pageSize, setPageSize] = useState<number>(10);
   const [searchTerm, setSearchTerm] = useState<string>("");
 
-  // Options Data (Mock Branches)
-  const branchOptions = MOCK_BRANCHES;
+  // Options Data (Branch Lookup Hook)
+  const { data: branchOptions } = useBranchOptions();
 
-  // Construct query params
+  // Construct query params for live backend API
   const queryParams: MusterReportQueryParams = useMemo(() => {
-    return {
+    const params: MusterReportQueryParams = {
       page: currentPage,
       page_size: pageSize,
-      branch_id: searchBranchId ? Number(searchBranchId) : undefined,
-      date_from: searchFromDate,
-      date_to: searchToDate,
+      sort_by: "employee_code",
+      sort_dir: "asc",
     };
-  }, [currentPage, pageSize, searchFromDate, searchToDate, searchBranchId]);
 
-  // Generate Mock Muster Data
-  const data = useMemo(() => {
-    return generateMockMusterReportData(queryParams, searchTerm);
-  }, [queryParams, searchTerm]);
+    if (searchBranchId) {
+      params.branch_id = Number(searchBranchId);
+    }
 
-  // Construct dynamic date column list from backend response or fallback range
+    if (searchFromDate && searchToDate) {
+      params.date_from = searchFromDate;
+      params.date_to = searchToDate;
+    } else {
+      params.date_from = "2026-07-01";
+      params.date_to = todayStr;
+    }
+
+    return params;
+  }, [currentPage, pageSize, searchFromDate, searchToDate, searchBranchId, todayStr]);
+
+  // Query Backend Muster Roll Report API via React Query
+  const { data, isLoading, isError, error, refetch } = useMusterReport(queryParams);
+
+  useEffect(() => {
+    if (isError && error) {
+      toast.error(error instanceof Error ? error.message : "Failed to fetch muster report data");
+    }
+  }, [isError, error]);
+
+  // Construct dynamic date column list directly from backend response or fallback date range
   const dateList = useMemo(() => {
     if (data?.dates && data.dates.length > 0) {
       return data.dates.map((dateStr) => {
@@ -288,11 +95,40 @@ export const MusterReportView: React.FC = () => {
         return { dateStr, dayNumber, monthName, dayName };
       });
     }
-    return [];
-  }, [data]);
 
-  // Filter items by search input
-  const filteredItems = data.items;
+    const list: { dateStr: string; dayNumber: string; monthName: string; dayName: string }[] = [];
+    if (!searchFromDate || !searchToDate) return list;
+
+    const curr = new Date(searchFromDate);
+    const end = new Date(searchToDate);
+    let count = 0;
+
+    while (curr <= end && count < 31) {
+      const dateStr = curr.toISOString().slice(0, 10);
+      const dayNumber = dateStr.split("-")[2];
+      const monthName = curr.toLocaleDateString("en-US", { month: "long" });
+      const dayName = curr.toLocaleDateString("en-US", { weekday: "long" });
+      list.push({ dateStr, dayNumber, monthName, dayName });
+      curr.setDate(curr.getDate() + 1);
+      count++;
+    }
+    return list;
+  }, [data, searchFromDate, searchToDate]);
+
+  // Client-side quick search filtering on backend items
+  const filteredItems = useMemo(() => {
+    if (!data?.items) return [];
+    if (!searchTerm.trim()) return data.items;
+
+    const term = searchTerm.toLowerCase().trim();
+    return data.items.filter(
+      (item: MusterRow) =>
+        item.employee_name.toLowerCase().includes(term) ||
+        item.employee_code.toLowerCase().includes(term) ||
+        item.department_name.toLowerCase().includes(term) ||
+        item.designation_name.toLowerCase().includes(term)
+    );
+  }, [data, searchTerm]);
 
   // Handle Search submit
   const handleSearch = (e?: React.FormEvent) => {
@@ -306,18 +142,18 @@ export const MusterReportView: React.FC = () => {
   // Handle Reset filters
   const handleReset = () => {
     setFromDate("2026-07-01");
-    setToDate("2026-07-21");
+    setToDate(todayStr);
     setBranchId("");
     setSearchFromDate("2026-07-01");
-    setSearchToDate("2026-07-21");
+    setSearchToDate(todayStr);
     setSearchBranchId("");
     setSearchTerm("");
     setCurrentPage(1);
   };
 
   // Pagination metadata
-  const totalPages = data.pagination.total_pages;
-  const totalRecords = data.pagination.total_records;
+  const totalPages = data?.pagination?.total_pages || 1;
+  const totalRecords = data?.pagination?.total_records || 0;
   const startIndex = (currentPage - 1) * pageSize + 1;
   const endIndex = Math.min(currentPage * pageSize, totalRecords);
 
@@ -331,7 +167,7 @@ export const MusterReportView: React.FC = () => {
     const isOvertime = cell.is_overtime;
     const isMissing = cell.is_missing_punch;
 
-    // Full Day
+    // Full Day / Present
     if (st === "FD" || st === "P" || st === "PRESENT") {
       return (
         <span className="inline-flex items-center gap-1 font-bold text-slate-900 dark:text-slate-100 text-xs">
@@ -614,7 +450,7 @@ export const MusterReportView: React.FC = () => {
               className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg text-sm font-medium text-slate-700 dark:text-slate-200 focus:ring-2 focus:ring-sky-500 px-3 py-2"
             >
               <option value="">Choose Branch</option>
-              {branchOptions.map((b) => (
+              {branchOptions?.map((b) => (
                 <option key={b.branch_id} value={b.branch_id}>
                   {b.branch_name}
                 </option>
@@ -660,6 +496,26 @@ export const MusterReportView: React.FC = () => {
 
       {/* Main Table Content Card matching Petpooja design */}
       <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm overflow-hidden">
+        {/* Error State Banner */}
+        {isError && (
+          <div className="p-6 bg-rose-50 dark:bg-rose-900/20 border-b border-rose-200 dark:border-rose-800 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <AlertTriangle className="w-5 h-5 text-rose-600 dark:text-rose-400" />
+              <p className="text-sm font-medium text-rose-800 dark:text-rose-200">
+                {error instanceof Error ? error.message : "Failed to load muster report data."}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => refetch()}
+              className="inline-flex items-center gap-2 px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-md text-sm font-medium transition-colors"
+            >
+              <RefreshCw className="w-4 h-4" />
+              Retry
+            </button>
+          </div>
+        )}
+
         {/* Table Container with Horizontal Scroll */}
         <div className="overflow-x-auto max-w-full">
           <table className="w-full border-collapse text-left text-xs text-slate-700 dark:text-slate-200">
@@ -720,8 +576,33 @@ export const MusterReportView: React.FC = () => {
             </thead>
 
             <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
+              {/* Skeleton Loader */}
+              {isLoading &&
+                Array.from({ length: 5 }).map((_, idx) => (
+                  <tr key={idx} className="animate-pulse">
+                    <td className="py-4 px-3 sticky left-0 z-10 bg-white dark:bg-slate-800 border-r border-slate-200 dark:border-slate-700">
+                      <div className="h-4 bg-slate-200 dark:bg-slate-700 rounded w-12" />
+                    </td>
+                    <td className="py-4 px-4"><div className="h-4 bg-slate-200 dark:bg-slate-700 rounded w-28" /></td>
+                    <td className="py-4 px-4"><div className="h-4 bg-slate-200 dark:bg-slate-700 rounded w-20" /></td>
+                    <td className="py-4 px-4 border-r border-slate-200 dark:border-slate-700"><div className="h-4 bg-slate-200 dark:bg-slate-700 rounded w-20" /></td>
+                    <td className="py-4 px-3 text-center bg-sky-50/20 dark:bg-sky-950/10"><div className="h-4 bg-slate-200 dark:bg-slate-700 rounded w-6 mx-auto" /></td>
+                    <td className="py-4 px-3 text-center bg-sky-50/20 dark:bg-sky-950/10"><div className="h-4 bg-slate-200 dark:bg-slate-700 rounded w-6 mx-auto" /></td>
+                    <td className="py-4 px-3 text-center bg-sky-50/20 dark:bg-sky-950/10"><div className="h-4 bg-slate-200 dark:bg-slate-700 rounded w-6 mx-auto" /></td>
+                    <td className="py-4 px-3 text-center bg-sky-50/20 dark:bg-sky-950/10"><div className="h-4 bg-slate-200 dark:bg-slate-700 rounded w-6 mx-auto" /></td>
+                    <td className="py-4 px-3 text-center bg-sky-50/20 dark:bg-sky-950/10"><div className="h-4 bg-slate-200 dark:bg-slate-700 rounded w-6 mx-auto" /></td>
+                    <td className="py-4 px-3 text-center bg-sky-50/20 dark:bg-sky-950/10 border-r border-slate-200 dark:border-slate-700"><div className="h-4 bg-slate-200 dark:bg-slate-700 rounded w-6 mx-auto" /></td>
+                    {dateList.map((d) => (
+                      <td key={d.dateStr} className="py-4 px-2 border-r border-slate-100 dark:border-slate-800 text-center">
+                        <div className="h-5 bg-slate-200 dark:bg-slate-700 rounded w-6 mx-auto" />
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+
               {/* Data Rows */}
-              {filteredItems.length > 0 &&
+              {!isLoading &&
+                filteredItems.length > 0 &&
                 filteredItems.map((row: MusterRow) => (
                   <tr
                     key={row.employee_id}
@@ -777,7 +658,7 @@ export const MusterReportView: React.FC = () => {
                 ))}
 
               {/* Empty State */}
-              {filteredItems.length === 0 && (
+              {!isLoading && filteredItems.length === 0 && (
                 <tr>
                   <td
                     colSpan={10 + (dateList.length || 1)}
@@ -800,7 +681,7 @@ export const MusterReportView: React.FC = () => {
         {/* Footer Pagination matching Petpooja */}
         <div className="p-4 bg-white dark:bg-slate-800 border-t border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row items-center justify-between gap-4">
           <p className="text-xs text-slate-500 dark:text-slate-400">
-            Showing <span className="font-medium text-slate-700 dark:text-slate-200">{startIndex}</span> to{" "}
+            Showing <span className="font-medium text-slate-700 dark:text-slate-200">{filteredItems.length ? startIndex : 0}</span> to{" "}
             <span className="font-medium text-slate-700 dark:text-slate-200">{endIndex}</span> of{" "}
             <span className="font-medium text-slate-700 dark:text-slate-200">{totalRecords}</span> Results
           </p>
@@ -828,9 +709,10 @@ export const MusterReportView: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
-                disabled={currentPage <= 1}
-                className="px-3 py-1.5 border border-slate-300 dark:border-slate-700 rounded-md text-xs font-medium text-slate-600 dark:text-slate-300 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50 transition-colors"
+                disabled={currentPage <= 1 || isLoading}
+                className="inline-flex items-center gap-1 px-3 py-1.5 border border-slate-300 dark:border-slate-700 rounded-md text-xs font-medium text-slate-600 dark:text-slate-300 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50 transition-colors"
               >
+                <ChevronLeft className="w-4 h-4" />
                 Previous
               </button>
 
@@ -839,6 +721,7 @@ export const MusterReportView: React.FC = () => {
                   key={pg}
                   type="button"
                   onClick={() => setCurrentPage(pg)}
+                  disabled={isLoading}
                   className={`w-7 h-7 flex items-center justify-center rounded-md text-xs font-medium transition-colors ${
                     currentPage === pg
                       ? "bg-sky-500 text-white font-semibold shadow-sm"
@@ -852,10 +735,11 @@ export const MusterReportView: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setCurrentPage((prev) => Math.min(prev + 1, totalPages))}
-                disabled={currentPage >= totalPages}
-                className="px-3 py-1.5 border border-slate-300 dark:border-slate-700 rounded-md text-xs font-medium text-slate-600 dark:text-slate-300 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50 transition-colors"
+                disabled={currentPage >= totalPages || isLoading}
+                className="inline-flex items-center gap-1 px-3 py-1.5 border border-slate-300 dark:border-slate-700 rounded-md text-xs font-medium text-slate-600 dark:text-slate-300 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50 transition-colors"
               >
                 Next
+                <ChevronRight className="w-4 h-4" />
               </button>
             </div>
           </div>
