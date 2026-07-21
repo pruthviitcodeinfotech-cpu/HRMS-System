@@ -111,6 +111,7 @@ async def list_attendance_days(
     date_to: Annotated[date | None, Query(alias="date_to", description="End date of range.")] = None,
     branch_id: Annotated[int | None, Query(description="Filter by branch.")] = None,
     department_id: Annotated[int | None, Query(description="Filter by department.")] = None,
+    shift_id: Annotated[int | None, Query(description="Filter by shift.")] = None,
     pagination: Annotated[PaginationParams, Depends(pagination_params)] = None,
 ) -> dict[str, Any]:
     """Return a filtered, searched, paginated list of daily attendance rows."""
@@ -122,6 +123,7 @@ async def list_attendance_days(
         date_to=date_to,
         branch_id=branch_id,
         department_id=department_id,
+        shift_id=shift_id,
         page=page,
         page_size=page_size,
     )

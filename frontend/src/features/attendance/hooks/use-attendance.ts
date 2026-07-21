@@ -13,6 +13,7 @@ import {
   AttendanceCorrectionApprovePayload,
   AttendanceLockPayload,
   AttendanceUnlockPayload,
+  DailyPunchReportQueryParams,
 } from "../services/attendance";
 
 export const attendanceKeys = {
@@ -27,6 +28,8 @@ export const attendanceKeys = {
   punchList: (params: AttendancePunchesQueryParams) =>
     [...attendanceKeys.punches(), params] as const,
   locks: () => [...attendanceKeys.all, "locks"] as const,
+  dailyPunchReport: (params: DailyPunchReportQueryParams) =>
+    [...attendanceKeys.all, "dailyPunchReport", params] as const,
 };
 
 // Helper for extracting clean error message from Axios errors
@@ -234,5 +237,20 @@ export const useAttendanceLocks = () => {
       const response = await attendanceService.getAttendanceLocks();
       return response.data;
     },
+  });
+};
+
+/**
+ * Fetch Daily Punch Matrix Report (GET /reports/attendance/daily-punch)
+ */
+export const useDailyPunchReport = (params: DailyPunchReportQueryParams, enabled = true) => {
+  return useQuery({
+    queryKey: attendanceKeys.dailyPunchReport(params),
+    queryFn: async () => {
+      const response = await attendanceService.getDailyPunchReport(params);
+      return response.data;
+    },
+    placeholderData: keepPreviousData,
+    enabled,
   });
 };

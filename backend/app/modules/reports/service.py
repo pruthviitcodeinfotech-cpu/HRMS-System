@@ -25,6 +25,7 @@ from app.core.exceptions.base import AuthorizationException, NotFoundException
 from app.core.logging import get_logger
 from app.jobs.queue import JobName, enqueue
 from app.modules.reports.repository import ReportsRepository
+from app.shared.schemas.pagination import PaginationMeta
 from app.modules.reports.schemas import (
     ApprovalHistoryReportItemSchema,
     ApprovalHistoryReportResponse,
@@ -37,6 +38,10 @@ from app.modules.reports.schemas import (
     BranchSummaryReportResponse,
     DailyAttendanceReportItemSchema,
     DailyAttendanceReportResponse,
+    DailyPunchCellSchema,
+    DailyPunchMatrixReportDataSchema,
+    DailyPunchMatrixReportResponse,
+    DailyPunchMatrixRowSchema,
     DepartmentSummaryReportItemSchema,
     DepartmentSummaryReportResponse,
     DeviceHealthReportItemSchema,
@@ -116,9 +121,13 @@ _EXPORT_TASKS: set[asyncio.Task[None]] = set()
 class ReportsService(BaseService):
     """Orchestrates database reads and export generation for Reports module."""
 
-    def __init__(self, session: AsyncSession) -> None:
-        super().__init__(session)
-        self.repo = ReportsRepository(session)
+    def __init__(self, session_or_repo: AsyncSession | ReportsRepository) -> None:
+        if isinstance(session_or_repo, ReportsRepository):
+            super().__init__(session_or_repo.session)
+            self.repo = session_or_repo
+        else:
+            super().__init__(session_or_repo)
+            self.repo = ReportsRepository(session_or_repo)
 
     def _resolve_data_scopes(self, user: CurrentUser) -> tuple[list[int] | None, list[int] | None]:
         """Resolve branch and department list scopes for the user.
@@ -698,6 +707,98 @@ class ReportsService(BaseService):
             response_cls=DailyAttendanceReportResponse,
             item_schema_cls=DailyAttendanceReportItemSchema,
             attendance_date=attendance_date,
+        )
+
+    async def get_daily_punch_matrix_report(
+        self, org_id: int, user: CurrentUser, query: ReportQueryRequest
+    ) -> DailyPunchMatrixReportResponse | dict[str, Any] | bytes:
+        """Fetch multi-day daily punch matrix report."""
+        self._enforce_permissions(user, ["attendance"])
+        branch_ids, dept_ids = self._resolve_data_scopes(user)
+        effective_branch_ids = [query.branch_id] if query.branch_id is not None else branch_ids
+        effective_dept_ids = [query.dept_id] if query.dept_id is not None else dept_ids
+
+        today = datetime.date.today()
+        d_from = query.date_from or today.replace(day=1)
+        d_to = query.date_to or today
+
+        data_dict, total_records = await self.repo.get_daily_punch_matrix_report(
+            org_id=org_id,
+            date_from=d_from,
+            date_to=d_to,
+            branch_ids=effective_branch_ids,
+            dept_ids=effective_dept_ids,
+            employee_id=query.employee_id,
+            sort_by=query.sort_by,
+            sort_dir=query.sort_dir,
+            page=query.page,
+            page_size=query.page_size,
+        )
+
+        if query.format in ("csv", "excel", "pdf"):
+            export_rows = []
+            for item in data_dict.get("items", []):
+                row_dict = {
+                    "Employee ID": item["employee_code"],
+                    "Employee Name": item["employee_name"],
+                    "Department": item["department_name"],
+                    "Designation": item["designation_name"],
+                }
+                for d_str in data_dict.get("dates", []):
+                    cell = item["daily_punches"].get(d_str, {})
+                    if cell.get("first_in") or cell.get("last_out"):
+                        row_dict[d_str] = (
+                            f"{cell.get('first_in') or '-'} / {cell.get('last_out') or '-'}"
+                        )
+                    elif cell.get("is_off_day"):
+                        row_dict[d_str] = "Off"
+                    else:
+                        row_dict[d_str] = "-"
+                export_rows.append(row_dict)
+
+            headers = list(export_rows[0].keys()) if export_rows else []
+            rows = [[r.get(h) for h in headers] for r in export_rows]
+
+            if query.format == "pdf":
+                file_bytes = self._generate_pdf_bytes("daily_punch_report", headers, rows)
+                media_type = "application/pdf"
+                ext = "pdf"
+            else:
+                file_bytes = self._generate_csv_bytes(headers, rows)
+                media_type = (
+                    "text/csv"
+                    if query.format == "csv"
+                    else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+                ext = "csv" if query.format == "csv" else "xlsx"
+
+            return {
+                "file_bytes": file_bytes,
+                "filename": f"daily_punch_report_{utcnow().strftime('%Y%m%d_%H%M%S')}.{ext}",
+                "media_type": media_type,
+            }
+
+        return DailyPunchMatrixReportResponse(
+            success=True,
+            data=DailyPunchMatrixReportDataSchema(
+                dates=data_dict["dates"],
+                items=[
+                    DailyPunchMatrixRowSchema(
+                        employee_id=it["employee_id"],
+                        employee_code=it["employee_code"],
+                        employee_name=it["employee_name"],
+                        department_name=it["department_name"],
+                        designation_name=it["designation_name"],
+                        daily_punches={
+                            k: DailyPunchCellSchema(**v) for k, v in it["daily_punches"].items()
+                        },
+                    )
+                    for it in data_dict["items"]
+                ],
+                pagination=PaginationMeta.build(
+                    page=query.page, page_size=query.page_size, total_records=total_records
+                ),
+            ),
         )
 
     async def get_monthly_attendance_report(

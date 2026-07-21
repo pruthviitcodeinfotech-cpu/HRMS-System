@@ -699,6 +699,137 @@ class ReportsRepository(BaseRepository[Employee]):
 
         return items, total
 
+    async def get_daily_punch_matrix_report(
+        self,
+        org_id: int,
+        date_from: datetime.date,
+        date_to: datetime.date,
+        branch_ids: list[int] | None = None,
+        dept_ids: list[int] | None = None,
+        employee_id: int | None = None,
+        sort_by: str | None = None,
+        sort_dir: str = "asc",
+        page: int = 1,
+        page_size: int = 25,
+    ) -> tuple[dict[str, Any], int]:
+        """Fetch multi-day daily punch matrix report grouped by employee."""
+        # 1. Build date strings list
+        dates: list[str] = []
+        curr = date_from
+        while curr <= date_to:
+            dates.append(curr.isoformat())
+            curr += datetime.timedelta(days=1)
+
+        # 2. Query Employees
+        emp_stmt = (
+            select(
+                Employee.employee_id,
+                Employee.employee_code,
+                Employee.employee_name,
+                Department.dept_name.label("department_name"),
+                Designation.designation_name.label("designation_name"),
+            )
+            .join(Department, Employee.dept_id == Department.dept_id, isouter=True)
+            .join(Designation, Employee.designation_id == Designation.designation_id, isouter=True)
+            .where(
+                Employee.org_id == org_id,
+                Employee.is_deleted.is_(False),
+                Employee.employment_status == "active",
+            )
+        )
+
+        if branch_ids:
+            emp_stmt = emp_stmt.where(Employee.master_branch_id.in_(branch_ids))
+        if dept_ids:
+            emp_stmt = emp_stmt.where(Employee.dept_id.in_(dept_ids))
+        if employee_id:
+            emp_stmt = emp_stmt.where(Employee.employee_id == employee_id)
+
+        # Count total
+        count_stmt = select(func.count()).select_from(emp_stmt.subquery())
+        total = (await self.session.execute(count_stmt)).scalar_one()
+
+        # Sorting & Pagination
+        direction = desc if sort_dir.lower() == "desc" else asc
+        if sort_by == "employee_name":
+            emp_stmt = emp_stmt.order_by(direction(Employee.employee_name))
+        else:
+            emp_stmt = emp_stmt.order_by(Employee.employee_code.asc())
+
+        emp_stmt = emp_stmt.limit(page_size).offset((page - 1) * page_size)
+        emp_rows = (await self.session.execute(emp_stmt)).all()
+
+        if not emp_rows:
+            return {"dates": dates, "items": []}, total
+
+        emp_ids = [r.employee_id for r in emp_rows]
+
+        # 3. Batch query AttendanceDay records for target employees in date range (avoiding N+1)
+        days_stmt = select(AttendanceDay).where(
+            AttendanceDay.employee_id.in_(emp_ids),
+            AttendanceDay.attendance_date.between(date_from, date_to),
+        )
+        days_res = await self.session.execute(days_stmt)
+        days = days_res.scalars().all()
+
+        # Map by (employee_id, attendance_date_str)
+        attendance_map: dict[tuple[int, str], AttendanceDay] = {
+            (d.employee_id, d.attendance_date.isoformat()): d for d in days
+        }
+
+        items: list[dict[str, Any]] = []
+        for emp in emp_rows:
+            emp_id = emp.employee_id
+            daily_punches: dict[str, dict[str, Any]] = {}
+
+            for d_str in dates:
+                day_rec = attendance_map.get((emp_id, d_str))
+                if day_rec:
+                    status = day_rec.status.upper() if day_rec.status else "ABSENT"
+                    first_in = (
+                        day_rec.first_punch_in.strftime("%I:%M %p")
+                        if day_rec.first_punch_in
+                        else getattr(day_rec, "first_punch", None)
+                    )
+                    last_out = (
+                        day_rec.last_punch_out.strftime("%I:%M %p")
+                        if day_rec.last_punch_out
+                        else getattr(day_rec, "last_punch", None)
+                    )
+                    is_off_day = status in ("WEEK_OFF", "HOLIDAY", "WEEKOFF")
+                    is_missing = status == "MISSING_PUNCH" or bool(
+                        first_in and not last_out and not is_off_day
+                    )
+
+                    daily_punches[d_str] = {
+                        "first_in": first_in,
+                        "last_out": last_out,
+                        "status": status,
+                        "is_missing_punch": is_missing,
+                        "is_off_day": is_off_day,
+                    }
+                else:
+                    daily_punches[d_str] = {
+                        "first_in": None,
+                        "last_out": None,
+                        "status": "ABSENT",
+                        "is_missing_punch": False,
+                        "is_off_day": False,
+                    }
+
+            items.append(
+                {
+                    "employee_id": emp.employee_id,
+                    "employee_code": emp.employee_code,
+                    "employee_name": emp.employee_name,
+                    "department_name": emp.department_name or "General",
+                    "designation_name": emp.designation_name or "-",
+                    "daily_punches": daily_punches,
+                }
+            )
+
+        return {"dates": dates, "items": items}, total
+
     async def get_employee_attendance_report(
         self,
         org_id: int,

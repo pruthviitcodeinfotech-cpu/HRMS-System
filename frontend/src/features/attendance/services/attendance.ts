@@ -42,6 +42,7 @@ export interface AttendanceDailyQueryParams {
   date_to?: string;
   branch_id?: number;
   department_id?: number;
+  shift_id?: number;
   page?: number;
   page_size?: number;
 }
@@ -287,4 +288,55 @@ export const attendanceService = {
       ApiResponse<{ success: boolean; message: string; records_generated: number }>
     >("/attendance/generate", payload);
   },
+
+  // GET /reports/attendance/daily-punch
+  getDailyPunchReport: async (
+    params: DailyPunchReportQueryParams
+  ): Promise<ApiResponse<DailyPunchMatrixReportData>> => {
+    const q = buildQueryString(params);
+    return apiClient.get<ApiResponse<DailyPunchMatrixReportData>>(
+      q ? `/reports/attendance/daily-punch?${q}` : "/reports/attendance/daily-punch"
+    );
+  },
 };
+
+export interface DailyPunchCell {
+  first_in: string | null;
+  last_out: string | null;
+  status: string;
+  is_missing_punch: boolean;
+  is_off_day: boolean;
+}
+
+export interface DailyPunchMatrixRow {
+  employee_id: number;
+  employee_code: string;
+  employee_name: string;
+  department_name: string;
+  designation_name: string;
+  daily_punches: Record<string, DailyPunchCell>;
+}
+
+export interface DailyPunchMatrixReportData {
+  dates: string[];
+  items: DailyPunchMatrixRow[];
+  pagination: {
+    page: number;
+    page_size: number;
+    total_records: number;
+    total_pages: number;
+  };
+}
+
+export interface DailyPunchReportQueryParams {
+  date_from?: string;
+  date_to?: string;
+  branch_id?: number;
+  dept_id?: number;
+  employee_id?: number;
+  page?: number;
+  page_size?: number;
+  format?: string;
+  sort_by?: string;
+  sort_dir?: "asc" | "desc";
+}

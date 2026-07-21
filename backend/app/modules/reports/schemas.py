@@ -322,6 +322,49 @@ class MonthlyAttendanceReportResponse(ReportPaginatedResponse[MonthlyAttendanceR
     """Monthly attendance calendar report page."""
 
 
+class DailyPunchCellSchema(BaseSchema):
+    """Daily punch status cell in matrix report."""
+
+    first_in: str | None = Field(default=None, description="First punch IN time (e.g. 09:15 AM).")
+    last_out: str | None = Field(default=None, description="Last punch OUT time (e.g. 06:32 PM).")
+    status: str = Field(..., description="Attendance status label.")
+    is_missing_punch: bool = Field(False, description="Flag indicating incomplete punch cycle.")
+    is_off_day: bool = Field(False, description="Flag indicating scheduled week-off or holiday.")
+
+
+class DailyPunchMatrixRowSchema(BaseSchema):
+    """Employee row containing date-indexed daily punch matrix cells."""
+
+    employee_id: int = Field(..., description="Database employee identifier.")
+    employee_code: str = Field(..., description="Unique employee code.")
+    employee_name: str = Field(..., description="Full employee name.")
+    department_name: str = Field(..., description="Department name.")
+    designation_name: str = Field(..., description="Designation name.")
+    daily_punches: dict[str, DailyPunchCellSchema] = Field(
+        default_factory=dict,
+        description="Map of date string (YYYY-MM-DD) to punch cell details.",
+    )
+
+
+class DailyPunchMatrixReportDataSchema(BaseSchema):
+    """Data payload for daily punch report matrix."""
+
+    dates: list[str] = Field(..., description="List of date strings (YYYY-MM-DD) in the range.")
+    items: list[DailyPunchMatrixRowSchema] = Field(..., description="Employee matrix rows.")
+    pagination: PaginationMeta = Field(..., description="Pagination markers.")
+
+
+class DailyPunchMatrixReportResponse(BaseSchema):
+    """Response wrapper for Daily Punch Matrix Report."""
+
+    success: bool = Field(True, description="API execution status.")
+    data: DailyPunchMatrixReportDataSchema = Field(..., description="Matrix report payload.")
+    generated_at: datetime.datetime = Field(
+        default_factory=utcnow,
+        description="Timestamp when report was generated.",
+    )
+
+
 class EmployeeAttendanceReportItemSchema(BaseSchema):
     """Attendance log for a single employee on a specific date."""
 

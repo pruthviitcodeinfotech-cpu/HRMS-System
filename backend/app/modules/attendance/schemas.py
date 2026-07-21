@@ -75,6 +75,7 @@ class AttendanceDailyQuery(PaginationRequest):
     date_to: DateType | None = Field(default=None, description="End date of range.")
     branch_id: int | None = Field(default=None, description="Filter employees by branch.")
     department_id: int | None = Field(default=None, description="Filter employees by department.")
+    shift_id: int | None = Field(default=None, description="Filter employees by shift.")
 
 
 class AttendanceMonthlyQuery(BaseSchema):

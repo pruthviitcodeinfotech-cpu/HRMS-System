@@ -9,3 +9,5 @@ export * from "./components/attendance-pagination";
 export * from "./components/attendance-empty";
 export * from "./components/attendance-loading";
 export * from "./components/attendance-master-view";
+export * from "./components/shift-wise-report-view";
+export * from "./components/daily-punch-report-view";

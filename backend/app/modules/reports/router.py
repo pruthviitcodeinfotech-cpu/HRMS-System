@@ -275,6 +275,32 @@ async def get_daily_attendance_report(
 
 
 @router.get(
+    "/attendance/daily-punch",
+    response_model=None,
+    responses={
+        202: {
+            "model": SuccessResponse[ExportJobStatusResponse],
+            "description": "Large export job accepted.",
+        },
+        200: {"description": "JSON report data or synchronous file download (CSV/Excel/PDF)."},
+    },
+    summary="Daily Punch Matrix Report",
+    description="Fetch multi-day daily punch matrix report grouped by employee.",
+    dependencies=[Depends(require_permission(_FEATURE_KEY, A.READ))],
+)
+async def get_daily_punch_matrix_report(
+    service: ReportsServiceDep,
+    org_id: OrgIdDep,
+    current_user: CurrentUserDep,
+    response: Response,
+    query: ReportQueryDep,
+) -> Any:
+    """Retrieve filtered and paginated daily punch matrix report."""
+    res = await service.get_daily_punch_matrix_report(org_id=org_id, user=current_user, query=query)
+    return await _map_report_result(res, response)
+
+
+@router.get(
     "/attendance/monthly",
     response_model=None,
     responses={
@@ -297,6 +323,32 @@ async def get_monthly_attendance_report(
 ) -> Any:
     """Retrieve filtered and paginated monthly attendance grid."""
     res = await service.get_monthly_attendance_report(org_id=org_id, user=current_user, query=query)
+    return await _map_report_result(res, response)
+
+
+@router.get(
+    "/attendance/shift-wise",
+    response_model=None,
+    responses={
+        202: {
+            "model": SuccessResponse[ExportJobStatusResponse],
+            "description": "Large export job accepted.",
+        },
+        200: {"description": "JSON report data or synchronous file download (CSV/Excel/PDF)."},
+    },
+    summary="Shift Wise Attendance Report",
+    description="Fetch attendance logs grouped by employee assigned shifts.",
+    dependencies=[Depends(require_permission(_FEATURE_KEY, A.READ))],
+)
+async def get_shift_wise_report(
+    service: ReportsServiceDep,
+    org_id: OrgIdDep,
+    current_user: CurrentUserDep,
+    response: Response,
+    query: ReportQueryDep,
+) -> Any:
+    """Retrieve filtered and paginated shift-wise attendance report."""
+    res = await service.get_daily_attendance_report(org_id=org_id, user=current_user, query=query)
     return await _map_report_result(res, response)
 
 
