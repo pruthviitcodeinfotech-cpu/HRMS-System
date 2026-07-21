@@ -301,6 +301,58 @@ async def get_daily_punch_matrix_report(
 
 
 @router.get(
+    "/attendance/working-hours",
+    response_model=None,
+    responses={
+        202: {
+            "model": SuccessResponse[ExportJobStatusResponse],
+            "description": "Large export job accepted.",
+        },
+        200: {"description": "JSON report data or synchronous file download (CSV/Excel/PDF)."},
+    },
+    summary="Working Hours Matrix Report",
+    description="Fetch multi-day working hours matrix report grouped by employee.",
+    dependencies=[Depends(require_permission(_FEATURE_KEY, A.READ))],
+)
+async def get_working_hours_matrix_report(
+    service: ReportsServiceDep,
+    org_id: OrgIdDep,
+    current_user: CurrentUserDep,
+    response: Response,
+    query: ReportQueryDep,
+) -> Any:
+    """Retrieve filtered and paginated working hours matrix report."""
+    res = await service.get_working_hours_matrix_report(org_id=org_id, user=current_user, query=query)
+    return await _map_report_result(res, response)
+
+
+@router.get(
+    "/attendance/muster",
+    response_model=None,
+    responses={
+        202: {
+            "model": SuccessResponse[ExportJobStatusResponse],
+            "description": "Large export job accepted.",
+        },
+        200: {"description": "JSON report data or synchronous file download (CSV/Excel/PDF)."},
+    },
+    summary="Muster Roll Report",
+    description="Fetch multi-day muster roll report grouped by employee.",
+    dependencies=[Depends(require_permission(_FEATURE_KEY, A.READ))],
+)
+async def get_muster_report(
+    service: ReportsServiceDep,
+    org_id: OrgIdDep,
+    current_user: CurrentUserDep,
+    response: Response,
+    query: ReportQueryDep,
+) -> Any:
+    """Retrieve filtered and paginated muster roll report."""
+    res = await service.get_muster_report(org_id=org_id, user=current_user, query=query)
+    return await _map_report_result(res, response)
+
+
+@router.get(
     "/attendance/monthly",
     response_model=None,
     responses={

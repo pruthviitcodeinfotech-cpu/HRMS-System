@@ -14,6 +14,8 @@ import {
   AttendanceLockPayload,
   AttendanceUnlockPayload,
   DailyPunchReportQueryParams,
+  WorkingHoursReportQueryParams,
+  MusterReportQueryParams,
 } from "../services/attendance";
 
 export const attendanceKeys = {
@@ -30,6 +32,10 @@ export const attendanceKeys = {
   locks: () => [...attendanceKeys.all, "locks"] as const,
   dailyPunchReport: (params: DailyPunchReportQueryParams) =>
     [...attendanceKeys.all, "dailyPunchReport", params] as const,
+  workingHoursReport: (params: WorkingHoursReportQueryParams) =>
+    [...attendanceKeys.all, "workingHoursReport", params] as const,
+  musterReport: (params: MusterReportQueryParams) =>
+    [...attendanceKeys.all, "musterReport", params] as const,
 };
 
 // Helper for extracting clean error message from Axios errors
@@ -248,6 +254,36 @@ export const useDailyPunchReport = (params: DailyPunchReportQueryParams, enabled
     queryKey: attendanceKeys.dailyPunchReport(params),
     queryFn: async () => {
       const response = await attendanceService.getDailyPunchReport(params);
+      return response.data;
+    },
+    placeholderData: keepPreviousData,
+    enabled,
+  });
+};
+
+/**
+ * Fetch Working Hours Matrix Report (GET /reports/attendance/working-hours)
+ */
+export const useWorkingHoursReport = (params: WorkingHoursReportQueryParams, enabled = true) => {
+  return useQuery({
+    queryKey: attendanceKeys.workingHoursReport(params),
+    queryFn: async () => {
+      const response = await attendanceService.getWorkingHoursReport(params);
+      return response.data;
+    },
+    placeholderData: keepPreviousData,
+    enabled,
+  });
+};
+
+/**
+ * Fetch Muster Roll Report (GET /reports/attendance/muster)
+ */
+export const useMusterReport = (params: MusterReportQueryParams, enabled = true) => {
+  return useQuery({
+    queryKey: attendanceKeys.musterReport(params),
+    queryFn: async () => {
+      const response = await attendanceService.getMusterReport(params);
       return response.data;
     },
     placeholderData: keepPreviousData,

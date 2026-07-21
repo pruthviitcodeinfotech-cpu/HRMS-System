@@ -365,6 +365,101 @@ class DailyPunchMatrixReportResponse(BaseSchema):
     )
 
 
+class WorkingHoursCellSchema(BaseSchema):
+    """Working hours summary for a single date cell."""
+
+    working_hours_str: str = Field(..., description="Formatted working hours string (e.g. '9h 17m', '0h').")
+    working_minutes: int = Field(0, description="Total working duration in minutes.")
+    break_minutes: int = Field(0, description="Total break duration in minutes.")
+    status: str = Field(..., description="Attendance status label.")
+    is_missing_punch: bool = Field(False, description="Flag indicating incomplete punch cycle or anomaly.")
+    is_off_day: bool = Field(False, description="Flag indicating scheduled week-off or holiday.")
+
+
+class WorkingHoursMatrixRowSchema(BaseSchema):
+    """Employee row containing date-indexed daily working hours matrix cells."""
+
+    employee_id: int = Field(..., description="Database employee identifier.")
+    employee_code: str = Field(..., description="Unique employee code.")
+    employee_name: str = Field(..., description="Full employee name.")
+    department_name: str = Field(..., description="Department name.")
+    designation_name: str = Field(..., description="Designation name.")
+    total_working_hours_str: str = Field(..., description="Sum of working hours formatted (e.g. '129h 29m').")
+    total_break_hours_str: str = Field(..., description="Sum of break hours formatted (e.g. '7h 8m').")
+    total_working_minutes: int = Field(0, description="Sum of working minutes.")
+    total_break_minutes: int = Field(0, description="Sum of break minutes.")
+    daily_hours: dict[str, WorkingHoursCellSchema] = Field(
+        default_factory=dict,
+        description="Map of date string (YYYY-MM-DD) to working hours cell details.",
+    )
+
+
+class WorkingHoursMatrixReportDataSchema(BaseSchema):
+    """Data payload for working hours report matrix."""
+
+    dates: list[str] = Field(..., description="List of date strings (YYYY-MM-DD) in the range.")
+    items: list[WorkingHoursMatrixRowSchema] = Field(..., description="Employee matrix rows.")
+    pagination: PaginationMeta = Field(..., description="Pagination markers.")
+
+
+class WorkingHoursMatrixReportResponse(BaseSchema):
+    """Response wrapper for Working Hours Matrix Report."""
+
+    success: bool = Field(True, description="API execution status.")
+    data: WorkingHoursMatrixReportDataSchema = Field(..., description="Matrix report payload.")
+    generated_at: datetime.datetime = Field(
+        default_factory=utcnow,
+        description="Timestamp when report was generated.",
+    )
+
+
+class MusterCellSchema(BaseSchema):
+    """Attendance status summary for a single date cell in Muster Roll."""
+
+    status: str = Field(..., description="Short status code (P, A, HD, L, WO, H, MP).")
+    status_label: str = Field(..., description="Full human readable status label.")
+    work_hours: float = Field(0.0, description="Calculated work hours for the day.")
+
+
+class MusterRowSchema(BaseSchema):
+    """Employee row containing date-indexed attendance status cells and totals for Muster Roll."""
+
+    employee_id: int = Field(..., description="Database employee identifier.")
+    employee_code: str = Field(..., description="Unique employee code.")
+    employee_name: str = Field(..., description="Full employee name.")
+    department_name: str = Field(..., description="Department name.")
+    designation_name: str = Field(..., description="Designation name.")
+    total_present: float = Field(0.0, description="Total present days (including 0.5 for half days).")
+    total_absent: float = Field(0.0, description="Total absent days (including 0.5 for half days).")
+    total_half_day: int = Field(0, description="Total half days.")
+    total_leave: float = Field(0.0, description="Total leave days.")
+    total_week_off: int = Field(0, description="Total week offs.")
+    total_holiday: int = Field(0, description="Total holidays.")
+    daily_status: dict[str, MusterCellSchema] = Field(
+        default_factory=dict,
+        description="Map of date string (YYYY-MM-DD) to muster cell details.",
+    )
+
+
+class MusterReportDataSchema(BaseSchema):
+    """Data payload for muster report grid."""
+
+    dates: list[str] = Field(..., description="List of date strings (YYYY-MM-DD) in range.")
+    items: list[MusterRowSchema] = Field(..., description="Employee muster rows.")
+    pagination: PaginationMeta = Field(..., description="Pagination markers.")
+
+
+class MusterReportResponse(BaseSchema):
+    """Response wrapper for Muster Roll Report."""
+
+    success: bool = Field(True, description="API execution status.")
+    data: MusterReportDataSchema = Field(..., description="Muster report payload.")
+    generated_at: datetime.datetime = Field(
+        default_factory=utcnow,
+        description="Timestamp when report was generated.",
+    )
+
+
 class EmployeeAttendanceReportItemSchema(BaseSchema):
     """Attendance log for a single employee on a specific date."""
 

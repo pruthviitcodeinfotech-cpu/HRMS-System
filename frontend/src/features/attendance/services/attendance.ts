@@ -298,6 +298,26 @@ export const attendanceService = {
       q ? `/reports/attendance/daily-punch?${q}` : "/reports/attendance/daily-punch"
     );
   },
+
+  // GET /reports/attendance/working-hours
+  getWorkingHoursReport: async (
+    params: WorkingHoursReportQueryParams
+  ): Promise<ApiResponse<WorkingHoursMatrixReportData>> => {
+    const q = buildQueryString(params);
+    return apiClient.get<ApiResponse<WorkingHoursMatrixReportData>>(
+      q ? `/reports/attendance/working-hours?${q}` : "/reports/attendance/working-hours"
+    );
+  },
+
+  // GET /reports/attendance/muster
+  getMusterReport: async (
+    params: MusterReportQueryParams
+  ): Promise<ApiResponse<MusterReportData>> => {
+    const q = buildQueryString(params);
+    return apiClient.get<ApiResponse<MusterReportData>>(
+      q ? `/reports/attendance/muster?${q}` : "/reports/attendance/muster"
+    );
+  },
 };
 
 export interface DailyPunchCell {
@@ -329,6 +349,100 @@ export interface DailyPunchMatrixReportData {
 }
 
 export interface DailyPunchReportQueryParams {
+  date_from?: string;
+  date_to?: string;
+  branch_id?: number;
+  dept_id?: number;
+  employee_id?: number;
+  page?: number;
+  page_size?: number;
+  format?: string;
+  sort_by?: string;
+  sort_dir?: "asc" | "desc";
+}
+
+export interface WorkingHoursCell {
+  working_hours_str: string;
+  working_minutes: number;
+  break_minutes: number;
+  status: string;
+  is_missing_punch: boolean;
+  is_off_day: boolean;
+}
+
+export interface WorkingHoursMatrixRow {
+  employee_id: number;
+  employee_code: string;
+  employee_name: string;
+  department_name: string;
+  designation_name: string;
+  total_working_hours_str: string;
+  total_break_hours_str: string;
+  total_working_minutes: number;
+  total_break_minutes: number;
+  daily_hours: Record<string, WorkingHoursCell>;
+}
+
+export interface WorkingHoursMatrixReportData {
+  dates: string[];
+  items: WorkingHoursMatrixRow[];
+  pagination: {
+    page: number;
+    page_size: number;
+    total_records: number;
+    total_pages: number;
+  };
+}
+
+export interface WorkingHoursReportQueryParams {
+  date_from?: string;
+  date_to?: string;
+  branch_id?: number;
+  dept_id?: number;
+  employee_id?: number;
+  page?: number;
+  page_size?: number;
+  format?: string;
+  sort_by?: string;
+  sort_dir?: "asc" | "desc";
+}
+
+export interface MusterCell {
+  status: string;
+  status_label: string;
+  work_hours: number;
+  is_missing_punch?: boolean;
+  is_overtime?: boolean;
+  overtime_hours?: number;
+}
+
+export interface MusterRow {
+  employee_id: number;
+  employee_code: string;
+  employee_name: string;
+  department_name: string;
+  designation_name: string;
+  total_present: number;
+  total_absent: number;
+  total_half_day: number;
+  total_leave: number;
+  total_week_off: number;
+  total_holiday: number;
+  daily_status: Record<string, MusterCell>;
+}
+
+export interface MusterReportData {
+  dates: string[];
+  items: MusterRow[];
+  pagination: {
+    page: number;
+    page_size: number;
+    total_records: number;
+    total_pages: number;
+  };
+}
+
+export interface MusterReportQueryParams {
   date_from?: string;
   date_to?: string;
   branch_id?: number;

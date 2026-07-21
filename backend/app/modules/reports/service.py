@@ -42,6 +42,14 @@ from app.modules.reports.schemas import (
     DailyPunchMatrixReportDataSchema,
     DailyPunchMatrixReportResponse,
     DailyPunchMatrixRowSchema,
+    WorkingHoursCellSchema,
+    WorkingHoursMatrixReportDataSchema,
+    WorkingHoursMatrixReportResponse,
+    WorkingHoursMatrixRowSchema,
+    MusterCellSchema,
+    MusterReportDataSchema,
+    MusterReportResponse,
+    MusterRowSchema,
     DepartmentSummaryReportItemSchema,
     DepartmentSummaryReportResponse,
     DeviceHealthReportItemSchema,
@@ -791,6 +799,194 @@ class ReportsService(BaseService):
                         designation_name=it["designation_name"],
                         daily_punches={
                             k: DailyPunchCellSchema(**v) for k, v in it["daily_punches"].items()
+                        },
+                    )
+                    for it in data_dict["items"]
+                ],
+                pagination=PaginationMeta.build(
+                    page=query.page, page_size=query.page_size, total_records=total_records
+                ),
+            ),
+        )
+
+    async def get_working_hours_matrix_report(
+        self, org_id: int, user: CurrentUser, query: ReportQueryRequest
+    ) -> WorkingHoursMatrixReportResponse | dict[str, Any] | bytes:
+        """Fetch multi-day working hours matrix report."""
+        self._enforce_permissions(user, ["attendance"])
+        branch_ids, dept_ids = self._resolve_data_scopes(user)
+        effective_branch_ids = [query.branch_id] if query.branch_id is not None else branch_ids
+        effective_dept_ids = [query.dept_id] if query.dept_id is not None else dept_ids
+
+        today = datetime.date.today()
+        d_from = query.date_from or today.replace(day=1)
+        d_to = query.date_to or today
+
+        data_dict, total_records = await self.repo.get_working_hours_matrix_report(
+            org_id=org_id,
+            date_from=d_from,
+            date_to=d_to,
+            branch_ids=effective_branch_ids,
+            dept_ids=effective_dept_ids,
+            employee_id=query.employee_id,
+            sort_by=query.sort_by,
+            sort_dir=query.sort_dir,
+            page=query.page,
+            page_size=query.page_size,
+        )
+
+        if query.format in ("csv", "excel", "pdf"):
+            export_rows = []
+            for item in data_dict.get("items", []):
+                row_dict = {
+                    "Employee ID": item["employee_code"],
+                    "Employee Name": item["employee_name"],
+                    "Department": item["department_name"],
+                    "Designation": item["designation_name"],
+                    "Total Working Hours": item["total_working_hours_str"],
+                    "Total Break Hours": item["total_break_hours_str"],
+                }
+                for d_str in data_dict.get("dates", []):
+                    cell = item["daily_hours"].get(d_str, {})
+                    row_dict[d_str] = cell.get("working_hours_str", "0h")
+                export_rows.append(row_dict)
+
+            headers = list(export_rows[0].keys()) if export_rows else []
+            rows = [[r.get(h) for h in headers] for r in export_rows]
+
+            if query.format == "pdf":
+                file_bytes = self._generate_pdf_bytes("working_hours_report", headers, rows)
+                media_type = "application/pdf"
+                ext = "pdf"
+            else:
+                file_bytes = self._generate_csv_bytes(headers, rows)
+                media_type = (
+                    "text/csv"
+                    if query.format == "csv"
+                    else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+                ext = "csv" if query.format == "csv" else "xlsx"
+
+            return {
+                "file_bytes": file_bytes,
+                "filename": f"working_hours_report_{utcnow().strftime('%Y%m%d_%H%M%S')}.{ext}",
+                "media_type": media_type,
+            }
+
+        return WorkingHoursMatrixReportResponse(
+            success=True,
+            data=WorkingHoursMatrixReportDataSchema(
+                dates=data_dict["dates"],
+                items=[
+                    WorkingHoursMatrixRowSchema(
+                        employee_id=it["employee_id"],
+                        employee_code=it["employee_code"],
+                        employee_name=it["employee_name"],
+                        department_name=it["department_name"],
+                        designation_name=it["designation_name"],
+                        total_working_hours_str=it["total_working_hours_str"],
+                        total_break_hours_str=it["total_break_hours_str"],
+                        total_working_minutes=it["total_working_minutes"],
+                        total_break_minutes=it["total_break_minutes"],
+                        daily_hours={
+                            k: WorkingHoursCellSchema(**v) for k, v in it["daily_hours"].items()
+                        },
+                    )
+                    for it in data_dict["items"]
+                ],
+                pagination=PaginationMeta.build(
+                    page=query.page, page_size=query.page_size, total_records=total_records
+                ),
+            ),
+        )
+
+    async def get_muster_report(
+        self, org_id: int, user: CurrentUser, query: ReportQueryRequest
+    ) -> MusterReportResponse | dict[str, Any] | bytes:
+        """Fetch multi-day muster roll report."""
+        self._enforce_permissions(user, ["attendance"])
+        branch_ids, dept_ids = self._resolve_data_scopes(user)
+        effective_branch_ids = [query.branch_id] if query.branch_id is not None else branch_ids
+        effective_dept_ids = [query.dept_id] if query.dept_id is not None else dept_ids
+
+        today = datetime.date.today()
+        d_from = query.date_from or today.replace(day=1)
+        d_to = query.date_to or today
+
+        data_dict, total_records = await self.repo.get_muster_report(
+            org_id=org_id,
+            date_from=d_from,
+            date_to=d_to,
+            branch_ids=effective_branch_ids,
+            dept_ids=effective_dept_ids,
+            employee_id=query.employee_id,
+            sort_by=query.sort_by,
+            sort_dir=query.sort_dir,
+            page=query.page,
+            page_size=query.page_size,
+        )
+
+        if query.format in ("csv", "excel", "pdf"):
+            export_rows = []
+            for item in data_dict.get("items", []):
+                row_dict = {
+                    "Employee ID": item["employee_code"],
+                    "Employee Name": item["employee_name"],
+                    "Department": item["department_name"],
+                    "Designation": item["designation_name"],
+                    "Total Present": item["total_present"],
+                    "Total Absent": item["total_absent"],
+                    "Total Leave": item["total_leave"],
+                    "Total Half Day": item["total_half_day"],
+                    "Total Week Off": item["total_week_off"],
+                    "Total Holiday": item["total_holiday"],
+                }
+                for d_str in data_dict.get("dates", []):
+                    cell = item["daily_status"].get(d_str, {})
+                    row_dict[d_str] = cell.get("status", "A")
+                export_rows.append(row_dict)
+
+            headers = list(export_rows[0].keys()) if export_rows else []
+            rows = [[r.get(h) for h in headers] for r in export_rows]
+
+            if query.format == "pdf":
+                file_bytes = self._generate_pdf_bytes("muster_report", headers, rows)
+                media_type = "application/pdf"
+                ext = "pdf"
+            else:
+                file_bytes = self._generate_csv_bytes(headers, rows)
+                media_type = (
+                    "text/csv"
+                    if query.format == "csv"
+                    else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+                ext = "csv" if query.format == "csv" else "xlsx"
+
+            return {
+                "file_bytes": file_bytes,
+                "filename": f"muster_report_{utcnow().strftime('%Y%m%d_%H%M%S')}.{ext}",
+                "media_type": media_type,
+            }
+
+        return MusterReportResponse(
+            success=True,
+            data=MusterReportDataSchema(
+                dates=data_dict["dates"],
+                items=[
+                    MusterRowSchema(
+                        employee_id=it["employee_id"],
+                        employee_code=it["employee_code"],
+                        employee_name=it["employee_name"],
+                        department_name=it["department_name"],
+                        designation_name=it["designation_name"],
+                        total_present=it["total_present"],
+                        total_absent=it["total_absent"],
+                        total_half_day=it["total_half_day"],
+                        total_leave=it["total_leave"],
+                        total_week_off=it["total_week_off"],
+                        total_holiday=it["total_holiday"],
+                        daily_status={
+                            k: MusterCellSchema(**v) for k, v in it["daily_status"].items()
                         },
                     )
                     for it in data_dict["items"]
