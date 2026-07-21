@@ -723,6 +723,21 @@ async def assign_holiday_group(
 
 
 @router.get(
+    "/holiday-assignments",
+    response_model=SuccessResponse[list[EmployeeHolidayAssignmentSchema]],
+    summary="List All Employee Holiday Assignments",
+    dependencies=[Depends(require_permission(_HOLIDAY, A.READ))],
+)
+async def list_holiday_assignments(
+    service: LeaveServiceDep,
+    org_id: OrgIdDep,
+) -> dict[str, Any]:
+    """List all employee holiday assignments in the organization."""
+    result = await service.list_holiday_assignments(org_id)
+    return _ok(result)
+
+
+@router.get(
     "/employees/{employee_id}/holiday-template",
     response_model=SuccessResponse[EmployeeHolidayAssignmentSchema],
     summary="View Employee Holiday Assignment",

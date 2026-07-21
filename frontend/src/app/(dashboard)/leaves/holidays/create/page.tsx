@@ -20,6 +20,7 @@ import {
   useUpdateHolidayTemplate,
   useDeleteHolidayTemplate,
   useCreateHolidayItem,
+  useDeleteHolidayItem,
 } from "@/features/holidays";
 
 const getErrorMessage = (err: unknown): string => {
@@ -80,10 +81,16 @@ export default function HolidayCreatePage() {
   const [pageSize, setPageSize] = useState<number>(10);
   const [searchQuery, setSearchQuery] = useState<string>("");
 
-  // Fetch Templates via React Query
+  // Fetch Templates via React Query for table
   const { data: templateResponse, isLoading } = useHolidayTemplates({
     page,
     page_size: pageSize,
+  });
+
+  // Fetch all templates (up to 500) for real-time duplicate template name validation
+  const { data: allTemplatesResponse } = useHolidayTemplates({
+    page: 1,
+    page_size: 500,
   });
 
   // Mutations
@@ -91,6 +98,7 @@ export default function HolidayCreatePage() {
   const updateTemplateMutation = useUpdateHolidayTemplate();
   const deleteTemplateMutation = useDeleteHolidayTemplate();
   const createItemMutation = useCreateHolidayItem();
+  const deleteItemMutation = useDeleteHolidayItem();
 
   // View Mode: 'list' | 'editor'
   const [viewMode, setViewMode] = useState<"list" | "editor">("list");
@@ -105,6 +113,7 @@ export default function HolidayCreatePage() {
 
   // Map server response items
   const templates: HolidayTemplate[] = (templateResponse?.items || []).map(mapBackendTemplateToUI);
+  const allTemplateNames: string[] = (allTemplatesResponse?.items || []).map((t) => t.name);
   const totalRecords = templateResponse?.pagination?.total_records || 0;
 
   // Local search filter (server-side search not yet wired)
@@ -151,7 +160,23 @@ export default function HolidayCreatePage() {
           data: { name: templateName },
         });
 
-        // Add only genuinely new items (those without a server-assigned numeric ID)
+        // 1. Delete items removed by the user in the editor
+        const remainingItemIds = new Set(items.map((item) => String(item.id)));
+        const removedItems = (templateToEdit.items || []).filter(
+          (origItem) =>
+            origItem.id &&
+            !origItem.id.startsWith("h_") &&
+            !remainingItemIds.has(String(origItem.id))
+        );
+
+        for (const item of removedItems) {
+          await deleteItemMutation.mutateAsync({
+            templateId: Number(templateToEdit.id),
+            itemId: Number(item.id),
+          });
+        }
+
+        // 2. Add only genuinely new items (those without a server-assigned numeric ID)
         const newItems = items.filter((item) => !item.id || item.id.startsWith("h_"));
         for (const item of newItems) {
           await createItemMutation.mutateAsync({
@@ -213,8 +238,8 @@ export default function HolidayCreatePage() {
             initialTemplate={templateToEdit}
             existingTemplateNames={
               templateToEdit
-                ? templates.filter((t) => t.id !== templateToEdit.id).map((t) => t.name)
-                : templates.map((t) => t.name)
+                ? allTemplateNames.filter((name) => name.toLowerCase() !== templateToEdit.name.toLowerCase())
+                : allTemplateNames
             }
           />
         ) : (

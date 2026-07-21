@@ -403,6 +403,9 @@ class EmployeeHolidayAssignmentSchema(BaseSchema):
     assigned_at: datetime = Field(..., description="Assignment timestamp.")
     assigned_by: int = Field(..., description="User ID of assigning manager.")
     previous_template_id: int | None = Field(default=None, description="Previous template ID.")
+    template: HolidayTemplateSchema | None = Field(
+        default=None, description="Assigned holiday template details."
+    )
 
 
 class EmployeeHolidayCalendarSchema(BaseSchema):

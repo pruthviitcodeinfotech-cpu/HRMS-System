@@ -114,6 +114,11 @@ export const holidayService = {
     );
   },
 
+  /** GET /holiday-assignments — List all employee holiday assignments */
+  getHolidayAssignments: async (): Promise<ApiResponse<EmployeeHolidayAssignmentSchema[]>> => {
+    return apiClient.get<ApiResponse<EmployeeHolidayAssignmentSchema[]>>("/holiday-assignments");
+  },
+
   /** GET /employees/{employee_id}/holidays — Get employee holiday calendar */
   getEmployeeHolidayCalendar: async (
     employeeId: number,

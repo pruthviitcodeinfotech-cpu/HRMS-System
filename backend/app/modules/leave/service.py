@@ -998,7 +998,7 @@ class LeaveService(BaseService):
                 performed_by_user_id=created_by,
                 performed_by_name=f"User {created_by}",
             )
-            return template
+        return await self.get_holiday_group(org_id, template.id)
 
 
     async def list_holiday_groups(
@@ -1026,7 +1026,7 @@ class LeaveService(BaseService):
             raise HolidayTemplateNameExistsException()
 
         async with self.transaction():
-            updated = await self.templates.update(template, {"name": name, "updated_by": updated_by})
+            await self.templates.update(template, {"name": name, "updated_by": updated_by})
             await self.audit.record(
                 org_id=org_id,
                 module="leave",
@@ -1037,7 +1037,7 @@ class LeaveService(BaseService):
                 performed_by_user_id=updated_by,
                 performed_by_name=f"User {updated_by}",
             )
-            return updated
+        return await self.get_holiday_group(org_id, template_id)
 
     async def delete_holiday_group(self, org_id: int, template_id: int, user_id: int) -> None:
         """Soft-delete a holiday template group."""
@@ -1078,6 +1078,10 @@ class LeaveService(BaseService):
                 employee_name=emp.employee_name,
             )
             return assignment
+
+    async def list_holiday_assignments(self, org_id: int) -> list[EmployeeHolidayAssignment]:
+        """List all employee holiday assignments for the organization."""
+        return await self.assignments.list_all_assignments(org_id)
 
     async def get_holiday_assignment(self, org_id: int, employee_id: int) -> EmployeeHolidayAssignment | None:
         """Get holiday template mapping for an employee in org context."""

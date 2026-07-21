@@ -222,6 +222,19 @@ export const useEmployeeHolidayTemplate = (employeeId: number, enabled = true) =
 };
 
 /**
+ * List all employee holiday assignments (GET /leave/holiday-assignments).
+ */
+export const useHolidayAssignments = () => {
+  return useQuery({
+    queryKey: [...holidayKeys.all, "all-assignments"] as const,
+    queryFn: async () => {
+      const response = await holidayService.getHolidayAssignments();
+      return response.data;
+    },
+  });
+};
+
+/**
  * Employee holiday calendar (GET /leave/employees/{employee_id}/holidays).
  */
 export const useEmployeeHolidayCalendar = (

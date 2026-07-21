@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { ProtectedRoute } from "@/features/auth";
 import {
   Users,
@@ -26,6 +26,8 @@ import {
   Briefcase,
 } from "lucide-react";
 import { toast } from "sonner";
+import { useRouter } from "next/navigation";
+import { INITIAL_APPROVAL_REQUESTS, ApprovalRequest } from "@/features/approvals";
 import {
   useDashboardKPIs,
   useAttendanceDays,
@@ -188,7 +190,7 @@ const WidgetSkeleton = ({ title }: { title: string }) => (
   </div>
 );
 
-const ErrorWidget = ({ title, error }: { title: string; error: any }) => (
+const ErrorWidget = ({ title, error }: { title: string; error: { message?: string } | null }) => (
   <div className="bg-card text-card-foreground rounded-xl border border-border shadow-xs overflow-hidden p-6 text-center text-rose-500 dark:text-rose-400">
     <AlertTriangle className="h-8 w-8 mx-auto mb-2" />
     <h4 className="font-bold text-xs">{title} failed to load</h4>
@@ -199,10 +201,23 @@ const ErrorWidget = ({ title, error }: { title: string; error: any }) => (
 );
 
 export default function DashboardPage() {
+  const router = useRouter();
   const [targetDate, setTargetDate] = useState<string>("2026-07-15");
   const [isCalendarOpen, setIsCalendarOpen] = useState(false);
   const [viewDate, setViewDate] = useState<Date>(new Date(2026, 6, 15)); // July 15, 2026
   const calendarRef = useRef<HTMLDivElement>(null);
+
+  // Hydrate pending approval requests from local storage
+  const [localPendingApprovals, setLocalPendingApprovals] = useState<ApprovalRequest[]>(() => {
+    if (typeof window === "undefined") return INITIAL_APPROVAL_REQUESTS.filter((r) => r.status === "pending");
+    try {
+      const raw = localStorage.getItem("hrms_approval_requests");
+      const list: ApprovalRequest[] = raw ? JSON.parse(raw) : INITIAL_APPROVAL_REQUESTS;
+      return list.filter((r) => r.status === "pending");
+    } catch {
+      return INITIAL_APPROVAL_REQUESTS.filter((r) => r.status === "pending");
+    }
+  });
 
   // Close calendar popover on click outside
   useEffect(() => {
@@ -299,17 +314,39 @@ export default function DashboardPage() {
     }
   };
 
-  const handleApprovalAction = async (id: number, action: "approve" | "reject") => {
+  const handleApprovalAction = async (id: number | string, action: "approve" | "reject") => {
     try {
-      if (action === "approve") {
-        await approveMutation.mutateAsync({ id, remarks: "Approved via dashboard" });
-        toast.success(`Request #${id} approved successfully.`);
+      if (typeof id === "number") {
+        if (action === "approve") {
+          await approveMutation.mutateAsync({ id, remarks: "Approved via dashboard" });
+          toast.success(`Request #${id} approved successfully.`);
+        } else {
+          await rejectMutation.mutateAsync({ id, remarks: "Rejected via dashboard" });
+          toast.success(`Request #${id} rejected successfully.`);
+        }
       } else {
-        await rejectMutation.mutateAsync({ id, remarks: "Rejected via dashboard" });
-        toast.success(`Request #${id} rejected successfully.`);
+        const raw = localStorage.getItem("hrms_approval_requests");
+        const list: ApprovalRequest[] = raw ? JSON.parse(raw) : INITIAL_APPROVAL_REQUESTS;
+        const updated = list.map((item) => {
+          if (item.id === id) {
+            return {
+              ...item,
+              status: action === "approve" ? ("approved" as const) : ("rejected" as const),
+              remarks: action === "approve" ? "Approved via dashboard" : "Rejected via dashboard",
+              actionDate: new Date().toISOString(),
+            };
+          }
+          return item;
+        });
+        localStorage.setItem("hrms_approval_requests", JSON.stringify(updated));
+        setLocalPendingApprovals(updated.filter((item) => item.status === "pending"));
+        toast.success(
+          `Request ${action === "approve" ? "approved" : "rejected"} successfully.`
+        );
       }
-    } catch (err: any) {
-      toast.error(err?.message || `Failed to ${action} request.`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : `Failed to ${action} request.`;
+      toast.error(msg);
     }
   };
 
@@ -542,7 +579,17 @@ export default function DashboardPage() {
     }
   };
 
-  const pendingApprovals = approvalsData?.recent || [];
+  const pendingApprovals = useMemo(() => {
+    if (approvalsData?.recent && approvalsData.recent.length > 0) {
+      return approvalsData.recent;
+    }
+    return localPendingApprovals.map((req) => ({
+      id: req.id,
+      requester_name: `${req.employeeCode} - ${req.employeeName}`,
+      request_type: `${req.type} (${req.subtype})`,
+      submitted_at: req.submittedDate,
+    }));
+  }, [approvalsData, localPendingApprovals]);
 
   return (
     <ProtectedRoute requiredPermission={{ feature: "dashboard", action: "read" }}>
@@ -1495,14 +1542,17 @@ export default function DashboardPage() {
                     {pendingApprovals.length}
                   </span>
                 </div>
-                <button className="text-[11px] font-bold text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 transition-colors flex items-center cursor-pointer">
+                <button
+                  onClick={() => router.push("/approvals")}
+                  className="text-[11px] font-bold text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 transition-colors flex items-center cursor-pointer"
+                >
                   <span>View More</span>
                 </button>
               </div>
 
               <div className="p-4 flex-1 space-y-3">
                 {pendingApprovals.length > 0 ? (
-                  pendingApprovals.map((item) => {
+                  pendingApprovals.map((item: { id: number | string; requester_name: string; request_type: string; submitted_at: string }) => {
                     const isLeave = item.request_type.toLowerCase().includes("leave");
                     return (
                       <div

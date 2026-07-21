@@ -67,4 +67,54 @@ export const leaveService = {
   ): Promise<ApiResponse<LeaveSettingsSchema>> => {
     return apiClient.put<ApiResponse<LeaveSettingsSchema>>("/leave-settings", data);
   },
+
+  /** GET /leave-balances — Search and paginate leave balances */
+  getLeaveBalances: async (
+    params: import("../types").LeaveBalanceListParams = {}
+  ): Promise<ApiResponse<import("../types").LeaveBalanceListResponse>> => {
+    const query = new URLSearchParams();
+    if (params.page) query.append("page", String(params.page));
+    if (params.page_size) query.append("page_size", String(params.page_size));
+    if (params.leave_type_id) query.append("leave_type_id", String(params.leave_type_id));
+    if (params.cycle_year) query.append("cycle_year", String(params.cycle_year));
+    if (params.employee_id) query.append("employee_id", String(params.employee_id));
+    if (params.branch_id) query.append("branch_id", String(params.branch_id));
+    if (params.dept_id) query.append("dept_id", String(params.dept_id));
+    const queryString = query.toString();
+    const url = queryString ? `/leave-balances?${queryString}` : "/leave-balances";
+    return apiClient.get<ApiResponse<import("../types").LeaveBalanceListResponse>>(url);
+  },
+
+  /** POST /employees/{id}/leave-balances/credit — Credit leave balance */
+  creditLeaveBalance: async (
+    employeeId: number,
+    data: import("../types").LeaveCreditDebitRequest
+  ): Promise<ApiResponse<import("../types").EmployeeLeaveBalanceSchema>> => {
+    return apiClient.post<ApiResponse<import("../types").EmployeeLeaveBalanceSchema>>(
+      `/employees/${employeeId}/leave-balances/credit`,
+      data
+    );
+  },
+
+  /** POST /employees/{id}/leave-balances/debit — Debit leave balance */
+  debitLeaveBalance: async (
+    employeeId: number,
+    data: import("../types").LeaveCreditDebitRequest
+  ): Promise<ApiResponse<import("../types").EmployeeLeaveBalanceSchema>> => {
+    return apiClient.post<ApiResponse<import("../types").EmployeeLeaveBalanceSchema>>(
+      `/employees/${employeeId}/leave-balances/debit`,
+      data
+    );
+  },
+
+  /** POST /employees/{id}/leave-balances/adjust — Adjust leave balance */
+  adjustLeaveBalance: async (
+    employeeId: number,
+    data: import("../types").LeaveBalanceAdjustRequest
+  ): Promise<ApiResponse<import("../types").EmployeeLeaveBalanceSchema>> => {
+    return apiClient.post<ApiResponse<import("../types").EmployeeLeaveBalanceSchema>>(
+      `/employees/${employeeId}/leave-balances/adjust`,
+      data
+    );
+  },
 };

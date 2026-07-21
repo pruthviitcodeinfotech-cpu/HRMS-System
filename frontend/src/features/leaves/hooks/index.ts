@@ -14,6 +14,7 @@ export const leaveKeys = {
   list: (params: LeaveTypeListParams) => [...leaveKeys.lists(), params] as const,
   detail: (id: number) => [...leaveKeys.all, "detail", id] as const,
   settings: () => [...leaveKeys.all, "settings"] as const,
+  balances: (params: import("../types").LeaveBalanceListParams) => [...leaveKeys.all, "balances", params] as const,
 };
 
 /**
@@ -119,6 +120,64 @@ export const useUpdateLeaveSettings = () => {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: leaveKeys.settings() });
+    },
+  });
+};
+
+/**
+ * List employee leave balances (GET /leave-balances).
+ */
+export const useLeaveBalances = (params: import("../types").LeaveBalanceListParams = {}) => {
+  return useQuery({
+    queryKey: leaveKeys.balances(params),
+    queryFn: async () => {
+      const response = await leaveService.getLeaveBalances(params);
+      return response.data;
+    },
+    placeholderData: keepPreviousData,
+  });
+};
+
+/**
+ * Credit leave balance (POST /employees/{id}/leave-balances/credit).
+ */
+export const useCreditLeaveBalance = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      employeeId,
+      data,
+    }: {
+      employeeId: number;
+      data: import("../types").LeaveCreditDebitRequest;
+    }) => {
+      const response = await leaveService.creditLeaveBalance(employeeId, data);
+      return response.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: leaveKeys.all });
+    },
+  });
+};
+
+/**
+ * Adjust leave balance (POST /employees/{id}/leave-balances/adjust).
+ */
+export const useAdjustLeaveBalance = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      employeeId,
+      data,
+    }: {
+      employeeId: number;
+      data: import("../types").LeaveBalanceAdjustRequest;
+    }) => {
+      const response = await leaveService.adjustLeaveBalance(employeeId, data);
+      return response.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: leaveKeys.all });
     },
   });
 };

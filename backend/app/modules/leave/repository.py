@@ -551,7 +551,7 @@ class HolidayTemplateRepository(BaseRepository[HolidayTemplate]):
     ) -> list[HolidayTemplate]:
         """Return a sorted, paginated list of non-deleted holiday templates."""
         conds = self._search_conditions(org_id)
-        stmt = select(HolidayTemplate).where(and_(*conds))
+        stmt = select(HolidayTemplate).where(and_(*conds)).options(selectinload(HolidayTemplate.items))
         stmt = apply_sorting(
             stmt,
             HolidayTemplate,
@@ -587,10 +587,26 @@ class EmployeeHolidayAssignmentRepository(BaseRepository[EmployeeHolidayAssignme
 
     async def get_by_employee_id(self, employee_id: int) -> EmployeeHolidayAssignment | None:
         """Return the current assignment record for an employee."""
-        stmt = select(EmployeeHolidayAssignment).where(
-            EmployeeHolidayAssignment.employee_id == employee_id
+        stmt = (
+            select(EmployeeHolidayAssignment)
+            .where(EmployeeHolidayAssignment.employee_id == employee_id)
+            .options(
+                selectinload(EmployeeHolidayAssignment.template).selectinload(HolidayTemplate.items)
+            )
         )
         return (await self.session.execute(stmt.limit(1))).scalar_one_or_none()
+
+    async def list_all_assignments(self, org_id: int) -> list[EmployeeHolidayAssignment]:
+        """Return all holiday assignments in the organization, eager-loading template details."""
+        stmt = (
+            select(EmployeeHolidayAssignment)
+            .join(HolidayTemplate, EmployeeHolidayAssignment.template_id == HolidayTemplate.id)
+            .where(HolidayTemplate.org_id == org_id)
+            .options(
+                selectinload(EmployeeHolidayAssignment.template).selectinload(HolidayTemplate.items)
+            )
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
 
     async def upsert_assignment(
         self, employee_id: int, template_id: int, assigned_by: int
@@ -599,7 +615,7 @@ class EmployeeHolidayAssignmentRepository(BaseRepository[EmployeeHolidayAssignme
         existing = await self.get_by_employee_id(employee_id)
         if existing:
             prev_id = existing.template_id
-            return await self.update(
+            await self.update(
                 existing,
                 {
                     "template_id": template_id,
@@ -609,7 +625,7 @@ class EmployeeHolidayAssignmentRepository(BaseRepository[EmployeeHolidayAssignme
                 },
             )
         else:
-            return await self.create(
+            await self.create(
                 {
                     "employee_id": employee_id,
                     "template_id": template_id,
@@ -617,6 +633,7 @@ class EmployeeHolidayAssignmentRepository(BaseRepository[EmployeeHolidayAssignme
                     "assigned_by": assigned_by,
                 }
             )
+        return await self.get_by_employee_id(employee_id)
 
 
 # ===========================================================================

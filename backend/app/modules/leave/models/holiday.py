@@ -67,7 +67,10 @@ class HolidayTemplate(Base):
         ),
     )
 
-    items: Mapped[list["HolidayTemplateItem"]] = relationship(back_populates="template")
+    items: Mapped[list["HolidayTemplateItem"]] = relationship(
+        back_populates="template",
+        primaryjoin="and_(HolidayTemplate.id == HolidayTemplateItem.template_id, HolidayTemplateItem.is_deleted.is_(False))",
+    )
     assignments: Mapped[list["EmployeeHolidayAssignment"]] = relationship(
         back_populates="template",
         foreign_keys="EmployeeHolidayAssignment.template_id",

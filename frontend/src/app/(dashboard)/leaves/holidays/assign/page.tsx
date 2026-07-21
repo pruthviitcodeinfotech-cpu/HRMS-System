@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { isAxiosError } from "axios";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,7 @@ import {
   HolidayAssignTable,
   HolidayAssignDrawer,
   useHolidayTemplates,
+  useHolidayAssignments,
   useAssignHolidayTemplate,
 } from "@/features/holidays";
 
@@ -25,13 +26,16 @@ const getErrorMessage = (err: unknown): string => {
   return "An unexpected error occurred.";
 };
 
-const mapEmployeeToAssignRow = (emp: EmployeeSummary): HolidayAssignEmployee => ({
+const mapEmployeeToAssignRow = (
+  emp: EmployeeSummary,
+  assignmentMap: Record<number, string>
+): HolidayAssignEmployee => ({
   id: String(emp.employee_id),
   employeeId: emp.employee_code || String(emp.employee_id),
   name: emp.employee_name,
   department: emp.department_name || "-",
   designation: emp.designation_name || "-",
-  assignedTemplate: "-",
+  assignedTemplate: assignmentMap[emp.employee_id] || "-",
 });
 
 export default function HolidayAssignPage() {
@@ -56,10 +60,23 @@ export default function HolidayAssignPage() {
     page_size: 100,
   });
 
+  // Fetch all employee holiday assignments
+  const { data: holidayAssignments } = useHolidayAssignments();
+
   const assignTemplateMutation = useAssignHolidayTemplate();
 
-  const employees: HolidayAssignEmployee[] = (employeeData?.items || []).map(
-    mapEmployeeToAssignRow
+  const assignmentMap = useMemo(() => {
+    const map: Record<number, string> = {};
+    (holidayAssignments || []).forEach((assignment) => {
+      if (assignment.employee_id && assignment.template?.name) {
+        map[assignment.employee_id] = assignment.template.name;
+      }
+    });
+    return map;
+  }, [holidayAssignments]);
+
+  const employees: HolidayAssignEmployee[] = (employeeData?.items || []).map((emp) =>
+    mapEmployeeToAssignRow(emp, assignmentMap)
   );
   const totalRecords = employeeData?.pagination.total_records || 0;
 

@@ -11,7 +11,7 @@ interface LeaveBulkAdjustDrawerProps {
   onClose: () => void;
   selectedCount: number;
   leaveOptions?: string[];
-  onSuccess?: () => void;
+  onSuccess?: (leaveType: string, balanceCount: number) => void;
 }
 
 export function LeaveBulkAdjustDrawer({
@@ -62,8 +62,10 @@ export function LeaveBulkAdjustDrawer({
     toast.success(
       `Leave balance adjusted successfully for ${selectedCount || 1} employee(s)!`
     );
-    if (onSuccess) onSuccess();
-    onClose();
+    if (onSuccess) {
+      onSuccess(chooseLeave, Number(balanceCount));
+    }
+    handleClose();
   };
 
   if (!isOpen) return null;

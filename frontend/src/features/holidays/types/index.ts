@@ -80,6 +80,7 @@ export interface EmployeeHolidayAssignmentSchema {
   assigned_at: string;
   assigned_by: number;
   previous_template_id?: number | null;
+  template?: HolidayTemplateSchema | null;
 }
 
 export interface HolidayTemplateAssignRequest {
