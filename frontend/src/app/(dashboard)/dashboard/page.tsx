@@ -27,7 +27,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
-import { INITIAL_APPROVAL_REQUESTS, ApprovalRequest } from "@/features/approvals";
+import { ApprovalRequest } from "@/features/approvals";
 import {
   useDashboardKPIs,
   useAttendanceDays,
@@ -207,17 +207,7 @@ export default function DashboardPage() {
   const [viewDate, setViewDate] = useState<Date>(new Date(2026, 6, 15)); // July 15, 2026
   const calendarRef = useRef<HTMLDivElement>(null);
 
-  // Hydrate pending approval requests from local storage
-  const [localPendingApprovals, setLocalPendingApprovals] = useState<ApprovalRequest[]>(() => {
-    if (typeof window === "undefined") return INITIAL_APPROVAL_REQUESTS.filter((r) => r.status === "pending");
-    try {
-      const raw = localStorage.getItem("hrms_approval_requests");
-      const list: ApprovalRequest[] = raw ? JSON.parse(raw) : INITIAL_APPROVAL_REQUESTS;
-      return list.filter((r) => r.status === "pending");
-    } catch {
-      return INITIAL_APPROVAL_REQUESTS.filter((r) => r.status === "pending");
-    }
-  });
+  const [localPendingApprovals] = useState<ApprovalRequest[]>([]);
 
   // Close calendar popover on click outside
   useEffect(() => {
@@ -325,24 +315,7 @@ export default function DashboardPage() {
           toast.success(`Request #${id} rejected successfully.`);
         }
       } else {
-        const raw = localStorage.getItem("hrms_approval_requests");
-        const list: ApprovalRequest[] = raw ? JSON.parse(raw) : INITIAL_APPROVAL_REQUESTS;
-        const updated = list.map((item) => {
-          if (item.id === id) {
-            return {
-              ...item,
-              status: action === "approve" ? ("approved" as const) : ("rejected" as const),
-              remarks: action === "approve" ? "Approved via dashboard" : "Rejected via dashboard",
-              actionDate: new Date().toISOString(),
-            };
-          }
-          return item;
-        });
-        localStorage.setItem("hrms_approval_requests", JSON.stringify(updated));
-        setLocalPendingApprovals(updated.filter((item) => item.status === "pending"));
-        toast.success(
-          `Request ${action === "approve" ? "approved" : "rejected"} successfully.`
-        );
+        toast.info("Backend approval integration pending for legacy request ID.");
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : `Failed to ${action} request.`;

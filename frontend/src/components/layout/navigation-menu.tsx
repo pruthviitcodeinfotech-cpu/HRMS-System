@@ -32,6 +32,7 @@ export const NavigationMenu = ({ sidebarOpen }: NavigationMenuProps) => {
   const [expandedItems, setExpandedItems] = useState<Record<string, boolean>>({
     Employees: true, // Default open per the user request reference screenshot
     "Leaves & Holidays": true,
+    Reports: true,
   });
 
   const toggleExpand = (label: string) => {
@@ -125,6 +126,16 @@ export const NavigationMenu = ({ sidebarOpen }: NavigationMenuProps) => {
       hasChevron: true,
       isNew: false,
       permission: { feature: "reports", action: "read" },
+      items: [
+        { href: "/reports/attendance-master", label: "Attendance Master" },
+        { href: "/reports/shift-wise", label: "Shift Wise Report" },
+        { href: "/reports/daily-punch", label: "Daily Punch Report" },
+        { href: "/reports/working-hours", label: "Working Hours Report" },
+        { href: "/reports/muster", label: "Muster Report" },
+        { href: "/reports/branch-wise-punch", label: "Branch Wise Punch Report" },
+        { href: "/reports/leave-taken", label: "Leave Taken Report" },
+        { href: "/reports/employee-day-wise-master", label: "Employee Day Wise Master" },
+      ] as const,
     },
     {
       href: "/dynamic-reports",

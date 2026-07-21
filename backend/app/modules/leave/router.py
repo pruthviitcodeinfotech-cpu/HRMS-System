@@ -38,6 +38,8 @@ from app.modules.leave.schemas import (
     HolidayTemplateItemUpdateRequest,
     HolidayTemplateSchema,
     HolidayTemplateUpdateRequest,
+    LeaveAssignRequest,
+    LeaveAssignmentStatusSchema,
     LeaveBalanceAdjustmentSchema,
     LeaveBalanceAdjustRequest,
     LeaveBalanceListResponse,
@@ -399,6 +401,31 @@ async def list_leave_allocations(
     """List an employee's allocation events (read-only; auto-allocation is a background job)."""
     result = await service.list_leave_allocations(org_id, employee_id, cycle_year=cycle_year)
     return _ok(result)
+
+
+@router.post(
+    "/leaves/assign",
+    response_model=SuccessResponse[list[LeaveAssignmentStatusSchema]],
+    summary="Assign Leave Types to Employees",
+    dependencies=[Depends(require_permission(_LEAVE_BALANCE, A.EDIT))],
+)
+async def assign_leave_types(
+    payload: LeaveAssignRequest,
+    service: LeaveServiceDep,
+    current_user: CurrentUserDep,
+    org_id: OrgIdDep,
+) -> dict[str, Any]:
+    """Assign or unassign leave types to one or more employees atomically."""
+    result = await service.assign_leave_types(
+        org_id,
+        employee_ids=payload.employee_ids,
+        leave_type_ids=payload.leave_type_ids,
+        cycle_year=payload.cycle_year,
+        allocated_days=payload.allocated_days,
+        is_assigned=payload.is_assigned,
+        assigned_by=current_user.user_id,
+    )
+    return _ok(result, "Leave types assigned successfully.")
 
 
 # ===========================================================================

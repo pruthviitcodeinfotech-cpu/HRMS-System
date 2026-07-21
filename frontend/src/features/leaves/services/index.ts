@@ -117,4 +117,15 @@ export const leaveService = {
       data
     );
   },
+
+  /** POST /leaves/assign — Assign or unassign leave types to employees */
+  assignLeaveTypes: async (data: {
+    employee_ids: number[];
+    leave_type_ids: number[];
+    cycle_year?: number;
+    allocated_days?: number;
+    is_assigned?: boolean;
+  }): Promise<ApiResponse<Array<{ employee_id: number; leave_type_id: number; is_assigned: boolean; cycle_year: number; allocated_days: number; closing_balance: number }>>> => {
+    return apiClient.post("/leaves/assign", data);
+  },
 };

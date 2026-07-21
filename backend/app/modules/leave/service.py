@@ -7,6 +7,7 @@ All database access is performed strictly via repositories.
 from __future__ import annotations
 
 from datetime import date
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import select
@@ -150,6 +151,15 @@ class LeaveService(BaseService):
                 performed_by_user_id=user_id,
                 performed_by_name=f"User {user_id}",
             )
+            if leave_type.is_active:
+                emp_ids = await self._list_active_employee_ids(org_id)
+                if emp_ids:
+                    await self.assign_leave_types(
+                        org_id=org_id,
+                        employee_ids=emp_ids,
+                        leave_type_ids=[leave_type.id],
+                        assigned_by=user_id,
+                    )
             return leave_type
 
     async def get_leave_type(self, org_id: int, leave_type_id: int) -> LeaveType:
@@ -726,6 +736,129 @@ class LeaveService(BaseService):
             "allocated": allocated,
             "skipped": skipped,
         }
+
+    async def assign_leave_types(
+        self,
+        org_id: int,
+        employee_ids: list[int],
+        leave_type_ids: list[int],
+        *,
+        cycle_year: int | None = None,
+        allocated_days: Decimal | None = None,
+        is_assigned: bool = True,
+        assigned_by: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Assign or unassign leave types to target employees.
+
+        Guarantees that both employee_leave_allocations and employee_leave_balances
+        are created and updated within the exact same database transaction.
+        """
+        if not employee_ids or not leave_type_ids:
+            return []
+
+        config = await self.get_leave_settings(org_id)
+        target_year = cycle_year or self.get_cycle_year(
+            utcnow().date(), config.leave_cycle, config.cycle_start_month
+        )
+
+        results = []
+        async with self.transaction():
+            for emp_id in employee_ids:
+                emp = await self._validate_employee(org_id, emp_id)
+                for lt_id in leave_type_ids:
+                    lt = await self.get_leave_type(org_id, lt_id)
+                    days_to_allocate = (
+                        allocated_days
+                        if allocated_days is not None
+                        else lt.auto_allocation_count
+                    )
+
+                    # 1. Fetch or create employee_leave_balances
+                    balance = await self.balances.get_by_employee_type_year(
+                        emp_id, lt_id, target_year
+                    )
+                    if not balance:
+                        balance = await self.balances.create(
+                            {
+                                "employee_id": emp_id,
+                                "leave_type_id": lt_id,
+                                "cycle_year": target_year,
+                                "opening_balance": 0.00,
+                                "allocated": 0.00,
+                                "used": 0.00,
+                                "carried_forward": 0.00,
+                                "encashed": 0.00,
+                                "adjusted": 0.00,
+                                "closing_balance": 0.00,
+                                "updated_by": assigned_by,
+                            }
+                        )
+
+                    if is_assigned:
+                        new_allocated = days_to_allocate if days_to_allocate > 0 else balance.allocated
+                        if balance.allocated == Decimal("0.00") and days_to_allocate > 0:
+                            new_allocated = days_to_allocate
+
+                        new_closing = (
+                            balance.opening_balance
+                            + new_allocated
+                            + balance.carried_forward
+                            + balance.adjusted
+                            - balance.used
+                            - balance.encashed
+                        )
+
+                        await self.balances.update(
+                            balance,
+                            {
+                                "allocated": new_allocated,
+                                "closing_balance": new_closing,
+                                "updated_by": assigned_by,
+                            },
+                        )
+
+                        # 2. Fetch or create employee_leave_allocations
+                        period = self._cycle_period(utcnow().date(), lt.allocation_frequency)
+                        allocation = await self.allocations.get_for_cycle(
+                            emp_id, lt_id, target_year, cycle_period=period
+                        )
+                        if not allocation:
+                            await self.allocations.create(
+                                {
+                                    "employee_id": emp_id,
+                                    "leave_type_id": lt_id,
+                                    "cycle_year": target_year,
+                                    "cycle_period": period,
+                                    "allocated_days": new_allocated,
+                                    "allocation_date": utcnow().date(),
+                                    "allocation_source": AllocationSource.MANUAL.value,
+                                    "created_by": assigned_by,
+                                }
+                            )
+
+                    results.append(
+                        {
+                            "employee_id": emp_id,
+                            "leave_type_id": lt_id,
+                            "is_assigned": is_assigned,
+                            "cycle_year": target_year,
+                            "allocated_days": balance.allocated if not is_assigned else (days_to_allocate or balance.allocated),
+                            "closing_balance": balance.closing_balance,
+                        }
+                    )
+
+            await self.audit.record(
+                org_id=org_id,
+                module="leave",
+                sub_module="leave_allocation",
+                action_type=ActionType.ASSIGN,
+                title="Assign Leave Types",
+                description=f"Assigned leave types {leave_type_ids} to employees {employee_ids} for cycle {target_year}",
+                performed_by_user_id=assigned_by or 1,
+                performed_by_name=f"User {assigned_by or 1}",
+            )
+
+        return results
 
     # =========================================================================
     # Leave Request Endpoints

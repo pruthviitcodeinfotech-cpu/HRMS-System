@@ -10,6 +10,8 @@ import {
   Check,
   ArrowUpDown,
   Inbox,
+  CheckCheck,
+  XCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -21,31 +23,53 @@ interface ApprovalRequestTableProps {
   onViewDetails?: (request: ApprovalRequest) => void;
   onApprove: (request: ApprovalRequest) => void;
   onReject: (request: ApprovalRequest) => void;
+  // Server-side & Bulk controls
+  totalRecords?: number;
+  currentPage?: number;
+  pageSize?: number;
+  onPageChange?: (page: number) => void;
+  onPageSizeChange?: (size: number) => void;
+  onSortChange?: (field: "type" | "employeeName" | "submittedDate") => void;
+  onBulkApprove?: (selectedIds: string[]) => void;
+  onBulkReject?: (selectedIds: string[]) => void;
 }
 
 export function ApprovalRequestTable({
   requests,
   isLoading = false,
+  onViewDetails,
   onApprove,
   onReject,
+  totalRecords: externalTotalRecords,
+  currentPage: externalCurrentPage,
+  pageSize: externalPageSize,
+  onPageChange,
+  onPageSizeChange,
+  onSortChange,
+  onBulkApprove,
+  onBulkReject,
 }: ApprovalRequestTableProps) {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [expandedRowIds, setExpandedRowIds] = useState<string[]>([]);
-  const [sortField, setSortField] = useState<"type" | "employeeName" | "submittedDate">("submittedDate");
-  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
-  const [currentPage, setCurrentPage] = useState<number>(1);
-  const [pageSize, setPageSize] = useState<number>(10);
+  const [localSortField, setLocalSortField] = useState<"type" | "employeeName" | "submittedDate">("submittedDate");
+  const [localSortOrder, setLocalSortOrder] = useState<"asc" | "desc">("desc");
+  const [localCurrentPage, setLocalCurrentPage] = useState<number>(1);
+  const [localPageSize, setLocalPageSize] = useState<number>(10);
+
+  const currentPage = externalCurrentPage ?? localCurrentPage;
+  const pageSize = externalPageSize ?? localPageSize;
 
   // Sorting
   const sortedRequests = useMemo(() => {
+    if (onSortChange) return requests; // Managed server-side
     return [...requests].sort((a, b) => {
       let valA = "";
       let valB = "";
 
-      if (sortField === "type") {
+      if (localSortField === "type") {
         valA = a.type;
         valB = b.type;
-      } else if (sortField === "employeeName") {
+      } else if (localSortField === "employeeName") {
         valA = a.employeeName;
         valB = b.employeeName;
       } else {
@@ -56,28 +80,33 @@ export function ApprovalRequestTable({
       valA = valA.toLowerCase();
       valB = valB.toLowerCase();
 
-      if (valA < valB) return sortOrder === "asc" ? -1 : 1;
-      if (valA > valB) return sortOrder === "asc" ? 1 : -1;
+      if (valA < valB) return localSortOrder === "asc" ? -1 : 1;
+      if (valA > valB) return localSortOrder === "asc" ? 1 : -1;
       return 0;
     });
-  }, [requests, sortField, sortOrder]);
+  }, [requests, localSortField, localSortOrder, onSortChange]);
 
   const handleSort = (field: "type" | "employeeName" | "submittedDate") => {
-    if (sortField === field) {
-      setSortOrder((prev) => (prev === "asc" ? "desc" : "asc"));
+    if (onSortChange) {
+      onSortChange(field);
     } else {
-      setSortField(field);
-      setSortOrder("asc");
+      if (localSortField === field) {
+        setLocalSortOrder((prev) => (prev === "asc" ? "desc" : "asc"));
+      } else {
+        setLocalSortField(field);
+        setLocalSortOrder("asc");
+      }
     }
   };
 
   // Pagination
-  const totalRecords = sortedRequests.length;
+  const totalRecords = externalTotalRecords ?? sortedRequests.length;
   const totalPages = Math.max(1, Math.ceil(totalRecords / pageSize));
   const startIndex = (currentPage - 1) * pageSize;
   const paginatedRequests = useMemo(() => {
+    if (externalTotalRecords !== undefined) return requests;
     return sortedRequests.slice(startIndex, startIndex + pageSize);
-  }, [sortedRequests, startIndex, pageSize]);
+  }, [requests, sortedRequests, startIndex, pageSize, externalTotalRecords]);
 
   // Checkbox Selection
   const isAllSelected =
@@ -108,8 +137,63 @@ export function ApprovalRequestTable({
     );
   };
 
+  const handlePageChange = (newPage: number) => {
+    if (onPageChange) {
+      onPageChange(newPage);
+    } else {
+      setLocalCurrentPage(newPage);
+    }
+  };
+
+  const handlePageSizeChange = (newSize: number) => {
+    if (onPageSizeChange) {
+      onPageSizeChange(newSize);
+    } else {
+      setLocalPageSize(newSize);
+      setLocalCurrentPage(1);
+    }
+  };
+
   return (
     <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg shadow-2xs overflow-hidden flex flex-col">
+      {/* Bulk Action Header Bar (when items are selected) */}
+      {selectedIds.length > 0 && (
+        <div className="bg-sky-50 dark:bg-sky-950/60 px-4 py-2.5 border-b border-sky-200 dark:border-sky-800/80 flex items-center justify-between transition-all">
+          <div className="text-xs font-semibold text-sky-800 dark:text-sky-200 flex items-center gap-2">
+            <span>{selectedIds.length} request(s) selected</span>
+          </div>
+          <div className="flex items-center gap-2">
+            {onBulkReject && (
+              <Button
+                size="sm"
+                variant="destructive"
+                onClick={() => {
+                  onBulkReject(selectedIds);
+                  setSelectedIds([]);
+                }}
+                className="h-7 px-3 text-xs font-semibold flex items-center gap-1 cursor-pointer"
+              >
+                <XCircle className="h-3.5 w-3.5" />
+                <span>Bulk Reject</span>
+              </Button>
+            )}
+            {onBulkApprove && (
+              <Button
+                size="sm"
+                onClick={() => {
+                  onBulkApprove(selectedIds);
+                  setSelectedIds([]);
+                }}
+                className="h-7 px-3 text-xs font-semibold bg-[#0B85C9] hover:bg-[#0974b0] text-white flex items-center gap-1 cursor-pointer"
+              >
+                <CheckCheck className="h-3.5 w-3.5" />
+                <span>Bulk Approve</span>
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Table Scrollable Container */}
       <div className="w-full overflow-x-auto min-h-[380px]">
         <table className="w-full text-left border-collapse text-xs select-none">
@@ -305,7 +389,10 @@ export function ApprovalRequestTable({
                           <Button
                             variant="outline"
                             size="sm"
-                            onClick={() => toggleRowExpand(req.id)}
+                            onClick={() => {
+                              toggleRowExpand(req.id);
+                              if (onViewDetails) onViewDetails(req);
+                            }}
                             className="h-8 px-3 text-xs font-medium bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50 cursor-pointer flex items-center gap-1 rounded"
                           >
                             <span>{isExpanded ? "View Less" : "View More"}</span>
@@ -413,10 +500,7 @@ export function ApprovalRequestTable({
           {/* Page Size Selector */}
           <select
             value={pageSize}
-            onChange={(e) => {
-              setPageSize(Number(e.target.value));
-              setCurrentPage(1);
-            }}
+            onChange={(e) => handlePageSizeChange(Number(e.target.value))}
             className="h-8 px-2 text-xs bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded cursor-pointer focus:outline-none"
           >
             <option value={10}>10 / Page</option>
@@ -430,7 +514,7 @@ export function ApprovalRequestTable({
               variant="outline"
               size="sm"
               disabled={currentPage <= 1}
-              onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+              onClick={() => handlePageChange(Math.max(1, currentPage - 1))}
               className="h-8 px-3 text-xs bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 cursor-pointer disabled:opacity-50"
             >
               Previous
@@ -441,7 +525,7 @@ export function ApprovalRequestTable({
               return (
                 <button
                   key={pageNum}
-                  onClick={() => setCurrentPage(pageNum)}
+                  onClick={() => handlePageChange(pageNum)}
                   className={`h-8 w-8 text-xs font-medium rounded transition-colors cursor-pointer ${
                     currentPage === pageNum
                       ? "bg-[#0B85C9] text-white"
@@ -457,7 +541,7 @@ export function ApprovalRequestTable({
               variant="outline"
               size="sm"
               disabled={currentPage >= totalPages}
-              onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+              onClick={() => handlePageChange(Math.min(totalPages, currentPage + 1))}
               className="h-8 px-3 text-xs bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 cursor-pointer disabled:opacity-50"
             >
               Next

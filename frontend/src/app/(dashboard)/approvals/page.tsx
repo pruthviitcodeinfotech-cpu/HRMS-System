@@ -3,43 +3,32 @@
 import { useState, useMemo } from "react";
 import { toast } from "sonner";
 import { ProtectedRoute } from "@/features/auth";
+import { useEmployees, EmployeeSummary } from "@/features/employees";
 import {
   ApprovalRequest,
   ApprovalStatus,
-  INITIAL_APPROVAL_REQUESTS,
   ApprovalStatusTabs,
   ApprovalFilters,
   ApprovalRequestTable,
   ApprovalRequestDrawer,
   ApprovalRemarksDialog,
+  useApprovalsList,
+  usePendingApprovalCount,
+  useApproveRequest,
+  useRejectRequest,
+  useBulkApproveRequests,
+  useBulkRejectRequests,
+  mapSchemaToApprovalRequest,
+  BackendRequestType,
 } from "@/features/approvals";
 
-const STORAGE_KEY = "hrms_approval_requests";
-
-const getSavedRequests = (): ApprovalRequest[] => {
-  if (typeof window === "undefined") return INITIAL_APPROVAL_REQUESTS;
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : INITIAL_APPROVAL_REQUESTS;
-  } catch {
-    return INITIAL_APPROVAL_REQUESTS;
-  }
-};
-
-const saveRequests = (data: ApprovalRequest[]) => {
-  if (typeof window === "undefined") return;
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-  } catch (err) {
-    console.error("Failed to save approval requests", err);
-  }
-};
-
 export default function ApprovalsPage() {
-  const [requests, setRequests] = useState<ApprovalRequest[]>(() => getSavedRequests());
+  // Page controls state
   const [activeTab, setActiveTab] = useState<ApprovalStatus>("pending");
   const [typeFilter, setTypeFilter] = useState<string>("Choose One");
   const [searchQuery, setSearchQuery] = useState<string>("");
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [pageSize, setPageSize] = useState<number>(10);
 
   // Drawer state
   const [selectedDrawerRequest, setSelectedDrawerRequest] = useState<ApprovalRequest | null>(null);
@@ -52,44 +41,149 @@ export default function ApprovalsPage() {
   const [remarksAction, setRemarksAction] = useState<"approve" | "reject">("approve");
   const [isRemarksOpen, setIsRemarksOpen] = useState<boolean>(false);
 
-  // Compute status counts dynamically
+  // Fetch employees lookup map from Employee feature
+  const { data: employeesData } = useEmployees({ page: 1, page_size: 200 });
+
+  const employeeMap = useMemo(() => {
+    const map: Record<number, EmployeeSummary> = {};
+    if (employeesData?.items) {
+      employeesData.items.forEach((emp) => {
+        map[emp.employee_id] = emp;
+      });
+    }
+    return map;
+  }, [employeesData]);
+
+  // Convert UI type filter to backend request_type
+  const backendRequestType = useMemo<BackendRequestType | undefined>(() => {
+    if (typeFilter === "Leave" || typeFilter === "Comp Off") return "leave";
+    if (typeFilter === "Attendance" || typeFilter === "Overtime") return "attendance";
+    if (typeFilter === "Short Leave") return "login_reset";
+    return undefined;
+  }, [typeFilter]);
+
+  // Fetch approval list from live backend API for active tab table
+  const {
+    data: approvalsData,
+    isLoading: isApprovalsLoading,
+    refetch,
+  } = useApprovalsList({
+    status: activeTab,
+    request_type: backendRequestType,
+    page: currentPage,
+    page_size: pageSize,
+  });
+
+  // Fetch count totals for all 3 tabs so badges always show accurate backend totals
+  const { data: pendingApprovalsCountData } = useApprovalsList({
+    status: "pending",
+    request_type: backendRequestType,
+    page: 1,
+    page_size: 1,
+  });
+
+  const { data: approvedApprovalsCountData } = useApprovalsList({
+    status: "approved",
+    request_type: backendRequestType,
+    page: 1,
+    page_size: 1,
+  });
+
+  const { data: rejectedApprovalsCountData } = useApprovalsList({
+    status: "rejected",
+    request_type: backendRequestType,
+    page: 1,
+    page_size: 1,
+  });
+
+  // Fetch pending count summary from live backend API
+  const { data: pendingCountData } = usePendingApprovalCount();
+
+  // React Query Mutations with automatic cache invalidation
+  const approveMutation = useApproveRequest();
+  const rejectMutation = useRejectRequest();
+  const bulkApproveMutation = useBulkApproveRequests();
+  const bulkRejectMutation = useBulkRejectRequests();
+
+  // Dynamic counts for tab header badges
   const counts = useMemo(() => {
+    const pCount =
+      activeTab === "pending"
+        ? (approvalsData?.pagination.total_records ?? pendingApprovalsCountData?.pagination.total_records ?? pendingCountData?.pending_count ?? 0)
+        : (pendingApprovalsCountData?.pagination.total_records ?? pendingCountData?.pending_count ?? 0);
+
+    const aCount =
+      activeTab === "approved"
+        ? (approvalsData?.pagination.total_records ?? approvedApprovalsCountData?.pagination.total_records ?? 0)
+        : (approvedApprovalsCountData?.pagination.total_records ?? 0);
+
+    const rCount =
+      activeTab === "rejected"
+        ? (approvalsData?.pagination.total_records ?? rejectedApprovalsCountData?.pagination.total_records ?? 0)
+        : (rejectedApprovalsCountData?.pagination.total_records ?? 0);
+
     return {
-      pending: requests.filter((r) => r.status === "pending").length,
-      approved: requests.filter((r) => r.status === "approved").length,
-      rejected: requests.filter((r) => r.status === "rejected").length,
+      pending: pCount,
+      approved: aCount,
+      rejected: rCount,
     };
-  }, [requests]);
+  }, [
+    activeTab,
+    approvalsData,
+    pendingCountData,
+    pendingApprovalsCountData,
+    approvedApprovalsCountData,
+    rejectedApprovalsCountData,
+  ]);
 
-  // Filter requests based on active tab, type filter, and search query
+  // Map backend items to UI ApprovalRequest format
+  const mappedRequests = useMemo(() => {
+    if (!approvalsData?.items) return [];
+    return approvalsData.items.map((schema) =>
+      mapSchemaToApprovalRequest(schema, employeeMap)
+    );
+  }, [approvalsData, employeeMap]);
+
+  // Client-side search and type filtering over server response
   const filteredRequests = useMemo(() => {
-    return requests.filter((req) => {
-      if (req.status !== activeTab) return false;
+    let list = mappedRequests;
 
-      if (typeFilter !== "Choose One" && req.type !== typeFilter) {
-        return false;
-      }
+    if (typeFilter && typeFilter !== "Choose One") {
+      list = list.filter((req) => {
+        return (
+          req.type.toLowerCase() === typeFilter.toLowerCase() ||
+          req.subtype.toLowerCase().includes(typeFilter.toLowerCase())
+        );
+      });
+    }
 
-      if (searchQuery.trim() !== "") {
-        const query = searchQuery.toLowerCase().trim();
-        const empNameMatch = req.employeeName.toLowerCase().includes(query);
-        const empCodeMatch = req.employeeCode.toLowerCase().includes(query);
-        const typeMatch = req.type.toLowerCase().includes(query);
-        if (!empNameMatch && !empCodeMatch && !typeMatch) return false;
-      }
-
-      return true;
+    if (!searchQuery.trim()) return list;
+    const q = searchQuery.toLowerCase().trim();
+    return list.filter((req) => {
+      return (
+        req.employeeName.toLowerCase().includes(q) ||
+        req.employeeCode.toLowerCase().includes(q) ||
+        req.type.toLowerCase().includes(q) ||
+        req.subtype.toLowerCase().includes(q)
+      );
     });
-  }, [requests, activeTab, typeFilter, searchQuery]);
+  }, [mappedRequests, typeFilter, searchQuery]);
 
   const handleFilterChange = (type: string, query: string) => {
     setTypeFilter(type);
     setSearchQuery(query);
+    setCurrentPage(1);
   };
 
   const handleClearFilters = () => {
     setTypeFilter("Choose One");
     setSearchQuery("");
+    setCurrentPage(1);
+  };
+
+  const handleTabChange = (tab: ApprovalStatus) => {
+    setActiveTab(tab);
+    setCurrentPage(1);
   };
 
   // Open View Details Drawer
@@ -112,46 +206,99 @@ export default function ApprovalsPage() {
     setIsRemarksOpen(true);
   };
 
-  // Execute Approval or Rejection
-  const handleSubmitRemarks = (remarks: string) => {
+  // Single Approve / Reject API submission
+  const handleSubmitRemarks = async (remarks: string) => {
     if (!selectedRemarksRequest) return;
 
+    const numericId = selectedRemarksRequest.numericId;
     const isApprove = remarksAction === "approve";
-    const now = new Date();
-    const formattedDate = `${now.toLocaleDateString("en-GB")} ${now.toLocaleTimeString([], {
-      hour: "2-digit",
-      minute: "2-digit",
-    })}`;
 
-    const updatedRequests = requests.map((req) => {
-      if (req.id === selectedRemarksRequest.id) {
-        return {
-          ...req,
-          status: (isApprove ? "approved" : "rejected") as ApprovalStatus,
-          approvedBy: isApprove ? "Balkrushn koladiya" : undefined,
-          rejectedBy: !isApprove ? "Balkrushn koladiya" : undefined,
-          actionDate: formattedDate,
-          remarks: remarks || (isApprove ? "Approved" : "Rejected"),
-        };
+    try {
+      if (isApprove) {
+        await approveMutation.mutateAsync({
+          id: numericId,
+          payload: { remarks: remarks || undefined },
+        });
+        toast.success(
+          `Request for ${selectedRemarksRequest.employeeName} approved successfully.`
+        );
+      } else {
+        await rejectMutation.mutateAsync({
+          id: numericId,
+          payload: { reject_remarks: remarks || "Rejected by administrator." },
+        });
+        toast.success(
+          `Request for ${selectedRemarksRequest.employeeName} rejected successfully.`
+        );
       }
-      return req;
-    });
-
-    setRequests(updatedRequests);
-    saveRequests(updatedRequests);
-
-    if (isApprove) {
-      toast.success(
-        `Approval Request for ${selectedRemarksRequest.employeeName} (${selectedRemarksRequest.type}) approved successfully.`
-      );
-    } else {
-      toast.error(
-        `Approval Request for ${selectedRemarksRequest.employeeName} (${selectedRemarksRequest.type}) has been rejected.`
-      );
+      refetch();
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : "Action failed";
+      toast.error(msg);
     }
 
     setIsRemarksOpen(false);
     setSelectedRemarksRequest(null);
+  };
+
+  // Bulk Approve API mutation handler
+  const handleBulkApprove = async (selectedIds: string[]) => {
+    const numericIds = selectedIds
+      .map((id) => parseInt(id, 10))
+      .filter((id) => !isNaN(id));
+
+    if (numericIds.length === 0) return;
+
+    try {
+      const res = await bulkApproveMutation.mutateAsync({
+        approval_ids: numericIds,
+        remarks: "Approved via bulk action",
+      });
+
+      const successCount = res.results.filter((r) => r.success).length;
+      const failCount = res.results.filter((r) => !r.success).length;
+
+      if (successCount > 0) {
+        toast.success(`Successfully approved ${successCount} request(s).`);
+      }
+      if (failCount > 0) {
+        toast.error(`Failed to approve ${failCount} request(s).`);
+      }
+      refetch();
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : "Bulk approve failed";
+      toast.error(msg);
+    }
+  };
+
+  // Bulk Reject API mutation handler
+  const handleBulkReject = async (selectedIds: string[]) => {
+    const numericIds = selectedIds
+      .map((id) => parseInt(id, 10))
+      .filter((id) => !isNaN(id));
+
+    if (numericIds.length === 0) return;
+
+    try {
+      const res = await bulkRejectMutation.mutateAsync({
+        approval_ids: numericIds,
+        reject_remarks: "Rejected via bulk action",
+      });
+
+      const successCount = res.results.filter((r) => r.success).length;
+      const failCount = res.results.filter((r) => !r.success).length;
+
+      if (successCount > 0) {
+        toast.success(`Successfully rejected ${successCount} request(s).`);
+      }
+      if (failCount > 0) {
+        toast.error(`Failed to reject ${failCount} request(s).`);
+      }
+      refetch();
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : "Bulk reject failed";
+      toast.error(msg);
+    }
   };
 
   return (
@@ -172,7 +319,7 @@ export default function ApprovalsPage() {
           <ApprovalStatusTabs
             activeTab={activeTab}
             counts={counts}
-            onTabChange={setActiveTab}
+            onTabChange={handleTabChange}
           />
 
           {/* Filters Bar */}
@@ -186,13 +333,21 @@ export default function ApprovalsPage() {
           {/* Requests Table */}
           <ApprovalRequestTable
             requests={filteredRequests}
+            isLoading={isApprovalsLoading}
             onViewDetails={handleViewDetails}
             onApprove={handleOpenApprove}
             onReject={handleOpenReject}
+            totalRecords={approvalsData?.pagination.total_records}
+            currentPage={currentPage}
+            pageSize={pageSize}
+            onPageChange={setCurrentPage}
+            onPageSizeChange={setPageSize}
+            onBulkApprove={handleBulkApprove}
+            onBulkReject={handleBulkReject}
           />
         </div>
 
-        {/* Drawer for View Details */}
+        {/* Drawer for View Details & Workflow Timeline */}
         <ApprovalRequestDrawer
           isOpen={isDrawerOpen}
           onClose={() => setIsDrawerOpen(false)}

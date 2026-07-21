@@ -417,3 +417,30 @@ class EmployeeHolidayCalendarSchema(BaseSchema):
     end_date: date = Field(..., description="End date.")
     day_of_week: str | None = Field(default=None, description="Day of the week.")
     duration_days: int = Field(..., description="Duration in days.")
+
+
+# ===========================================================================
+# 8. Leave Assignment Schemas
+# ===========================================================================
+
+
+class LeaveAssignRequest(BaseSchema):
+    """Request schema for assigning one or more leave types to employee(s)."""
+
+    employee_ids: list[int] = Field(..., min_length=1, description="List of target employee IDs.")
+    leave_type_ids: list[int] = Field(..., min_length=1, description="List of target leave type IDs.")
+    cycle_year: int | None = Field(default=None, description="Target cycle year (default current).")
+    allocated_days: Decimal | None = Field(default=None, ge=0, description="Optional override allocation days.")
+    is_assigned: bool = Field(default=True, description="Assignment status (true to assign, false to unassign).")
+
+
+class LeaveAssignmentStatusSchema(BaseSchema):
+    """Response schema representing employee leave assignment status."""
+
+    employee_id: int = Field(..., description="Employee ID.")
+    leave_type_id: int = Field(..., description="Leave type ID.")
+    is_assigned: bool = Field(..., description="Assignment status.")
+    cycle_year: int = Field(..., description="Cycle year.")
+    allocated_days: Decimal = Field(..., description="Allocated days.")
+    closing_balance: Decimal = Field(..., description="Closing balance.")
+
