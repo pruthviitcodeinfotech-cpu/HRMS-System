@@ -23,7 +23,13 @@ and take it — the reports export runs the work in-process rather than losing i
 
 from __future__ import annotations
 
-from enum import StrEnum
+try:
+    from enum import StrEnum
+except ImportError:
+    from enum import Enum
+
+    class StrEnum(str, Enum):
+        pass
 from typing import Any
 
 from arq import create_pool

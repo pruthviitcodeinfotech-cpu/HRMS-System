@@ -70,7 +70,9 @@ class AttendanceLiveQuery(BaseSchema):
 class AttendanceDailyQuery(PaginationRequest):
     """Query parameters for ``GET /attendance/daily`` (daily grid)."""
 
-    date: DateType = Field(..., description="Target calendar date.")
+    date: DateType | None = Field(default=None, description="Target calendar date.")
+    date_from: DateType | None = Field(default=None, description="Start date of range.")
+    date_to: DateType | None = Field(default=None, description="End date of range.")
     branch_id: int | None = Field(default=None, description="Filter employees by branch.")
     department_id: int | None = Field(default=None, description="Filter employees by department.")
 
@@ -230,6 +232,8 @@ from typing import Any
 class AttendanceDailySchema(BaseSchema):
     """Daily attendance summary representation (contract §11 / daily grid)."""
 
+    id: int | None = Field(default=None, description="Primary key of attendance day.")
+    attendance_date: date | None = Field(default=None, description="Calendar date of attendance.")
     employee_id: int = Field(..., description="ID of the employee.")
     status: AttendanceDayStatus = Field(..., description="Operational status for the day.")
     first_in: datetime | None = Field(
@@ -578,6 +582,30 @@ class AttendanceLockSchema(BaseSchema):
     updated_at: datetime
 
 
+class AttendanceGenerateRequest(BaseSchema):
+    """Request DTO for POST /attendance/generate."""
+
+    date_from: DateType = Field(description="Start date of generation range.")
+    date_to: DateType = Field(description="End date of generation range.")
+    branch_id: int | None = Field(default=None, description="Optional branch scope filter.")
+    department_id: int | None = Field(default=None, description="Optional department scope filter.")
+    employee_ids: list[int] = Field(default_factory=list, description="Optional list of employee IDs.")
+
+    @model_validator(mode="after")
+    def validate_date_range(self) -> AttendanceGenerateRequest:
+        if self.date_to < self.date_from:
+            raise ValueError("date_to must be greater than or equal to date_from")
+        return self
+
+
+class AttendanceGenerateResponse(BaseSchema):
+    """Response DTO for POST /attendance/generate."""
+
+    success: bool = True
+    message: str = "Attendance generation completed successfully."
+    records_generated: int = Field(description="Total number of attendance_days rows created.")
+
+
 __all__ = [
     # requests/queries
     "AttendanceLiveQuery",
@@ -591,6 +619,7 @@ __all__ = [
     "AttendanceLockRequest",
     "AttendanceUnlockRequest",
     "AttendanceRecomputeRequest",
+    "AttendanceGenerateRequest",
     # responses/DTOs
     "AttendanceLiveMessageSchema",
     "AttendanceDailySchema",
@@ -601,6 +630,7 @@ __all__ = [
     "AttendanceCorrectionSchema",
     "AttendanceMissingPunchSchema",
     "AttendanceLockSchema",
+    "AttendanceGenerateResponse",
     # paginated envelopes
     "AttendanceDailyListResponse",
     "AttendanceLogsResponse",

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
 import {
@@ -9,100 +9,150 @@ import {
   AttendancePagination,
   SortField,
   SortOrder,
+  AttendanceStatus,
 } from "../types/attendance";
 import { AttendanceFilterBar } from "./attendance-filter";
 import { AttendanceTable } from "./attendance-table";
 import { AttendancePaginationFooter } from "./attendance-pagination";
 import { AttendanceEmptyState } from "./attendance-empty";
 import { AttendanceLoadingSkeleton } from "./attendance-loading";
+import { useAttendanceDays } from "../hooks/use-attendance";
+import { AttendanceDailyQueryParams } from "../services/attendance";
 
-// Helper to convert DD-MM-YYYY to YYYY-MM-DD ISO for date comparisons
-const toIsoDate = (dateStr: string): string => {
-  const parts = dateStr.split("-");
-  if (parts.length === 3) {
-    const [day, month, year] = parts;
-    return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+const formatPunchTime = (isoString?: string | null): string => {
+  if (!isoString) return "-";
+  try {
+    const d = new Date(isoString);
+    if (isNaN(d.getTime())) return isoString;
+    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: true });
+  } catch {
+    return "-";
   }
-  return dateStr;
 };
 
-// Base Master Employee List (All 10 employees from Petpooja reference)
-const EMPLOYEES = [
-  { id: "57", name: "Tulsi baladhiya", dept: "Marketing", desig: "Graphic Designer", punchIn: "09:15 AM", punchOut: "06:32 PM", hrs: "9h 17m", status: "FD" as const },
-  { id: "56", name: "Hetal Gohil", dept: "Marketing", desig: "marketing", punchIn: "08:53 AM", punchOut: "06:49 PM", hrs: "9h 55m", status: "FD" as const },
-  { id: "55", name: "Mansi Baghre", dept: "Developer", desig: "Python", punchIn: "09:08 AM", punchOut: "06:34 PM", hrs: "9h 25m", status: "FD" as const },
-  { id: "54", name: "Divyesh Pipaliya", dept: "Marketing", desig: "marketing", punchIn: "10:35 AM", punchOut: "-", hrs: "-", status: "Absent" as const, anomaly: true },
-  { id: "53", name: "Pratik raval", dept: "Marketing", desig: "marketing", punchIn: "09:36 AM", punchOut: "05:41 PM", hrs: "8h 5m", status: "FD" as const },
-  { id: "52", name: "Krishna Chodvadiya", dept: "BDM", desig: "BDM", punchIn: "-", punchOut: "-", hrs: "-", status: "Absent" as const },
-  { id: "51", name: "Kunal Kikani", dept: "video editing", desig: "video editing", punchIn: "09:28 AM", punchOut: "06:32 PM", hrs: "9h 4m", status: "FD" as const },
-  { id: "50", name: "Vivek Rathod", dept: "Graphic Designer", desig: "Graphic Designer", punchIn: "09:27 AM", punchOut: "06:39 PM", hrs: "9h 12m", status: "FD" as const },
-  { id: "49", name: "Rahi Patel", dept: "video editing", desig: "video editing", punchIn: "-", punchOut: "-", hrs: "-", status: "Absent" as const },
-  { id: "48", name: "Jay Surani", dept: "Marketing", desig: "marketing", punchIn: "09:15 AM", punchOut: "06:46 PM", hrs: "9h 31m", status: "FD" as const },
-];
-
-const DATES_CONFIG = [
-  { date: "01-07-2026", day: "Wednesday" },
-  { date: "02-07-2026", day: "Thursday" },
-  { date: "03-07-2026", day: "Friday" },
-  { date: "04-07-2026", day: "Saturday" },
-  { date: "05-07-2026", day: "Sunday" },
-  { date: "06-07-2026", day: "Monday" },
-  { date: "07-07-2026", day: "Tuesday" },
-  { date: "08-07-2026", day: "Wednesday" },
-  { date: "09-07-2026", day: "Thursday" },
-  { date: "10-07-2026", day: "Friday" },
-  { date: "11-07-2026", day: "Saturday" },
-  { date: "12-07-2026", day: "Sunday" },
-  { date: "13-07-2026", day: "Monday" },
-  { date: "14-07-2026", day: "Tuesday" },
-  { date: "15-07-2026", day: "Wednesday" },
-  { date: "16-07-2026", day: "Thursday" },
-  { date: "17-07-2026", day: "Friday" },
-  { date: "18-07-2026", day: "Saturday" },
-  { date: "19-07-2026", day: "Sunday" },
-  { date: "20-07-2026", day: "Monday" },
-  { date: "21-07-2026", day: "Tuesday" },
-];
-
-// Generate full records so all 10 employees have complete records for every single date in the range
-const generateFullAttendanceRecords = (): AttendanceRecord[] => {
-  const records: AttendanceRecord[] = [];
-  let recordIdCounter = 1;
-
-  DATES_CONFIG.forEach(({ date, day }) => {
-    EMPLOYEES.forEach((emp) => {
-      const isSunday = day === "Sunday";
-      records.push({
-        id: String(recordIdCounter++),
-        employeeId: emp.id,
-        employeeName: emp.name,
-        department: emp.dept,
-        designation: emp.desig,
-        date,
-        day,
-        firstPunch: isSunday ? "-" : emp.punchIn,
-        lastPunch: isSunday ? "-" : emp.punchOut,
-        totalWorkingHours: isSunday ? "-" : emp.hrs,
-        totalBreakHours: "-",
-        status: isSunday ? "Weekly Off" : emp.status,
-        hasAnomaly: isSunday ? false : emp.anomaly,
-      });
-    });
-  });
-
-  return records;
+const mapBackendStatus = (status?: string): AttendanceStatus => {
+  switch (status) {
+    case "present":
+      return "FD";
+    case "absent":
+      return "Absent";
+    case "half_day":
+      return "Half Day";
+    case "week_off":
+      return "Weekly Off";
+    case "holiday":
+      return "Holiday";
+    case "on_leave":
+      return "Leave";
+    default:
+      return status ? (status as AttendanceStatus) : "Absent";
+  }
 };
-
-const ALL_MASTER_RECORDS = generateFullAttendanceRecords();
 
 export const AttendanceMasterView: React.FC = () => {
-  // Local state for UI only
-  const [isLoading] = useState<boolean>(false);
-  const [records, setRecords] = useState<AttendanceRecord[]>(ALL_MASTER_RECORDS);
-  const [sortField, setSortField] = useState<SortField>("employeeId");
-  const [sortOrder, setSortOrder] = useState<SortOrder>("desc");
+  const todayStr = useMemo(() => new Date().toISOString().slice(0, 10), []);
+
+  const [filter, setFilter] = useState<AttendanceFilter>({
+    fromDate: todayStr,
+    toDate: todayStr,
+    branchId: "",
+  });
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [pageSize, setPageSize] = useState<number>(10);
+  const [sortField, setSortField] = useState<SortField>("employeeId");
+  const [sortOrder, setSortOrder] = useState<SortOrder>("desc");
+
+  // Construct query parameters for server-side pagination, searching & filtering
+  const queryParams: AttendanceDailyQueryParams = useMemo(() => {
+    const params: AttendanceDailyQueryParams = {
+      branch_id: filter.branchId ? Number(filter.branchId) : undefined,
+      page: currentPage,
+      page_size: pageSize,
+    };
+
+    if (filter.fromDate && filter.toDate) {
+      if (filter.fromDate === filter.toDate) {
+        params.date = filter.fromDate;
+      } else {
+        params.date_from = filter.fromDate;
+        params.date_to = filter.toDate;
+      }
+    } else if (filter.fromDate) {
+      params.date = filter.fromDate;
+    } else {
+      params.date = todayStr;
+    }
+
+    return params;
+  }, [filter.fromDate, filter.toDate, filter.branchId, currentPage, pageSize, todayStr]);
+
+  // Live backend API integration with React Query hook
+  const { data, isLoading, isError, error } = useAttendanceDays(queryParams);
+
+  useEffect(() => {
+    if (isError && error) {
+      toast.error(error instanceof Error ? error.message : "Failed to load attendance records");
+    }
+  }, [isError, error]);
+
+  // Map live backend items to UI attendance records
+  const rawRecords: AttendanceRecord[] = useMemo(() => {
+    if (!data?.items) return [];
+    return data.items.map((item) => {
+      const dateVal = item.attendance_date || queryParams.date || todayStr;
+      const dayName = new Date(dateVal).toLocaleDateString("en-US", { weekday: "long" });
+
+      let workingHrsStr = "-";
+      if (item.working_hours !== undefined && item.working_hours !== null) {
+        workingHrsStr = `${item.working_hours}h`;
+      } else if (item.worked_minutes) {
+        const hrs = Math.floor(item.worked_minutes / 60);
+        const mins = item.worked_minutes % 60;
+        workingHrsStr = `${hrs}h ${mins}m`;
+      }
+
+      return {
+        id: item.id ? String(item.id) : `${item.employee_id}-${dateVal}`,
+        employeeId: item.employee_code || String(item.employee_id),
+        employeeName: item.employee_name || `Employee ${item.employee_id}`,
+        department: item.department_name || "-",
+        designation: item.designation || "-",
+        date: dateVal,
+        day: dayName,
+        firstPunch: formatPunchTime(item.first_punch || item.first_in),
+        lastPunch: formatPunchTime(item.last_punch || item.last_out),
+        totalWorkingHours: workingHrsStr,
+        totalBreakHours:
+          item.break_hours !== undefined && item.break_hours !== null
+            ? `${item.break_hours}h`
+            : "-",
+        status: mapBackendStatus(item.status),
+        hasAnomaly: item.late_minutes > 0 || item.status === "absent",
+      };
+    });
+  }, [data, queryParams.date, todayStr]);
+
+  // Apply sorting locally on current page records
+  const records = useMemo(() => {
+    if (!rawRecords || rawRecords.length === 0) return [];
+    return [...rawRecords].sort((a, b) => {
+      let valA = a[sortField] ?? "";
+      let valB = b[sortField] ?? "";
+
+      if (sortField === "employeeId") {
+        const numA = Number(String(valA).replace(/\D/g, "")) || 0;
+        const numB = Number(String(valB).replace(/\D/g, "")) || 0;
+        return sortOrder === "asc" ? numA - numB : numB - numA;
+      }
+
+      if (typeof valA === "string") valA = valA.toLowerCase();
+      if (typeof valB === "string") valB = valB.toLowerCase();
+
+      if (valA < valB) return sortOrder === "asc" ? -1 : 1;
+      if (valA > valB) return sortOrder === "asc" ? 1 : -1;
+      return 0;
+    });
+  }, [rawRecords, sortField, sortOrder]);
 
   // Sorting Handler
   const handleSort = (field: SortField) => {
@@ -112,57 +162,21 @@ export const AttendanceMasterView: React.FC = () => {
     }
     setSortField(field);
     setSortOrder(newOrder);
-
-    const sorted = [...records].sort((a, b) => {
-      const valA = a[field] || "";
-      const valB = b[field] || "";
-
-      if (field === "employeeId") {
-        return newOrder === "asc"
-          ? Number(valA) - Number(valB)
-          : Number(valB) - Number(valA);
-      }
-
-      if (field === "date") {
-        const isoA = toIsoDate(valA);
-        const isoB = toIsoDate(valB);
-        return newOrder === "asc"
-          ? isoA.localeCompare(isoB)
-          : isoB.localeCompare(isoA);
-      }
-
-      if (valA < valB) return newOrder === "asc" ? -1 : 1;
-      if (valA > valB) return newOrder === "asc" ? 1 : -1;
-      return 0;
-    });
-
-    setRecords(sorted);
   };
 
-  // Date Range & Branch Filter Search Handler
-  const handleSearch = (filter: AttendanceFilter) => {
-    const filtered = ALL_MASTER_RECORDS.filter((record) => {
-      const recordIsoDate = toIsoDate(record.date);
-
-      // Check From Date filter
-      if (filter.fromDate && recordIsoDate < filter.fromDate) {
-        return false;
-      }
-
-      // Check To Date filter
-      if (filter.toDate && recordIsoDate > filter.toDate) {
-        return false;
-      }
-
-      return true;
-    });
-
-    setRecords(filtered);
+  // Search Filter Handler
+  const handleSearch = (newFilter: AttendanceFilter) => {
+    setFilter(newFilter);
     setCurrentPage(1);
   };
 
+  // Filter Reset Handler
   const handleResetFilters = () => {
-    setRecords(ALL_MASTER_RECORDS);
+    setFilter({
+      fromDate: todayStr,
+      toDate: todayStr,
+      branchId: "",
+    });
     setCurrentPage(1);
   };
 
@@ -191,12 +205,12 @@ export const AttendanceMasterView: React.FC = () => {
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, "Attendance Master");
 
-    const fileName = `Attendance_Master_${new Date().toISOString().slice(0, 10)}.xlsx`;
+    const fileName = `Attendance_Master_${queryParams.date}.xlsx`;
     XLSX.writeFile(workbook, fileName);
     toast.success("Attendance Master exported to Excel successfully!");
   };
 
-  // Export PDF Functionality (Printable window / PDF Download)
+  // Export PDF Functionality
   const handleExportPdf = () => {
     if (records.length === 0) {
       toast.error("No attendance records to export.");
@@ -248,7 +262,7 @@ export const AttendanceMasterView: React.FC = () => {
         </head>
         <body>
           <h1>Attendance Master Report</h1>
-          <p class="meta">Generated on ${new Date().toLocaleString()} | Total Records: ${records.length}</p>
+          <p class="meta">Date: ${queryParams.date} | Total Records: ${data?.pagination?.total_records || records.length}</p>
           <table>
             <thead>
               <tr>
@@ -283,20 +297,18 @@ export const AttendanceMasterView: React.FC = () => {
     toast.success("Attendance Master PDF print preview opened!");
   };
 
-  // Dynamic pagination calculation based on filtered records
-  const totalRecords = records.length;
-  const totalPages = Math.max(1, Math.ceil(totalRecords / pageSize));
-  const paginatedRecords = records.slice(
-    (currentPage - 1) * pageSize,
-    currentPage * pageSize
-  );
-
-  const paginationInfo: AttendancePagination = {
-    currentPage,
-    pageSize,
-    totalRecords,
-    totalPages,
-  };
+  // Build reactive pagination state for UI controls
+  const paginationInfo: AttendancePagination = useMemo(() => {
+    const totalRecords = data?.pagination?.total_records ?? 0;
+    const totalPages =
+      data?.pagination?.total_pages ?? (totalRecords > 0 ? Math.ceil(totalRecords / pageSize) : 1);
+    return {
+      currentPage,
+      pageSize,
+      totalRecords,
+      totalPages: Math.max(1, totalPages),
+    };
+  }, [currentPage, pageSize, data?.pagination?.total_records, data?.pagination?.total_pages]);
 
   return (
     <div className="p-6 space-y-6">
@@ -323,7 +335,7 @@ export const AttendanceMasterView: React.FC = () => {
       ) : (
         <div className="space-y-0">
           <AttendanceTable
-            records={paginatedRecords}
+            records={records}
             sortField={sortField}
             sortOrder={sortOrder}
             onSort={handleSort}

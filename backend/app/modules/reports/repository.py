@@ -2143,7 +2143,7 @@ class ReportsRepository(BaseRepository[Employee]):
                 "status_label": "synced"
                 if row[2]
                 and (
-                    datetime.datetime.now(datetime.UTC) - row[2].replace(tzinfo=datetime.UTC)
+                    datetime.datetime.now(datetime.timezone.utc) - row[2].replace(tzinfo=datetime.timezone.utc)
                 ).total_seconds()
                 < 3600
                 else "delayed",

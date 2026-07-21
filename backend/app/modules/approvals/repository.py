@@ -10,7 +10,7 @@ Operates entirely on existing database models and inherits from BaseRepository.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, time
+from datetime import datetime, time, timezone
 from datetime import date as dt_date
 from typing import Any
 
@@ -74,11 +74,11 @@ class ApprovalRequestRepository(BaseRepository[ApprovalRequest]):
             conds.append(ApprovalRequest.employee_id == employee_id)
 
         if date_from is not None:
-            dt_min = datetime.combine(date_from, time.min).replace(tzinfo=UTC)
+            dt_min = datetime.combine(date_from, time.min).replace(tzinfo=timezone.utc)
             conds.append(ApprovalRequest.requested_at >= dt_min)
 
         if date_to is not None:
-            dt_max = datetime.combine(date_to, time.max).replace(tzinfo=UTC)
+            dt_max = datetime.combine(date_to, time.max).replace(tzinfo=timezone.utc)
             conds.append(ApprovalRequest.requested_at <= dt_max)
 
         return conds

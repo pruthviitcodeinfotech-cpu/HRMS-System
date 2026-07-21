@@ -135,33 +135,53 @@ class AttendanceDayRepository(BaseRepository[AttendanceDay]):
             from sqlalchemy.orm import joinedload
             from app.modules.shift.models.assignment import ShiftAssignment
             from app.modules.shift.models.shift import Shift
-            
-            stmt = select(Employee, AttendanceDay, Shift.shift_id, Shift.shift_name).outerjoin(
-                AttendanceDay,
-                and_(
-                    AttendanceDay.employee_id == Employee.employee_id,
-                    AttendanceDay.attendance_date == date,
-                    AttendanceDay.org_id == org_id,
+
+            # Subquery to resolve latest shift assignment per employee on or before date
+            latest_assignment_subq = (
+                select(
+                    ShiftAssignment.employee_id,
+                    func.max(ShiftAssignment.assignment_id).label("max_id"),
                 )
-            ).outerjoin(
-                ShiftAssignment,
-                and_(
-                    ShiftAssignment.employee_id == Employee.employee_id,
+                .where(
                     ShiftAssignment.org_id == org_id,
                     ShiftAssignment.effective_from <= date,
                 )
-            ).outerjoin(
-                Shift,
-                and_(
-                    Shift.shift_id == ShiftAssignment.shift_id,
-                    Shift.org_id == org_id,
-                )
-            ).where(
-                Employee.org_id == org_id,
-                Employee.is_deleted.is_(False),
-                Employee.employment_status == "active",
+                .group_by(ShiftAssignment.employee_id)
+                .subquery()
             )
-            
+
+            stmt = (
+                select(Employee, AttendanceDay, Shift.shift_id, Shift.shift_name)
+                .outerjoin(
+                    AttendanceDay,
+                    and_(
+                        AttendanceDay.employee_id == Employee.employee_id,
+                        AttendanceDay.attendance_date == date,
+                        AttendanceDay.org_id == org_id,
+                    ),
+                )
+                .outerjoin(
+                    latest_assignment_subq,
+                    latest_assignment_subq.c.employee_id == Employee.employee_id,
+                )
+                .outerjoin(
+                    ShiftAssignment,
+                    ShiftAssignment.assignment_id == latest_assignment_subq.c.max_id,
+                )
+                .outerjoin(
+                    Shift,
+                    and_(
+                        Shift.shift_id == ShiftAssignment.shift_id,
+                        Shift.org_id == org_id,
+                    ),
+                )
+                .where(
+                    Employee.org_id == org_id,
+                    Employee.is_deleted.is_(False),
+                    Employee.employment_status == "active",
+                )
+            )
+
             if employee_id is not None:
                 stmt = stmt.where(Employee.employee_id == employee_id)
             if shift_id is not None:
@@ -177,16 +197,16 @@ class AttendanceDayRepository(BaseRepository[AttendanceDay]):
                 joinedload(Employee.department),
                 joinedload(Employee.designation),
             )
-            
+
             # Paginate and order by employee_id asc to be deterministic
             stmt = (
                 stmt.order_by(Employee.employee_id.asc())
                 .offset((page - 1) * page_size)
                 .limit(page_size)
             )
-            
+
             results = (await self.session.execute(stmt)).all()
-            
+
             # Query who is currently on break on this date
             break_subq = (
                 select(
@@ -200,7 +220,7 @@ class AttendanceDayRepository(BaseRepository[AttendanceDay]):
                 .group_by(AttendancePunch.employee_id)
                 .subquery()
             )
-            
+
             on_break_stmt = (
                 select(AttendancePunch.employee_id)
                 .join(
@@ -289,8 +309,10 @@ class AttendanceDayRepository(BaseRepository[AttendanceDay]):
     ) -> int:
         """Return the number of attendance days matching the same filters as :meth:`search`."""
         if date is not None:
-            from sqlalchemy import and_
-            
+            from sqlalchemy import and_, or_
+            from app.modules.shift.models.assignment import ShiftAssignment
+            from app.modules.shift.models.shift import Shift
+
             stmt = select(func.count(Employee.employee_id)).where(
                 Employee.org_id == org_id,
                 Employee.is_deleted.is_(False),
@@ -299,20 +321,51 @@ class AttendanceDayRepository(BaseRepository[AttendanceDay]):
             if employee_id is not None:
                 stmt = stmt.where(Employee.employee_id == employee_id)
             if shift_id is not None:
-                stmt = stmt.join(
-                    AttendanceDay,
-                    and_(
-                        AttendanceDay.employee_id == Employee.employee_id,
-                        AttendanceDay.attendance_date == date,
+                latest_assignment_subq = (
+                    select(
+                        ShiftAssignment.employee_id,
+                        func.max(ShiftAssignment.assignment_id).label("max_id"),
                     )
-                ).where(AttendanceDay.shift_id == shift_id)
+                    .where(
+                        ShiftAssignment.org_id == org_id,
+                        ShiftAssignment.effective_from <= date,
+                    )
+                    .group_by(ShiftAssignment.employee_id)
+                    .subquery()
+                )
+                stmt = (
+                    stmt.outerjoin(
+                        AttendanceDay,
+                        and_(
+                            AttendanceDay.employee_id == Employee.employee_id,
+                            AttendanceDay.attendance_date == date,
+                            AttendanceDay.org_id == org_id,
+                        ),
+                    )
+                    .outerjoin(
+                        latest_assignment_subq,
+                        latest_assignment_subq.c.employee_id == Employee.employee_id,
+                    )
+                    .outerjoin(
+                        ShiftAssignment,
+                        ShiftAssignment.assignment_id == latest_assignment_subq.c.max_id,
+                    )
+                    .outerjoin(
+                        Shift,
+                        and_(
+                            Shift.shift_id == ShiftAssignment.shift_id,
+                            Shift.org_id == org_id,
+                        ),
+                    )
+                    .where(or_(AttendanceDay.shift_id == shift_id, Shift.shift_id == shift_id))
+                )
             if branch_id is not None:
                 stmt = stmt.where(Employee.master_branch_id == branch_id)
             if dept_id is not None:
                 stmt = stmt.where(Employee.dept_id == dept_id)
             if branch_scope is not None:
                 stmt = stmt.where(Employee.master_branch_id.in_(branch_scope))
-                
+
             return (await self.session.execute(stmt)).scalar() or 0
         else:
             stmt = self._search_stmt(
@@ -328,7 +381,6 @@ class AttendanceDayRepository(BaseRepository[AttendanceDay]):
                 branch_scope=branch_scope,
             )
             return int((await self.session.execute(stmt)).scalar_one())
-
 
 
 class AttendancePunchRepository(BaseRepository[AttendancePunch]):
@@ -654,4 +706,3 @@ class AttendanceLockRepository(BaseRepository[AttendanceLock]):
             AttendanceLock.status == "locked",
         ).order_by(AttendanceLock.lock_year.desc(), AttendanceLock.lock_month.desc())
         return list((await self.session.execute(stmt)).scalars().all())
-

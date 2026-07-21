@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,7 +31,7 @@ class ADMSService(BaseService):
         if not sn:
             raise ValueError("Serial number is required for device registration.")
 
-        now = datetime.now(UTC)
+        now = datetime.now(timezone.utc)
         device = await self.repository.get_by_serial_number(sn)
 
         if device:

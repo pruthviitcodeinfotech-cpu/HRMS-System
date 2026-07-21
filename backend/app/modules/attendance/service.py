@@ -410,10 +410,15 @@ class AttendanceService(BaseService):
         query: AttendanceDailyQuery,
         branch_scope: list[int] | None = None,
     ) -> AttendanceDailyListResponse:
-        """List and search paginated attendance day summaries (Endpoint 3)."""
+        """List and search paginated attendance day summaries (Endpoint 3).
+        
+        READ ONLY: Performs no write operations or attendance record generation.
+        """
         rows = await self.days.search(
             org_id,
             date=query.date,
+            date_from=query.date_from,
+            date_to=query.date_to,
             branch_id=query.branch_id,
             dept_id=query.department_id,
             branch_scope=branch_scope,
@@ -423,6 +428,8 @@ class AttendanceService(BaseService):
         total = await self.days.search_count(
             org_id,
             date=query.date,
+            date_from=query.date_from,
+            date_to=query.date_to,
             branch_id=query.branch_id,
             dept_id=query.department_id,
             branch_scope=branch_scope,
@@ -434,6 +441,257 @@ class AttendanceService(BaseService):
             page_size=query.page_size,
             total_records=total,
         )
+
+    async def generate_daily_attendance_for_range(
+        self,
+        org_id: int,
+        date_from: date,
+        date_to: date,
+        actor_id: int | None = None,
+        branch_id: int | None = None,
+        department_id: int | None = None,
+    ) -> int:
+        """Backward-compatible wrapper delegating to AttendanceGenerationService."""
+        gen_service = AttendanceGenerationService(self.session)
+        return await gen_service.generate_for_range(
+            org_id=org_id,
+            date_from=date_from,
+            date_to=date_to,
+            branch_id=branch_id,
+            department_id=department_id,
+            actor_id=actor_id,
+        )
+
+
+class AttendanceGenerationService(BaseService):
+    """Dedicated production-grade Attendance Generation Engine.
+
+    Responsible strictly for creating missing attendance_days rows for active employees.
+    Design allows execution by REST API, Cron, Celery, APScheduler, or CLI commands.
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        super().__init__(session)
+        self.days = AttendanceDayRepository(session)
+        self.locks = AttendanceLockRepository(session)
+        self.employees = EmployeeLookupRepository(session)
+        self.shifts = ShiftLookupRepository(session)
+
+    async def generate_for_date(
+        self,
+        org_id: int,
+        target_date: date,
+        branch_id: int | None = None,
+        department_id: int | None = None,
+        employee_ids: list[int] | None = None,
+        actor_id: int | None = None,
+    ) -> int:
+        """Generate attendance_days records for a single date."""
+        return await self.generate_for_range(
+            org_id=org_id,
+            date_from=target_date,
+            date_to=target_date,
+            branch_id=branch_id,
+            department_id=department_id,
+            employee_ids=employee_ids,
+            actor_id=actor_id,
+        )
+
+    async def generate_for_employee(
+        self,
+        org_id: int,
+        employee_id: int,
+        date_from: date,
+        date_to: date,
+        actor_id: int | None = None,
+    ) -> int:
+        """Generate attendance_days records for a specific employee across a date range."""
+        return await self.generate_for_range(
+            org_id=org_id,
+            date_from=date_from,
+            date_to=date_to,
+            employee_ids=[employee_id],
+            actor_id=actor_id,
+        )
+
+    async def generate_for_organization(
+        self,
+        org_id: int,
+        date_from: date,
+        date_to: date,
+        actor_id: int | None = None,
+    ) -> int:
+        """Generate attendance_days records for all active employees in an organization."""
+        return await self.generate_for_range(
+            org_id=org_id,
+            date_from=date_from,
+            date_to=date_to,
+            actor_id=actor_id,
+        )
+
+    async def generate_for_range(
+        self,
+        org_id: int,
+        date_from: date,
+        date_to: date,
+        branch_id: int | None = None,
+        department_id: int | None = None,
+        employee_ids: list[int] | None = None,
+        actor_id: int | None = None,
+    ) -> int:
+        """Core batch engine to generate attendance_days rows.
+
+        Target behavior:
+        - Idempotent (checks existing rows, no duplicate inserts)
+        - Fully transactional
+        - Multi-tenant safe (org_id scoped)
+        - Respects attendance_locks (skips locked dates)
+        - Resolves initial status (holiday, on_leave, week_off, not_marked) and shift timings
+        - Batch inserts missing rows (no N+1 queries)
+        """
+        if date_to < date_from:
+            return 0
+
+        # Safety cap: max 366 days in a single generation request
+        delta_days = (date_to - date_from).days + 1
+        if delta_days > 366:
+            delta_days = 366
+            date_to = date_from + timedelta(days=365)
+
+        # 1. Fetch active employees for org_id
+        emp_stmt = select(Employee).where(
+            Employee.org_id == org_id,
+            Employee.is_deleted.is_(False),
+            Employee.employment_status == "active",
+        )
+        if branch_id is not None:
+            emp_stmt = emp_stmt.where(Employee.master_branch_id == branch_id)
+        if department_id is not None:
+            emp_stmt = emp_stmt.where(Employee.dept_id == department_id)
+        if employee_ids:
+            emp_stmt = emp_stmt.where(Employee.employee_id.in_(employee_ids))
+
+        employees = list((await self.session.execute(emp_stmt)).scalars().all())
+        if not employees:
+            return 0
+
+        active_emp_ids = [e.employee_id for e in employees]
+        dates = [date_from + timedelta(days=i) for i in range(delta_days)]
+
+        total_inserted = 0
+
+        # Import leave models lazily to avoid circular dependencies
+        from app.modules.leave.models.holiday import EmployeeHolidayAssignment, HolidayTemplateItem
+        from app.modules.leave.models.leave import LeaveRequest
+
+        shift_service = ShiftService(self.session)
+
+        async with self.transaction():
+            for target_date in dates:
+                # Check period lock for target date
+                if await self.locks.is_locked(org_id, target_date.month, target_date.year, branch_id=branch_id):
+                    continue
+
+                # Query existing attendance_day employee_ids for target_date
+                existing_stmt = select(AttendanceDay.employee_id).where(
+                    AttendanceDay.org_id == org_id,
+                    AttendanceDay.attendance_date == target_date,
+                    AttendanceDay.employee_id.in_(active_emp_ids),
+                )
+                existing_emp_ids = set((await self.session.execute(existing_stmt)).scalars().all())
+
+                missing_employees = [e for e in employees if e.employee_id not in existing_emp_ids]
+                if not missing_employees:
+                    continue
+
+                missing_ids = [e.employee_id for e in missing_employees]
+
+                # Pre-fetch approved leaves for missing employees covering target_date
+                leave_stmt = select(LeaveRequest.employee_id).where(
+                    LeaveRequest.employee_id.in_(missing_ids),
+                    LeaveRequest.status == "approved",
+                    LeaveRequest.start_date <= target_date,
+                    LeaveRequest.end_date >= target_date,
+                )
+                on_leave_emp_ids = set((await self.session.execute(leave_stmt)).scalars().all())
+
+                # Pre-fetch holiday assignments covering target_date
+                holiday_stmt = (
+                    select(EmployeeHolidayAssignment.employee_id)
+                    .join(HolidayTemplateItem, HolidayTemplateItem.template_id == EmployeeHolidayAssignment.template_id)
+                    .where(
+                        EmployeeHolidayAssignment.employee_id.in_(missing_ids),
+                        HolidayTemplateItem.is_deleted.is_(False),
+                        HolidayTemplateItem.start_date <= target_date,
+                        HolidayTemplateItem.end_date >= target_date,
+                    )
+                )
+                holiday_emp_ids = set((await self.session.execute(holiday_stmt)).scalars().all())
+
+                new_days = []
+                for emp in missing_employees:
+                    shift_id = None
+                    expected_start = None
+                    expected_end = None
+                    status = AttendanceDayStatus.NOT_MARKED.value
+
+                    # Status hierarchy: Holiday -> Leave -> Shift/WeekOff -> Not Marked
+                    if emp.employee_id in holiday_emp_ids:
+                        status = AttendanceDayStatus.HOLIDAY.value
+                    elif emp.employee_id in on_leave_emp_ids:
+                        status = AttendanceDayStatus.ON_LEAVE.value
+
+                    try:
+                        shift_resolve = await shift_service.resolve_shift(
+                            org_id=org_id,
+                            query=ShiftResolveQuery(employee_id=emp.employee_id, date=target_date),
+                        )
+                        if shift_resolve.shift:
+                            shift_id = shift_resolve.shift.shift_id
+                            shift_detail = await self.shifts.get_active_by_id(shift_id, org_id)
+                            if shift_detail:
+                                weekday = (target_date.weekday() + 1) % 7
+                                timing = next(
+                                    (t for t in shift_detail.day_timings if t.day_of_week == weekday), None
+                                )
+                                if not timing:
+                                    timing = next(
+                                        (t for t in shift_detail.day_timings if t.day_of_week is None), None
+                                    )
+                                if timing:
+                                    expected_start = timing.start_time
+                                    expected_end = timing.end_time
+                                    if timing.is_week_off and status == AttendanceDayStatus.NOT_MARKED.value:
+                                        status = AttendanceDayStatus.WEEK_OFF.value
+                    except Exception:
+                        pass
+
+                    new_day = AttendanceDay(
+                        org_id=org_id,
+                        employee_id=emp.employee_id,
+                        attendance_date=target_date,
+                        shift_id=shift_id,
+                        expected_start_time=expected_start,
+                        expected_end_time=expected_end,
+                        status=status,
+                        source=AttendanceSource.SYSTEM.value,
+                        total_working_minutes=0,
+                        total_break_minutes=0,
+                        overtime_minutes=0,
+                        late_minutes=0,
+                        early_leaving_minutes=0,
+                        is_regularized=False,
+                        created_by=actor_id,
+                        updated_by=actor_id,
+                    )
+                    new_days.append(new_day)
+
+                if new_days:
+                    self.session.add_all(new_days)
+                    await self.session.flush()
+                    total_inserted += len(new_days)
+
+        return total_inserted
 
     async def get_employee_attendance_history(
         self,

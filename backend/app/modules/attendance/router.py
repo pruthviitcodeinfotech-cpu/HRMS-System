@@ -37,6 +37,8 @@ from app.modules.attendance.schemas import (
     AttendanceDailyListResponse,
     AttendanceDailyQuery,
     AttendanceDayDetailSchema,
+    AttendanceGenerateRequest,
+    AttendanceGenerateResponse,
     AttendanceLockRequest,
     AttendanceLockSchema,
     AttendanceLogsQuery,
@@ -50,7 +52,7 @@ from app.modules.attendance.schemas import (
     AttendanceRecomputeRequest,
     AttendanceUnlockRequest,
 )
-from app.modules.attendance.service import AttendanceService
+from app.modules.attendance.service import AttendanceGenerationService, AttendanceService
 from app.shared.schemas.pagination import PaginatedResponse
 from app.shared.schemas.response import SuccessResponse, success_response
 
@@ -104,7 +106,9 @@ def _ok(data: Any, message: str = "OK") -> dict[str, Any]:
 async def list_attendance_days(
     service: ServiceDep,
     org_id: OrgIdDep,
-    q_date: Annotated[date, Query(alias="date", description="Target calendar date.")],
+    q_date: Annotated[date | None, Query(alias="date", description="Target calendar date.")] = None,
+    date_from: Annotated[date | None, Query(alias="date_from", description="Start date of range.")] = None,
+    date_to: Annotated[date | None, Query(alias="date_to", description="End date of range.")] = None,
     branch_id: Annotated[int | None, Query(description="Filter by branch.")] = None,
     department_id: Annotated[int | None, Query(description="Filter by department.")] = None,
     pagination: Annotated[PaginationParams, Depends(pagination_params)] = None,
@@ -114,6 +118,8 @@ async def list_attendance_days(
     page_size = pagination.page_size if pagination else 25
     query = AttendanceDailyQuery(
         date=q_date,
+        date_from=date_from,
+        date_to=date_to,
         branch_id=branch_id,
         department_id=department_id,
         page=page,
@@ -121,6 +127,40 @@ async def list_attendance_days(
     )
     result = await service.list_attendance_days(org_id=org_id, query=query)
     return _ok(result)
+
+
+@router.post(
+    "/attendance/generate",
+    response_model=SuccessResponse[AttendanceGenerateResponse],
+    status_code=status.HTTP_200_OK,
+    summary="Trigger batch attendance generation engine",
+    dependencies=[Depends(require_permission(_ATTENDANCE, A.CREATE))],
+)
+async def generate_attendance(
+    payload: AttendanceGenerateRequest,
+    service: ServiceDep,
+    org_id: OrgIdDep,
+    current_user: CurrentUserDep,
+) -> dict[str, Any]:
+    """Explicitly trigger batch generation of attendance_days records."""
+    gen_service = AttendanceGenerationService(service.session)
+    count = await gen_service.generate_for_range(
+        org_id=org_id,
+        date_from=payload.date_from,
+        date_to=payload.date_to,
+        branch_id=payload.branch_id,
+        department_id=payload.department_id,
+        employee_ids=payload.employee_ids,
+        actor_id=current_user.id,
+    )
+    return _ok(
+        AttendanceGenerateResponse(
+            success=True,
+            message=f"Attendance generation completed. {count} records generated.",
+            records_generated=count,
+        ),
+        message="Attendance generation completed successfully.",
+    )
 
 
 @router.post(

@@ -7,7 +7,12 @@ PostgreSQL ENUM types are intentionally NOT used — the approved architecture
 models these as VARCHAR columns with CHECK constraints, and that is preserved.
 """
 
-from enum import IntEnum, StrEnum
+try:
+    from enum import IntEnum, StrEnum
+except ImportError:
+    from enum import Enum, IntEnum
+    class StrEnum(str, Enum):
+        pass
 
 
 class ShiftType(StrEnum):

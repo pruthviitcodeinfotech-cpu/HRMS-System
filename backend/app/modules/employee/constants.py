@@ -8,7 +8,13 @@ architecture models these as VARCHAR columns with CHECK constraints, and that
 is preserved.
 """
 
-from enum import StrEnum
+try:
+    from enum import StrEnum
+except ImportError:
+    from enum import Enum
+
+    class StrEnum(str, Enum):
+        pass
 
 
 class EmploymentStatus(StrEnum):

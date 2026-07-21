@@ -6,7 +6,13 @@ the approved Notification Management API Contract (§10 Q2). System-generated
 emissions from other business modules must use these values.
 """
 
-from enum import StrEnum
+try:
+    from enum import StrEnum
+except ImportError:
+    from enum import Enum
+
+    class StrEnum(str, Enum):
+        pass
 
 
 class NotificationType(StrEnum):

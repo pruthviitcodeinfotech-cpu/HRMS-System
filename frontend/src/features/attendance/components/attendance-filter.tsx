@@ -5,6 +5,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Calendar as CalendarIcon, Search, FileSpreadsheet, FileText, X } from "lucide-react";
+import { useBranchOptions } from "@/features/employees/hooks";
 import { AttendanceFilter } from "../types/attendance";
 
 const filterSchema = z.object({
@@ -28,18 +29,14 @@ export const AttendanceFilterBar: React.FC<AttendanceFilterProps> = ({
   onExportExcel,
   onExportPdf,
 }) => {
-  // Default to July 1, 2026 -> July 21, 2026 as seen in Petpooja reference image
-  const {
-    register,
-    handleSubmit,
-    setValue,
-    watch,
-    reset,
-  } = useForm<FilterFormValues>({
+  // Reuse branch lookup from Employee module
+  const { data: branchOptions } = useBranchOptions();
+
+  const { register, handleSubmit, setValue, watch, reset } = useForm<FilterFormValues>({
     resolver: zodResolver(filterSchema),
     defaultValues: {
-      fromDate: "2026-07-01",
-      toDate: "2026-07-21",
+      fromDate: new Date().toISOString().slice(0, 10),
+      toDate: new Date().toISOString().slice(0, 10),
       branchId: "",
     },
   });
@@ -57,9 +54,10 @@ export const AttendanceFilterBar: React.FC<AttendanceFilterProps> = ({
   };
 
   const handleClear = () => {
+    const today = new Date().toISOString().slice(0, 10);
     reset({
-      fromDate: "2026-07-01",
-      toDate: "2026-07-21",
+      fromDate: today,
+      toDate: today,
       branchId: "",
     });
     if (onReset) onReset();
@@ -68,10 +66,7 @@ export const AttendanceFilterBar: React.FC<AttendanceFilterProps> = ({
   return (
     <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4 mb-6">
       {/* Left Filter Form */}
-      <form
-        onSubmit={handleSubmit(onSubmit)}
-        className="flex flex-wrap items-center gap-3"
-      >
+      <form onSubmit={handleSubmit(onSubmit)} className="flex flex-wrap items-center gap-3">
         {/* Date Range Picker Container */}
         <div className="flex items-center space-x-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg px-3 py-1.5 shadow-xs">
           <CalendarIcon className="h-4 w-4 text-slate-400 shrink-0" />
@@ -101,17 +96,18 @@ export const AttendanceFilterBar: React.FC<AttendanceFilterProps> = ({
           )}
         </div>
 
-        {/* Branch Dropdown */}
+        {/* Branch Dropdown dynamically fetched from Employee module */}
         <div className="relative min-w-[200px]">
           <select
             {...register("branchId")}
             className="w-full text-xs font-medium bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200 rounded-lg px-3 py-2 pr-8 shadow-xs focus:outline-hidden focus:ring-2 focus:ring-blue-500/20 cursor-pointer appearance-none"
           >
             <option value="">Choose Branch</option>
-            <option value="main">Itcode Infotech (116478)</option>
-            <option value="surat">Surat Head Office</option>
-            <option value="ahmedabad">Ahmedabad Branch</option>
-            <option value="mumbai">Mumbai Corporate</option>
+            {branchOptions?.map((branch) => (
+              <option key={branch.branch_id} value={String(branch.branch_id)}>
+                {branch.branch_name}
+              </option>
+            ))}
           </select>
           <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2.5 text-slate-400">
             <svg className="h-4 w-4 fill-current" viewBox="0 0 20 20">
