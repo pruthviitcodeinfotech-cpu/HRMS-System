@@ -34,6 +34,7 @@ export const NavigationMenu = ({ sidebarOpen }: NavigationMenuProps) => {
     "Leaves & Holidays": true,
     Reports: true,
     Settlements: true,
+    Payroll: true,
   });
 
   const toggleExpand = (label: string) => {
@@ -111,6 +112,13 @@ export const NavigationMenu = ({ sidebarOpen }: NavigationMenuProps) => {
       hasChevron: true,
       isNew: true,
       permission: { feature: "payroll_processing", action: "read" },
+      items: [
+        { href: "/payroll/bulk-attendance-adjustments", label: "Bulk Attendance Adjustments" },
+        { href: "/payroll/process-payroll", label: "Process Payroll", isNew: true },
+        { href: "/payroll/payroll-group", label: "Payroll Group" },
+        { href: "/payroll/assign-payroll-group", label: "Assign Payroll Group" },
+        { href: "/payroll/finalized-payroll-details", label: "Finalized Payroll Details" },
+      ] as const,
     },
     {
       href: "/settlements",
@@ -122,7 +130,6 @@ export const NavigationMenu = ({ sidebarOpen }: NavigationMenuProps) => {
       items: [
         { href: "/settlements/loan-advance", label: "Loan & Advance", isNew: true },
         { href: "/settlements/arrears", label: "Arrears", isNew: true },
-        { href: "/settlements/loan-arrears-log", label: "Loan & Arrears Log", isNew: true },
       ] as const,
     },
     {

@@ -1,19 +1,21 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import {
   Calendar,
   ChevronDown,
-  Search,
   FileSpreadsheet,
   FileText,
   ChevronLeft,
   ChevronRight,
   AlertCircle,
   RefreshCw,
+  Search,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useBranches } from "@/features/employees/hooks";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 import { useArrearsLogs } from "../hooks/use-arrears";
 
 const formatCurrency = (val: number): string => {
@@ -25,11 +27,19 @@ const formatCurrency = (val: number): string => {
 };
 
 export const LoanArrearsLogView: React.FC = () => {
-  // Filter States
+  // Input Filter Controls
   const [dateFrom, setDateFrom] = useState("2026-07-01");
   const [dateTo, setDateTo] = useState("2026-07-22");
   const [selectedBranch, setSelectedBranch] = useState("");
   const [typeFilter, setTypeFilter] = useState<"All" | "Loan" | "Arrears">("All");
+
+  // Applied Filter State (updates on Search click)
+  const [appliedFilters, setAppliedFilters] = useState({
+    dateFrom: "2026-07-01",
+    dateTo: "2026-07-22",
+    selectedBranch: "",
+    typeFilter: "All" as "All" | "Loan" | "Arrears",
+  });
 
   // Sorting & Pagination
   const [sortField, setSortField] = useState("transaction_date");
@@ -56,10 +66,66 @@ export const LoanArrearsLogView: React.FC = () => {
     sort_order: sortOrder,
   });
 
-  const logsList = logsData?.items || [];
-  const pagination = logsData?.pagination;
-  const totalRecords = pagination?.total_records || 0;
-  const totalPages = pagination?.total_pages || 1;
+  const rawLogs = useMemo(() => logsData?.items || [], [logsData]);
+
+  // Search Click Handler
+  const handleSearch = () => {
+    setAppliedFilters({
+      dateFrom,
+      dateTo,
+      selectedBranch,
+      typeFilter,
+    });
+    setCurrentPage(1);
+    toast.success("Filters applied successfully!");
+  };
+
+  // Filtered Logs Calculation
+  const filteredLogs = useMemo(() => {
+    return rawLogs.filter((log) => {
+      // 1. Date Range Filter
+      if (appliedFilters.dateFrom && log.transaction_date < appliedFilters.dateFrom) {
+        return false;
+      }
+      if (appliedFilters.dateTo && log.transaction_date > appliedFilters.dateTo) {
+        return false;
+      }
+
+      // 2. Type Filter
+      if (appliedFilters.typeFilter === "Arrears") {
+        if (
+          log.transaction_type !== "credit" &&
+          log.transaction_type !== "debit" &&
+          log.transaction_type !== "adjustment"
+        ) {
+          return false;
+        }
+      } else if (appliedFilters.typeFilter === "Loan") {
+        if (
+          log.transaction_type !== "disbursement" &&
+          log.transaction_type !== "repayment"
+        ) {
+          return false;
+        }
+      }
+
+      // 3. Branch Filter
+      if (appliedFilters.selectedBranch) {
+        if (log.branch_name && log.branch_name !== appliedFilters.selectedBranch) {
+          return false;
+        }
+      }
+
+      return true;
+    });
+  }, [rawLogs, appliedFilters]);
+
+  const totalRecords = filteredLogs.length;
+  const totalPages = Math.ceil(totalRecords / pageSize) || 1;
+  const paginatedLogs = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return filteredLogs.slice(start, start + pageSize);
+  }, [filteredLogs, currentPage, pageSize]);
 
   const toggleSort = (field: string) => {
     if (sortField === field) {
@@ -70,12 +136,119 @@ export const LoanArrearsLogView: React.FC = () => {
     }
   };
 
+  // Real CSV Export Handler
   const handleExportExcel = () => {
-    toast.success("Loan & Arrears Log exported to Excel (CSV) successfully!");
+    if (filteredLogs.length === 0) {
+      toast.error("No log entries to export.");
+      return;
+    }
+
+    const headers = [
+      "Employee ID",
+      "Employee Name",
+      "Transaction Date",
+      "Type",
+      "Transaction",
+      "Amount",
+      "Installment",
+      "Comment",
+    ];
+
+    const rows = filteredLogs.map((log) => [
+      log.employee_code || `EMP-${log.employee_id}`,
+      `"${log.employee_name || ""}"`,
+      log.transaction_date,
+      log.transaction_type === "credit" || log.transaction_type === "debit" ? "Arrears" : "Loan",
+      log.source || "Manual",
+      log.amount,
+      "-",
+      `"${log.comment || ""}"`,
+    ]);
+
+    const csvContent = [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute(
+      "download",
+      `loan_and_arrears_log_${new Date().toISOString().split("T")[0]}.csv`
+    );
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    toast.success("Loan & Arrears Log exported to CSV successfully!");
   };
 
+  // Real PDF Direct File Download Export Handler
   const handleExportPDF = () => {
-    toast.success("Loan & Arrears Log exported to PDF successfully!");
+    if (filteredLogs.length === 0) {
+      toast.error("No log entries to export.");
+      return;
+    }
+
+    try {
+      const doc = new jsPDF({ orientation: "landscape" });
+
+      // Document Title Header
+      doc.setFontSize(16);
+      doc.setTextColor(0, 112, 224); // Petpooja Blue #0070e0
+      doc.text("Loan & Arrears Log Report", 14, 18);
+
+      // Metadata Subtitle
+      doc.setFontSize(9);
+      doc.setTextColor(100, 116, 139);
+      doc.text(
+        `Generated Date: ${new Date().toLocaleDateString("en-IN")} | Total Records: ${filteredLogs.length}`,
+        14,
+        25
+      );
+
+      // Table Headers & Rows
+      const tableHeaders = [
+        [
+          "Employee ID",
+          "Employee Name",
+          "Transaction Date",
+          "Type",
+          "Transaction",
+          "Amount (INR)",
+          "Installment",
+          "Comment",
+        ],
+      ];
+
+      const tableRows = filteredLogs.map((log) => [
+        log.employee_code || `EMP-${log.employee_id}`,
+        log.employee_name || `Employee #${log.employee_id}`,
+        log.transaction_date,
+        log.transaction_type === "credit" || log.transaction_type === "debit"
+          ? "ARREARS"
+          : "LOAN",
+        log.source || "Manual",
+        `Rs. ${log.amount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}`,
+        "-",
+        log.comment || "-",
+      ]);
+
+      autoTable(doc, {
+        head: tableHeaders,
+        body: tableRows,
+        startY: 30,
+        styles: { fontSize: 8, cellPadding: 3 },
+        headStyles: {
+          fillColor: [0, 112, 224],
+          textColor: [255, 255, 255],
+          fontStyle: "bold",
+        },
+        alternateRowStyles: { fillColor: [248, 250, 252] },
+      });
+
+      doc.save(`loan_and_arrears_log_${new Date().toISOString().split("T")[0]}.pdf`);
+      toast.success("Loan & Arrears Log PDF downloaded successfully!");
+    } catch {
+      toast.error("Failed to generate PDF download.");
+    }
   };
 
   return (
@@ -144,10 +317,7 @@ export const LoanArrearsLogView: React.FC = () => {
           {/* Primary Blue Search Button */}
           <button
             type="button"
-            onClick={() => {
-              setCurrentPage(1);
-              refetch();
-            }}
+            onClick={handleSearch}
             className="px-5 py-2 bg-[#0070e0] hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition-colors cursor-pointer shadow-xs"
           >
             Search
@@ -214,7 +384,7 @@ export const LoanArrearsLogView: React.FC = () => {
         )}
 
         {/* Empty State View */}
-        {!isLoading && !isError && logsList.length === 0 && (
+        {!isLoading && !isError && paginatedLogs.length === 0 && (
           <div className="p-16 text-center flex flex-col items-center justify-center space-y-3">
             <div className="w-16 h-16 bg-[#eaf4fd] dark:bg-slate-800 rounded-full flex items-center justify-center text-[#0070e0]">
               <Search className="w-8 h-8 stroke-[2.5]" />
@@ -229,7 +399,7 @@ export const LoanArrearsLogView: React.FC = () => {
         )}
 
         {/* Data Table */}
-        {!isLoading && !isError && logsList.length > 0 && (
+        {!isLoading && !isError && paginatedLogs.length > 0 && (
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse text-xs">
               <thead>
@@ -279,18 +449,18 @@ export const LoanArrearsLogView: React.FC = () => {
                     className="py-3 px-4 cursor-pointer hover:bg-slate-200/50 dark:hover:bg-slate-700/50 select-none whitespace-nowrap"
                   >
 
-                      Source ↕
+                      Transaction ↕
                       {sortField === "source" && (
                         <span>{sortOrder === "asc" ? " ↑" : " ↓"}</span>
                       )}
                   </th>
                   <th className="py-3 px-4 text-right whitespace-nowrap">Amount</th>
-                  <th className="py-3 px-4 text-right whitespace-nowrap">Outstanding After</th>
+                  <th className="py-3 px-4 text-center whitespace-nowrap">Installment</th>
                   <th className="py-3 px-4 whitespace-nowrap">Comment</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {logsList.map((log) => (
+                {paginatedLogs.map((log) => (
                   <tr
                     key={log.id}
                     className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors"
@@ -307,22 +477,24 @@ export const LoanArrearsLogView: React.FC = () => {
                     <td className="py-3 px-4 whitespace-nowrap">
                       <span
                         className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
-                          log.transaction_type === "credit"
+                          log.transaction_type === "credit" || log.transaction_type === "debit"
                             ? "bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-400"
                             : "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400"
                         }`}
                       >
-                        {log.transaction_type}
+                        {log.transaction_type === "credit" || log.transaction_type === "debit"
+                          ? "ARREARS"
+                          : "LOAN"}
                       </span>
                     </td>
                     <td className="py-3 px-4 whitespace-nowrap font-semibold text-slate-700 dark:text-slate-300 capitalize">
-                      {log.source}
+                      {log.source || "Manual"}
                     </td>
                     <td className="py-3 px-4 text-right font-bold text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
                       {formatCurrency(log.amount)}
                     </td>
-                    <td className="py-3 px-4 text-right font-medium text-slate-600 dark:text-slate-400 whitespace-nowrap">
-                      {formatCurrency(log.outstanding_after)}
+                    <td className="py-3 px-4 text-center text-slate-600 dark:text-slate-400 whitespace-nowrap">
+                      -
                     </td>
                     <td className="py-3 px-4 text-slate-600 dark:text-slate-400">
                       {log.comment || "-"}
@@ -335,7 +507,7 @@ export const LoanArrearsLogView: React.FC = () => {
         )}
 
         {/* Footer Pagination Bar */}
-        {!isLoading && !isError && logsList.length > 0 && (
+        {!isLoading && !isError && paginatedLogs.length > 0 && (
           <div className="px-4 py-3 border-t border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
             <div className="text-slate-500">
               Showing {(currentPage - 1) * pageSize + 1} to{" "}

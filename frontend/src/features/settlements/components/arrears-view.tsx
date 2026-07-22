@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useMemo } from "react";
+import Link from "next/link";
 import {
   Search,
   FileText,
@@ -368,14 +369,13 @@ export const ArrearsView: React.FC = () => {
           </div>
 
           {/* View Logs Button */}
-          <button
-            type="button"
-            onClick={() => setShowLogsModal(true)}
+          <Link
+            href="/settlements/loan-arrears-log"
             className="inline-flex items-center gap-1.5 px-3.5 py-2 border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-lg text-xs font-semibold transition-colors cursor-pointer shadow-xs"
           >
             <FileText className="w-3.5 h-3.5 text-slate-500" />
             <span>View Logs</span>
-          </button>
+          </Link>
 
           {/* Add Arrears Button */}
           <button

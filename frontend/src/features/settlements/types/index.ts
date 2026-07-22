@@ -113,6 +113,7 @@ export interface ArrearsTransactionSchema {
   employee_id: number;
   employee_code?: string;
   employee_name?: string;
+  branch_name?: string;
   transaction_date: string;
   transaction_type: TransactionType;
   amount: number;
