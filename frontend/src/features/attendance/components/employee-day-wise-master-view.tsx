@@ -153,6 +153,24 @@ export const EmployeeDayWiseMasterView: React.FC = () => {
     refetch();
   };
 
+  const formatMinutesToHours = (totalMinutes?: number): string => {
+    if (!totalMinutes || totalMinutes <= 0) return "-";
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    if (hours > 0 && minutes > 0) return `${hours}h ${minutes}m`;
+    if (hours > 0) return `${hours}h`;
+    return `${minutes}m`;
+  };
+
+  const formatOTMinutes = (totalMinutes?: number): string => {
+    if (!totalMinutes || totalMinutes <= 0) return "-";
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    const hStr = hours < 10 ? `0${hours}` : `${hours}`;
+    if (minutes > 0) return `${hStr}h ${String(minutes).padStart(2, "0")}m`;
+    return `${hStr}h`;
+  };
+
   const handleExportExcel = () => {
     const itemsToExport = data?.items || [];
     if (itemsToExport.length === 0) {
@@ -161,31 +179,97 @@ export const EmployeeDayWiseMasterView: React.FC = () => {
     }
 
     try {
-      const exportData = itemsToExport.map((row) => {
-        const rowObj: Record<string, any> = {
-          "Employee ID": row.employee_code,
-          "Employee Name": row.employee_name,
-          Department: row.department_name,
-          Designation: row.designation_name,
-        };
+      const sheetRows: any[][] = [];
 
-        dates.forEach((dateStr) => {
-          const d = new Date(dateStr);
-          const day = String(d.getDate()).padStart(2, "0");
-          const month = d.toLocaleDateString("en-US", { month: "short" });
-          const weekday = d.toLocaleDateString("en-US", { weekday: "short" });
-          const headerKey = `${day} ${month} (${weekday})`;
-          
-          rowObj[headerKey] = row.daily_status[dateStr]?.status || "A";
-        });
-
-        return rowObj;
+      // Build date header titles: 1(Wednesday), 2(Thursday), ...
+      const dateHeaders = dates.map((dateStr) => {
+        const d = new Date(dateStr);
+        const dayNum = d.getDate();
+        const weekday = d.toLocaleDateString("en-US", { weekday: "long" });
+        return `${dayNum}(${weekday})`;
       });
 
-      const worksheet = XLSX.utils.json_to_sheet(exportData);
+      itemsToExport.forEach((row, idx) => {
+        // Row 1: Employee Header Line
+        const headerText = `From: ${searchFromDate} To: ${searchToDate} Employee Name: ${row.employee_name} Department: ${row.department_name} Designation: ${row.designation_name} Employee ID: ${row.employee_code}`;
+        sheetRows.push([headerText]);
+
+        // Row 2: Attendance Summary Line
+        const summaryText = `Full Day: ${row.full_day_count || 0}  Half Day: ${row.half_day_count || 0}  Absent: ${row.absent_count || 0}  Week Off: ${row.week_off_count || 0}  Paid Leave: ${row.paid_leave_count || 0}  Total Working Hours: ${formatMinutesToHours(row.total_working_minutes)}  Total OT: ${formatOTMinutes(row.total_ot_minutes)}  Total Late In: ${formatMinutesToHours(row.total_late_minutes)}  Total Early Out: ${formatMinutesToHours(row.total_early_out_minutes)}`;
+        sheetRows.push([summaryText]);
+
+        // Row 3: Blank separator
+        sheetRows.push([]);
+
+        // Row 4: Day Header Row
+        sheetRows.push(["Day", ...dateHeaders]);
+
+        // Row 5: Status Row
+        sheetRows.push([
+          "Status",
+          ...dates.map((dateStr) => {
+            const cell = row.daily_status[dateStr];
+            if (cell?.status_label) return cell.status_label;
+            const st = cell?.status || "A";
+            switch (st) {
+              case "P": return "FD";
+              case "HD": return "HD";
+              case "WO": return "Week Off";
+              case "H": return "Holiday";
+              case "L": case "CO": return "Leave";
+              case "LWP": return "LWP";
+              default: return "Absent";
+            }
+          }),
+        ]);
+
+        // Row 6: First In
+        sheetRows.push([
+          "First In",
+          ...dates.map((dateStr) => row.daily_status[dateStr]?.first_in || "-"),
+        ]);
+
+        // Row 7: Last Out
+        sheetRows.push([
+          "Last Out",
+          ...dates.map((dateStr) => row.daily_status[dateStr]?.last_out || "-"),
+        ]);
+
+        // Row 8: Total OT
+        sheetRows.push([
+          "Total OT",
+          ...dates.map((dateStr) => formatOTMinutes(row.daily_status[dateStr]?.total_ot_minutes)),
+        ]);
+
+        // Row 9: Late In
+        sheetRows.push([
+          "Late In",
+          ...dates.map((dateStr) => formatMinutesToHours(row.daily_status[dateStr]?.late_minutes)),
+        ]);
+
+        // Row 10: Early Out
+        sheetRows.push([
+          "Early Out",
+          ...dates.map((dateStr) => formatMinutesToHours(row.daily_status[dateStr]?.early_out_minutes)),
+        ]);
+
+        // Row 11: Total Hrs
+        sheetRows.push([
+          "Total Hrs",
+          ...dates.map((dateStr) => formatMinutesToHours(row.daily_status[dateStr]?.working_minutes)),
+        ]);
+
+        // Separator between employee blocks (2 blank rows)
+        if (idx < itemsToExport.length - 1) {
+          sheetRows.push([]);
+          sheetRows.push([]);
+        }
+      });
+
+      const worksheet = XLSX.utils.aoa_to_sheet(sheetRows);
       const workbook = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(workbook, worksheet, "Day Wise Master");
-      XLSX.writeFile(workbook, `Employee_Day_Wise_Master_${searchFromDate}_to_${searchToDate}.xlsx`);
+      XLSX.utils.book_append_sheet(workbook, worksheet, "employee-master");
+      XLSX.writeFile(workbook, `Employee-day-wise-master-report.xlsx`);
       toast.success("Excel report exported successfully");
     } catch (err) {
       console.error(err);

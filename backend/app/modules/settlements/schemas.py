@@ -50,10 +50,22 @@ class LoanAdvanceCreateRequest(BaseSchema):
         description="Monthly installment recovery amount.",
     )
     transaction_date: datetime.date = Field(
-        ...,
+        default_factory=datetime.date.today,
         description="Date when the loan/advance was issued.",
     )
     comment: str | None = Field(default=None, description="Optional notes or context.")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _remap_aliases(cls, values: Any) -> Any:
+        if isinstance(values, dict):
+            if "principal_amount" not in values and "amount" in values:
+                values["principal_amount"] = values["amount"]
+            if "name" not in values and "loan_name" in values:
+                values["name"] = values["loan_name"]
+            if "name" not in values and "loan_advance_name" in values:
+                values["name"] = values["loan_advance_name"]
+        return values
 
     @model_validator(mode="after")
     def _validate_installment(self) -> LoanAdvanceCreateRequest:
@@ -72,12 +84,25 @@ class LoanAdvanceUpdateRequest(BaseSchema):
         max_length=50,
         description="Updated name/description.",
     )
+    principal_amount: Decimal | None = Field(
+        default=None,
+        gt=0,
+        description="Updated principal amount.",
+    )
     monthly_installment: Decimal | None = Field(
         default=None,
         gt=0,
         description="Updated monthly installment recovery amount.",
     )
     comment: str | None = Field(default=None, description="Updated notes.")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _remap_aliases(cls, values: Any) -> Any:
+        if isinstance(values, dict):
+            if "principal_amount" not in values and "amount" in values:
+                values["principal_amount"] = values["amount"]
+        return values
 
 
 class LoanAdvanceSearchQuery(PaginationRequest):
@@ -419,6 +444,66 @@ class EmployeeArrearsSchema(BaseSchema):
     updated_at: datetime.datetime = Field(..., description="Last arrears update timestamp.")
 
 
+class ArrearsCreateRequest(BaseSchema):
+    """Payload for creating a new employee arrears record."""
+
+    employee_id: int = Field(..., gt=0, description="Target employee ID.")
+    amount: Decimal = Field(..., gt=0, description="Arrears created amount.")
+    transaction_date: datetime.date = Field(
+        default_factory=datetime.date.today, description="Effective transaction date."
+    )
+    comment: str | None = Field(default=None, description="Reason or notes.")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _remap_aliases(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if "arrears_created" in data and "amount" not in data:
+                data["amount"] = data["arrears_created"]
+            if "reason" in data and "comment" not in data:
+                data["comment"] = data["reason"]
+            if "effective_date" in data and "transaction_date" not in data:
+                data["transaction_date"] = data["effective_date"]
+        return data
+
+
+class ArrearsUpdateRequest(BaseSchema):
+    """Payload for updating an employee arrears record."""
+
+    amount: Decimal | None = Field(default=None, gt=0, description="Revised arrears amount.")
+    comment: str | None = Field(default=None, description="Updated reason or notes.")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _remap_aliases(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if "arrears_created" in data and "amount" not in data:
+                data["amount"] = data["arrears_created"]
+            if "reason" in data and "comment" not in data:
+                data["comment"] = data["reason"]
+        return data
+
+
+class ArrearsPayRequest(BaseSchema):
+    """Payload for processing an arrears payment."""
+
+    amount: Decimal = Field(..., gt=0, description="Payment amount.")
+    transaction_date: datetime.date = Field(
+        default_factory=datetime.date.today, description="Payment date."
+    )
+    comment: str | None = Field(default=None, description="Payment mode or notes.")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _remap_aliases(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if "pay_amount" in data and "amount" not in data:
+                data["amount"] = data["pay_amount"]
+            if "arrears_to_pay" in data and "amount" not in data:
+                data["amount"] = data["arrears_to_pay"]
+        return data
+
+
 class ArrearsTransactionSchema(BaseSchema):
     """Represents a transaction entry in the arrears ledger."""
 
@@ -454,6 +539,15 @@ class ArrearsTransactionSchema(BaseSchema):
     )
     created_by: int = Field(..., description="User ID of creator.")
     created_at: datetime.datetime = Field(..., description="Transaction creation timestamp.")
+
+
+class EmployeeArrearsDetailsSchema(EmployeeArrearsSchema):
+    """Detailed employee arrears record including the ledger transactions list."""
+
+    transactions: list[ArrearsTransactionSchema] = Field(
+        default_factory=list,
+        description="List of ledger transactions.",
+    )
 
 
 class SettlementHistoryEntrySchema(BaseSchema):

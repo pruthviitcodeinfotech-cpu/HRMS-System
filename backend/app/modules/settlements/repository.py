@@ -271,6 +271,88 @@ class LoanAdvanceTransactionRepository(BaseRepository[LoanAdvanceTransaction]):
         stmt = select(func.count()).select_from(base_stmt.subquery())
         return int((await self.session.execute(stmt)).scalar_one())
 
+    def _build_search_all_query(
+        self,
+        org_id: int,
+        employee_id: int | None = None,
+        transaction_type: str | None = None,
+        source: str | None = None,
+        date_from: date | None = None,
+        date_to: date | None = None,
+    ) -> select:
+        stmt = (
+            select(LoanAdvanceTransaction)
+            .join(EmployeeLoanAdvance, LoanAdvanceTransaction.loan_advance_id == EmployeeLoanAdvance.id)
+            .where(EmployeeLoanAdvance.org_id == org_id)
+        )
+        if employee_id is not None:
+            stmt = stmt.where(EmployeeLoanAdvance.employee_id == employee_id)
+        if transaction_type is not None:
+            stmt = stmt.where(LoanAdvanceTransaction.transaction_type == transaction_type)
+        if source is not None:
+            stmt = stmt.where(LoanAdvanceTransaction.source == source)
+        if date_from is not None:
+            stmt = stmt.where(LoanAdvanceTransaction.transaction_date >= date_from)
+        if date_to is not None:
+            stmt = stmt.where(LoanAdvanceTransaction.transaction_date <= date_to)
+        return stmt
+
+    async def search_all_transactions(
+        self,
+        org_id: int,
+        *,
+        employee_id: int | None = None,
+        transaction_type: str | None = None,
+        source: str | None = None,
+        date_from: date | None = None,
+        date_to: date | None = None,
+        sort_by: str | None = "transaction_date",
+        sort_order: str | SortOrder = SortOrder.DESC,
+        page: int = 1,
+        page_size: int = 25,
+    ) -> list[LoanAdvanceTransaction]:
+        """Return org-wide filtered, sorted, and paginated list of loan transactions."""
+        stmt = self._build_search_all_query(
+            org_id=org_id,
+            employee_id=employee_id,
+            transaction_type=transaction_type,
+            source=source,
+            date_from=date_from,
+            date_to=date_to,
+        )
+        stmt = apply_sorting(
+            stmt,
+            LoanAdvanceTransaction,
+            sort_by,
+            sort_order,
+            allowed={"transaction_date", "amount", "created_at"},
+            default_sort_by="transaction_date",
+        )
+        stmt = stmt.limit(page_size).offset((page - 1) * page_size)
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def search_all_transactions_count(
+        self,
+        org_id: int,
+        *,
+        employee_id: int | None = None,
+        transaction_type: str | None = None,
+        source: str | None = None,
+        date_from: date | None = None,
+        date_to: date | None = None,
+    ) -> int:
+        """Return count of org-wide loan transactions matching filters."""
+        base_stmt = self._build_search_all_query(
+            org_id=org_id,
+            employee_id=employee_id,
+            transaction_type=transaction_type,
+            source=source,
+            date_from=date_from,
+            date_to=date_to,
+        )
+        stmt = select(func.count()).select_from(base_stmt.subquery())
+        return int((await self.session.execute(stmt)).scalar_one())
+
 
 # ===========================================================================
 # 3. Employee Arrears Repository
@@ -440,6 +522,84 @@ class ArrearsTransactionRepository(BaseRepository[ArrearsTransaction]):
     ) -> int:
         """Return the count of arrears transactions matching the filters."""
         base_stmt = self._build_search_query(
+            employee_id=employee_id,
+            transaction_type=transaction_type,
+            source=source,
+            date_from=date_from,
+            date_to=date_to,
+        )
+        stmt = select(func.count()).select_from(base_stmt.subquery())
+        return int((await self.session.execute(stmt)).scalar_one())
+
+    def _build_search_all_query(
+        self,
+        org_id: int,
+        employee_id: int | None = None,
+        transaction_type: str | None = None,
+        source: str | None = None,
+        date_from: date | None = None,
+        date_to: date | None = None,
+    ) -> select:
+        stmt = select(ArrearsTransaction).where(ArrearsTransaction.org_id == org_id)
+        if employee_id is not None:
+            stmt = stmt.where(ArrearsTransaction.employee_id == employee_id)
+        if transaction_type is not None:
+            stmt = stmt.where(ArrearsTransaction.transaction_type == transaction_type)
+        if source is not None:
+            stmt = stmt.where(ArrearsTransaction.source == source)
+        if date_from is not None:
+            stmt = stmt.where(ArrearsTransaction.transaction_date >= date_from)
+        if date_to is not None:
+            stmt = stmt.where(ArrearsTransaction.transaction_date <= date_to)
+        return stmt
+
+    async def search_all_transactions(
+        self,
+        org_id: int,
+        *,
+        employee_id: int | None = None,
+        transaction_type: str | None = None,
+        source: str | None = None,
+        date_from: date | None = None,
+        date_to: date | None = None,
+        sort_by: str | None = "transaction_date",
+        sort_order: str | SortOrder = SortOrder.DESC,
+        page: int = 1,
+        page_size: int = 25,
+    ) -> list[ArrearsTransaction]:
+        """Return org-wide filtered, sorted, and paginated list of arrears transactions."""
+        stmt = self._build_search_all_query(
+            org_id=org_id,
+            employee_id=employee_id,
+            transaction_type=transaction_type,
+            source=source,
+            date_from=date_from,
+            date_to=date_to,
+        )
+        stmt = apply_sorting(
+            stmt,
+            ArrearsTransaction,
+            sort_by,
+            sort_order,
+            allowed={"transaction_date", "amount", "created_at"},
+            default_sort_by="transaction_date",
+        )
+        stmt = stmt.limit(page_size).offset((page - 1) * page_size)
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def search_all_transactions_count(
+        self,
+        org_id: int,
+        *,
+        employee_id: int | None = None,
+        transaction_type: str | None = None,
+        source: str | None = None,
+        date_from: date | None = None,
+        date_to: date | None = None,
+    ) -> int:
+        """Return count of org-wide arrears transactions matching filters."""
+        base_stmt = self._build_search_all_query(
+            org_id=org_id,
             employee_id=employee_id,
             transaction_type=transaction_type,
             source=source,

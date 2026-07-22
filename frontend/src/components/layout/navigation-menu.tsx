@@ -10,13 +10,13 @@ import {
   Palmtree,
   CheckSquare,
   CreditCard,
-  Briefcase,
   FileBarChart,
   LineChart,
   UserCog,
   History,
   Settings,
   ChevronRight,
+  Receipt,
 } from "lucide-react";
 import { usePermissions } from "@/features/auth";
 
@@ -33,6 +33,7 @@ export const NavigationMenu = ({ sidebarOpen }: NavigationMenuProps) => {
     Employees: true, // Default open per the user request reference screenshot
     "Leaves & Holidays": true,
     Reports: true,
+    Settlements: true,
   });
 
   const toggleExpand = (label: string) => {
@@ -114,10 +115,15 @@ export const NavigationMenu = ({ sidebarOpen }: NavigationMenuProps) => {
     {
       href: "/settlements",
       label: "Settlements",
-      icon: Briefcase,
+      icon: Receipt,
       hasChevron: true,
       isNew: true,
       permission: { feature: "settlements", action: "read" },
+      items: [
+        { href: "/settlements/loan-advance", label: "Loan & Advance", isNew: true },
+        { href: "/settlements/arrears", label: "Arrears", isNew: true },
+        { href: "/settlements/loan-arrears-log", label: "Loan & Arrears Log", isNew: true },
+      ] as const,
     },
     {
       href: "/reports",
@@ -285,17 +291,23 @@ export const NavigationMenu = ({ sidebarOpen }: NavigationMenuProps) => {
               <div className="pl-4 ml-4.5 border-l border-slate-200 dark:border-slate-800 flex flex-col space-y-1 py-1">
                 {item.items.map((subItem) => {
                   const isSubActive = pathname === subItem.href;
+                  const isSubNew = "isNew" in subItem && subItem.isNew;
                   return (
                     <Link
                       key={subItem.href}
                       href={subItem.href}
-                      className={`block py-1.5 px-3 text-xs font-semibold rounded-md transition-all duration-150 cursor-pointer ${
+                      className={`flex items-center justify-between py-1.5 px-3 text-xs font-semibold rounded-md transition-all duration-150 cursor-pointer ${
                         isSubActive
                           ? "text-blue-600 dark:text-blue-400 font-bold bg-blue-50/40 dark:bg-blue-950/10"
                           : "text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/40"
                       }`}
                     >
-                      {subItem.label}
+                      <span className="truncate">{subItem.label}</span>
+                      {isSubNew && (
+                        <span className="px-1.5 py-0.5 rounded text-[8px] font-bold uppercase tracking-wider bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 border border-blue-100 dark:border-blue-900/50 shrink-0 ml-2">
+                          New
+                        </span>
+                      )}
                     </Link>
                   );
                 })}

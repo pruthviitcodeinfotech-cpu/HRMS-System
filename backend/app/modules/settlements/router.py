@@ -31,11 +31,15 @@ from app.modules.settlements.constants import (
 )
 from app.modules.settlements.dependencies import SettlementServiceDep
 from app.modules.settlements.schemas import (
+    ArrearsCreateRequest,
+    ArrearsPayRequest,
     ArrearsSearchQuery,
     ArrearsTransactionCreateRequest,
     ArrearsTransactionListResponse,
     ArrearsTransactionSchema,
     ArrearsTransactionSearchQuery,
+    ArrearsUpdateRequest,
+    EmployeeArrearsDetailsSchema,
     EmployeeArrearsListResponse,
     EmployeeArrearsSchema,
     LoanAdvanceCreateRequest,
@@ -245,6 +249,197 @@ async def delete_loan_advance(
 
 
 # =========================================================================
+# 1b. Singular Route Aliases (/loan-advance)
+# =========================================================================
+
+
+@router.post(
+    "/loan-advance",
+    response_model=SuccessResponse[LoanAdvanceSchema],
+    status_code=status.HTTP_201_CREATED,
+    summary="Create Loan/Advance (Singular Alias)",
+    dependencies=[Depends(require_permission(_LOAN_ADVANCE, A.CREATE))],
+)
+async def create_loan_advance_alias(
+    payload: LoanAdvanceCreateRequest,
+    service: SettlementServiceDep,
+    current_user: CurrentUserDep,
+    org_id: OrgIdDep,
+) -> dict[str, Any]:
+    """Register and issue a new loan or advance header for an employee."""
+    result = await service.create_loan_advance(
+        org_id=org_id, data=payload.model_dump(), user_id=current_user.user_id
+    )
+    return _ok(result, "Loan/Advance created successfully.")
+
+
+@router.get(
+    "/loan-advance",
+    response_model=SuccessResponse[LoanAdvanceListResponse],
+    summary="List / Search Loans/Advances (Singular Alias)",
+    dependencies=[Depends(require_permission(_LOAN_ADVANCE, A.READ))],
+)
+async def search_loans_advances_alias(
+    service: SettlementServiceDep,
+    org_id: OrgIdDep,
+    pagination: Annotated[PaginationParams, Depends(pagination_params)],
+    employee_id: Annotated[int | None, Query(description="Filter by employee ID.")] = None,
+    type: Annotated[LoanAdvanceType | None, Query(description="Filter by type.")] = None,
+    status_filter: Annotated[
+        LoanAdvanceStatus | None, Query(alias="status", description="Filter by status.")
+    ] = None,
+    date_from: Annotated[
+        datetime.date | None, Query(description="Start range of transaction date.")
+    ] = None,
+    date_to: Annotated[
+        datetime.date | None, Query(description="End range of transaction date.")
+    ] = None,
+    search: Annotated[str | None, Query(description="Free-text search on name.")] = None,
+    branch_id: Annotated[int | None, Query(description="Filter by branch ID.")] = None,
+    dept_id: Annotated[int | None, Query(description="Filter by department ID.")] = None,
+    sort_by: Annotated[str | None, Query(description="Field to sort by.")] = None,
+    sort_order: Annotated[str | None, Query(description="Sort order (asc/desc).")] = None,
+) -> dict[str, Any]:
+    """Search and filter through all employee loans & advances registries."""
+    query = LoanAdvanceSearchQuery(
+        page=pagination.page,
+        page_size=pagination.page_size,
+        employee_id=employee_id,
+        type=type,
+        status=status_filter,
+        date_from=date_from,
+        date_to=date_to,
+        search=search,
+        branch_id=branch_id,
+        dept_id=dept_id,
+        sort_by=sort_by,
+        sort_order=sort_order,
+    )
+    result = await service.search_loans_advances(org_id=org_id, query=query)
+    return _ok(result)
+
+
+@router.get(
+    "/loan-advance/logs",
+    response_model=SuccessResponse[LoanAdvanceTransactionListResponse],
+    summary="List Loan/Advance Activity & Transaction Logs",
+    dependencies=[Depends(require_permission(_LOAN_ADVANCE, A.READ))],
+)
+async def list_loan_advance_logs(
+    service: SettlementServiceDep,
+    org_id: OrgIdDep,
+    pagination: Annotated[PaginationParams, Depends(pagination_params)],
+    employee_id: Annotated[int | None, Query(description="Filter by employee ID.")] = None,
+    transaction_type: Annotated[
+        TransactionType | None, Query(description="Filter by transaction type.")
+    ] = None,
+    source: Annotated[TransactionSource | None, Query(description="Filter by source.")] = None,
+    date_from: Annotated[datetime.date | None, Query(description="Start date.")] = None,
+    date_to: Annotated[datetime.date | None, Query(description="End date.")] = None,
+    sort_by: Annotated[str | None, Query(description="Sort field.")] = None,
+    sort_order: Annotated[str | None, Query(description="Sort order.")] = None,
+) -> dict[str, Any]:
+    """Retrieve org-wide activity & ledger transaction logs for loans and advances."""
+    query = LoanAdvanceTransactionSearchQuery(
+        page=pagination.page,
+        page_size=pagination.page_size,
+        transaction_type=transaction_type,
+        source=source,
+        date_from=date_from,
+        date_to=date_to,
+        sort_by=sort_by,
+        sort_order=sort_order,
+    )
+    result = await service.list_all_loan_transactions(
+        org_id=org_id, query=query, employee_id=employee_id
+    )
+    return _ok(result)
+
+
+@router.get(
+    "/loan-advance/{id}",
+    response_model=SuccessResponse[LoanAdvanceDetailsSchema],
+    summary="Get Loan/Advance Details (Singular Alias)",
+    dependencies=[Depends(require_permission(_LOAN_ADVANCE, A.READ))],
+)
+async def get_loan_advance_alias(
+    id: int,
+    service: SettlementServiceDep,
+    org_id: OrgIdDep,
+) -> dict[str, Any]:
+    """Retrieve full details of a specific loan/advance along with transaction ledger."""
+    loan = await service.get_loan_advance(org_id=org_id, loan_advance_id=id)
+    query = LoanAdvanceTransactionSearchQuery(page=1, page_size=200)
+    txs_res = await service.list_loan_advance_transactions(
+        org_id=org_id, loan_advance_id=id, query=query
+    )
+    details = LoanAdvanceDetailsSchema.model_validate(loan)
+    details.transactions = txs_res.items
+    return _ok(details)
+
+
+@router.put(
+    "/loan-advance/{id}",
+    response_model=SuccessResponse[LoanAdvanceSchema],
+    summary="Update Loan/Advance (PUT Alias)",
+    dependencies=[Depends(require_permission(_LOAN_ADVANCE, A.EDIT))],
+)
+async def put_loan_advance_alias(
+    id: int,
+    payload: LoanAdvanceUpdateRequest,
+    service: SettlementServiceDep,
+    current_user: CurrentUserDep,
+    org_id: OrgIdDep,
+) -> dict[str, Any]:
+    """Modify parameters of an active loan/advance header."""
+    result = await service.update_loan_advance(
+        org_id=org_id,
+        loan_advance_id=id,
+        data=payload.model_dump(exclude_unset=True),
+        user_id=current_user.user_id,
+    )
+    return _ok(result, "Loan/Advance updated successfully.")
+
+
+@router.post(
+    "/loan-advance/{id}/close",
+    response_model=SuccessResponse[LoanAdvanceSchema],
+    summary="Close Loan/Advance (Singular Alias)",
+    dependencies=[Depends(require_permission(_LOAN_ADVANCE, A.EDIT))],
+)
+async def close_loan_advance_alias(
+    id: int,
+    service: SettlementServiceDep,
+    current_user: CurrentUserDep,
+    org_id: OrgIdDep,
+) -> dict[str, Any]:
+    """Manually mark an active loan/advance registry as closed."""
+    result = await service.close_loan_advance(
+        org_id=org_id, loan_advance_id=id, user_id=current_user.user_id
+    )
+    return _ok(result, "Loan/Advance closed successfully.")
+
+
+@router.delete(
+    "/loan-advance/{id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete Loan/Advance (Singular Alias)",
+    dependencies=[Depends(require_permission(_LOAN_ADVANCE, A.DELETE))],
+)
+async def delete_loan_advance_alias(
+    id: int,
+    service: SettlementServiceDep,
+    current_user: CurrentUserDep,
+    org_id: OrgIdDep,
+) -> Response:
+    """Delete a loan/advance registry header if no ledger transaction history exists."""
+    await service.delete_loan_advance(
+        org_id=org_id, loan_advance_id=id, user_id=current_user.user_id
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# =========================================================================
 # 2. Loan/Advance Ledger Endpoints
 # =========================================================================
 
@@ -331,38 +526,141 @@ async def get_employee_arrears(
     return _ok(result)
 
 
-@router.get(
+@router.post(
     "/arrears",
-    response_model=SuccessResponse[EmployeeArrearsListResponse],
-    summary="List Arrears",
+    response_model=SuccessResponse[EmployeeArrearsSchema],
+    status_code=status.HTTP_201_CREATED,
+    summary="Create Arrears Entry",
+    dependencies=[Depends(require_permission(_ARREARS, A.CREATE))],
+)
+async def create_arrears_entry(
+    payload: ArrearsCreateRequest,
+    service: SettlementServiceDep,
+    org_id: OrgIdDep,
+    current_user: CurrentUserDep,
+) -> dict[str, Any]:
+    """Create a new employee arrears entry."""
+    result = await service.create_arrears(
+        org_id=org_id,
+        data=payload.model_dump(),
+        user_id=current_user.id,
+    )
+    return _ok(result, "Arrears entry created successfully.")
+
+
+@router.get(
+    "/arrears/logs",
+    response_model=SuccessResponse[ArrearsTransactionListResponse],
+    summary="List All Arrears Logs",
     dependencies=[Depends(require_permission(_ARREARS, A.READ))],
 )
-async def list_employee_arrears(
+async def list_all_arrears_logs(
     service: SettlementServiceDep,
     org_id: OrgIdDep,
     pagination: Annotated[PaginationParams, Depends(pagination_params)],
     employee_id: Annotated[int | None, Query(description="Filter by employee ID.")] = None,
-    min_outstanding: Annotated[
-        Decimal | None, Query(description="Filter by minimum outstanding.")
+    transaction_type: Annotated[
+        TransactionType | None, Query(description="Filter by type.")
     ] = None,
-    branch_id: Annotated[int | None, Query(description="Filter by branch ID.")] = None,
-    dept_id: Annotated[int | None, Query(description="Filter by department ID.")] = None,
+    source: Annotated[TransactionSource | None, Query(description="Filter by source.")] = None,
+    date_from: Annotated[datetime.date | None, Query(description="Start date.")] = None,
+    date_to: Annotated[datetime.date | None, Query(description="End date.")] = None,
     sort_by: Annotated[str | None, Query(description="Sort field.")] = None,
     sort_order: Annotated[str | None, Query(description="Sort order.")] = None,
 ) -> dict[str, Any]:
-    """Search and paginate arrears registry headers across the organization."""
-    query = ArrearsSearchQuery(
+    """Retrieve organization-wide arrears activity and ledger logs."""
+    query = ArrearsTransactionSearchQuery(
         page=pagination.page,
         page_size=pagination.page_size,
-        employee_id=employee_id,
-        min_outstanding=min_outstanding,
-        branch_id=branch_id,
-        dept_id=dept_id,
+        transaction_type=transaction_type,
+        source=source,
+        date_from=date_from,
+        date_to=date_to,
         sort_by=sort_by,
         sort_order=sort_order,
     )
-    result = await service.list_employee_arrears(org_id=org_id, query=query)
+    query.employee_id = employee_id
+    result = await service.list_all_arrears_transactions(org_id=org_id, query=query)
     return _ok(result)
+
+
+@router.get(
+    "/arrears/{id}",
+    response_model=SuccessResponse[EmployeeArrearsSchema],
+    summary="Get Arrears by ID",
+    dependencies=[Depends(require_permission(_ARREARS, A.READ))],
+)
+async def get_arrears_by_id(
+    id: int,
+    service: SettlementServiceDep,
+    org_id: OrgIdDep,
+) -> dict[str, Any]:
+    """Retrieve an arrears header record by its ID."""
+    result = await service.get_arrears_by_id(org_id=org_id, arrears_id=id)
+    return _ok(result)
+
+
+@router.put(
+    "/arrears/{id}",
+    response_model=SuccessResponse[EmployeeArrearsSchema],
+    summary="Update Arrears",
+    dependencies=[Depends(require_permission(_ARREARS, A.EDIT))],
+)
+async def update_arrears_entry(
+    id: int,
+    payload: ArrearsUpdateRequest,
+    service: SettlementServiceDep,
+    org_id: OrgIdDep,
+    current_user: CurrentUserDep,
+) -> dict[str, Any]:
+    """Update fields of an arrears header record."""
+    result = await service.update_arrears(
+        org_id=org_id,
+        arrears_id=id,
+        data=payload.model_dump(exclude_unset=True),
+        user_id=current_user.id,
+    )
+    return _ok(result, "Arrears record updated successfully.")
+
+
+@router.delete(
+    "/arrears/{id}",
+    response_model=SuccessResponse[None],
+    summary="Delete Arrears",
+    dependencies=[Depends(require_permission(_ARREARS, A.DELETE))],
+)
+async def delete_arrears_entry(
+    id: int,
+    service: SettlementServiceDep,
+    org_id: OrgIdDep,
+    current_user: CurrentUserDep,
+) -> dict[str, Any]:
+    """Delete an arrears header record."""
+    await service.delete_arrears(org_id=org_id, arrears_id=id, user_id=current_user.id)
+    return _ok(None, "Arrears record deleted successfully.")
+
+
+@router.post(
+    "/arrears/{id}/pay",
+    response_model=SuccessResponse[ArrearsTransactionSchema],
+    summary="Pay Arrears",
+    dependencies=[Depends(require_permission(_ARREARS, A.EDIT))],
+)
+async def pay_arrears_entry(
+    id: int,
+    payload: ArrearsPayRequest,
+    service: SettlementServiceDep,
+    org_id: OrgIdDep,
+    current_user: CurrentUserDep,
+) -> dict[str, Any]:
+    """Process an arrears payment (debit transaction)."""
+    result = await service.pay_arrears(
+        org_id=org_id,
+        arrears_id=id,
+        data=payload.model_dump(),
+        user_id=current_user.id,
+    )
+    return _ok(result, "Arrears payment processed successfully.")
 
 
 # =========================================================================

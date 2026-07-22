@@ -1813,8 +1813,26 @@ class ReportsService(BaseService):
                         employee_name=it["employee_name"],
                         department_name=it["department_name"],
                         designation_name=it["designation_name"],
+                        full_day_count=it.get("full_day_count", 0.0),
+                        half_day_count=it.get("half_day_count", 0.0),
+                        absent_count=it.get("absent_count", 0.0),
+                        week_off_count=it.get("week_off_count", 0.0),
+                        paid_leave_count=it.get("paid_leave_count", 0.0),
+                        total_working_minutes=it.get("total_working_minutes", 0),
+                        total_ot_minutes=it.get("total_ot_minutes", 0),
+                        total_late_minutes=it.get("total_late_minutes", 0),
+                        total_early_out_minutes=it.get("total_early_out_minutes", 0),
                         daily_status={
-                            d: EmployeeDayWiseMasterCellSchema(status=cell["status"])
+                            d: EmployeeDayWiseMasterCellSchema(
+                                status=cell["status"],
+                                status_label=cell.get("status_label", "Absent"),
+                                first_in=cell.get("first_in"),
+                                last_out=cell.get("last_out"),
+                                total_ot_minutes=cell.get("total_ot_minutes", 0),
+                                late_minutes=cell.get("late_minutes", 0),
+                                early_out_minutes=cell.get("early_out_minutes", 0),
+                                working_minutes=cell.get("working_minutes", 0),
+                            )
                             for d, cell in it["daily_status"].items()
                         },
                     )

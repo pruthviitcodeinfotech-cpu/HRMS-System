@@ -1174,9 +1174,16 @@ class LeaveTakenReportResponse(BaseSchema):
 
 
 class EmployeeDayWiseMasterCellSchema(BaseSchema):
-    """Attendance status for a single date cell in Day Wise Master."""
+    """Attendance status and punch details for a single date cell in Day Wise Master."""
 
     status: str = Field(..., description="Short status code (P, A, HD, WO, H, L, LWP, CO).")
+    status_label: str = Field("Absent", description="Full status label (Present, Absent, HD, Week Off, Holiday, Leave).")
+    first_in: str | None = Field(None, description="Formatted first punch in time (e.g. 07:28 PM).")
+    last_out: str | None = Field(None, description="Formatted last punch out time (e.g. 06:42 PM).")
+    total_ot_minutes: int = Field(0, description="Overtime in minutes.")
+    late_minutes: int = Field(0, description="Late in minutes.")
+    early_out_minutes: int = Field(0, description="Early out minutes.")
+    working_minutes: int = Field(0, description="Total working minutes.")
 
 
 class EmployeeDayWiseMasterRowSchema(BaseSchema):
@@ -1187,6 +1194,15 @@ class EmployeeDayWiseMasterRowSchema(BaseSchema):
     employee_name: str = Field(..., description="Full employee name.")
     department_name: str = Field(..., description="Department name.")
     designation_name: str = Field(..., description="Designation name.")
+    full_day_count: float = Field(0, description="Total full days count.")
+    half_day_count: float = Field(0, description="Total half days count.")
+    absent_count: float = Field(0, description="Total absent days count.")
+    week_off_count: float = Field(0, description="Total week off days count.")
+    paid_leave_count: float = Field(0, description="Total paid leave days count.")
+    total_working_minutes: int = Field(0, description="Total working minutes across period.")
+    total_ot_minutes: int = Field(0, description="Total overtime minutes across period.")
+    total_late_minutes: int = Field(0, description="Total late minutes across period.")
+    total_early_out_minutes: int = Field(0, description="Total early out minutes across period.")
     daily_status: dict[str, EmployeeDayWiseMasterCellSchema] = Field(
         default_factory=dict,
         description="Map of date string (YYYY-MM-DD) to day-wise attendance status details.",

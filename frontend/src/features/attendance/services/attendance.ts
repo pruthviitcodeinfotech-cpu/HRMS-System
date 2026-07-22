@@ -574,6 +574,13 @@ export interface EmployeeDayWiseMasterReportQueryParams {
 
 export interface EmployeeDayWiseMasterCell {
   status: string;
+  status_label?: string;
+  first_in?: string | null;
+  last_out?: string | null;
+  total_ot_minutes?: number;
+  late_minutes?: number;
+  early_out_minutes?: number;
+  working_minutes?: number;
 }
 
 export interface EmployeeDayWiseMasterRow {
@@ -582,6 +589,15 @@ export interface EmployeeDayWiseMasterRow {
   employee_name: string;
   department_name: string;
   designation_name: string;
+  full_day_count?: number;
+  half_day_count?: number;
+  absent_count?: number;
+  week_off_count?: number;
+  paid_leave_count?: number;
+  total_working_minutes?: number;
+  total_ot_minutes?: number;
+  total_late_minutes?: number;
+  total_early_out_minutes?: number;
   daily_status: Record<string, EmployeeDayWiseMasterCell>;
 }
 

@@ -3490,6 +3490,12 @@ class ReportsRepository(BaseRepository[Employee]):
                 AttendanceDay.employee_id,
                 AttendanceDay.attendance_date,
                 AttendanceDay.status,
+                AttendanceDay.first_punch_in,
+                AttendanceDay.last_punch_out,
+                AttendanceDay.total_working_minutes,
+                AttendanceDay.overtime_minutes,
+                AttendanceDay.late_minutes,
+                AttendanceDay.early_leaving_minutes,
                 LeaveType.alias.label("leave_type_alias"),
             )
             .outerjoin(LeaveRequest, AttendanceDay.leave_id == LeaveRequest.id)
@@ -3502,8 +3508,8 @@ class ReportsRepository(BaseRepository[Employee]):
         days_res = await self.session.execute(days_stmt)
         days_rows = days_res.all()
 
-        attendance_map: dict[tuple[int, str], tuple[str, str | None]] = {
-            (r.employee_id, r.attendance_date.isoformat()): (r.status, r.leave_type_alias)
+        attendance_map: dict[tuple[int, str], Any] = {
+            (r.employee_id, r.attendance_date.isoformat()): r
             for r in days_rows
         }
 
@@ -3512,37 +3518,100 @@ class ReportsRepository(BaseRepository[Employee]):
             emp_id = emp.employee_id
             daily_status: dict[str, dict[str, Any]] = {}
 
+            full_day_cnt = 0.0
+            half_day_cnt = 0.0
+            absent_cnt = 0.0
+            week_off_cnt = 0.0
+            paid_leave_cnt = 0.0
+            tot_work_min = 0
+            tot_ot_min = 0
+            tot_late_min = 0
+            tot_early_min = 0
+
             for d_str in dates:
-                day_info = attendance_map.get((emp_id, d_str))
-                if day_info:
-                    st_raw, lt_alias = day_info
-                    st_raw = (st_raw or "absent").lower()
+                row_data = attendance_map.get((emp_id, d_str))
+                if row_data:
+                    st_raw = (row_data.status or "absent").lower()
+                    lt_alias = row_data.leave_type_alias
 
                     if st_raw == "present":
                         code = "P"
+                        st_label = "FD"
+                        full_day_cnt += 1.0
                     elif st_raw in ("half_day", "halfday"):
                         code = "HD"
+                        st_label = "HD"
+                        half_day_cnt += 1.0
                     elif st_raw in ("week_off", "weekoff"):
                         code = "WO"
+                        st_label = "Week Off"
+                        week_off_cnt += 1.0
                     elif st_raw == "holiday":
                         code = "H"
+                        st_label = "Holiday"
                     elif st_raw == "on_leave":
                         if lt_alias:
                             lt_upper = lt_alias.upper()
                             if lt_upper == "LWP":
                                 code = "LWP"
+                                st_label = "LWP"
+                                absent_cnt += 1.0
                             elif lt_upper in ("CO", "COMP_OFF", "COMPOFF"):
                                 code = "CO"
+                                st_label = "Leave"
+                                paid_leave_cnt += 1.0
                             else:
                                 code = "L"
+                                st_label = "Leave"
+                                paid_leave_cnt += 1.0
                         else:
                             code = "L"
+                            st_label = "Leave"
+                            paid_leave_cnt += 1.0
                     else:
                         code = "A"
+                        st_label = "Absent"
+                        absent_cnt += 1.0
+
+                    first_in_str = row_data.first_punch_in.strftime("%I:%M %p") if row_data.first_punch_in else None
+                    last_out_str = row_data.last_punch_out.strftime("%I:%M %p") if row_data.last_punch_out else None
+
+                    # Calculate total hours (elapsed time between First In and Last Out if both exist)
+                    if row_data.first_punch_in and row_data.last_punch_out:
+                        diff_sec = (row_data.last_punch_out - row_data.first_punch_in).total_seconds()
+                        work_m = max(0, int(diff_sec // 60))
+                    else:
+                        work_m = row_data.total_working_minutes or 0
+
+                    ot_m = row_data.overtime_minutes or 0
+                    late_m = row_data.late_minutes or 0
+                    early_m = row_data.early_leaving_minutes or 0
+
+                    tot_work_min += work_m
+                    tot_ot_min += ot_m
+                    tot_late_min += late_m
+                    tot_early_min += early_m
                 else:
                     code = "A"
+                    st_label = "Absent"
+                    absent_cnt += 1.0
+                    first_in_str = None
+                    last_out_str = None
+                    work_m = 0
+                    ot_m = 0
+                    late_m = 0
+                    early_m = 0
 
-                daily_status[d_str] = {"status": code}
+                daily_status[d_str] = {
+                    "status": code,
+                    "status_label": st_label,
+                    "first_in": first_in_str,
+                    "last_out": last_out_str,
+                    "total_ot_minutes": ot_m,
+                    "late_minutes": late_m,
+                    "early_out_minutes": early_m,
+                    "working_minutes": work_m,
+                }
 
             items.append(
                 {
@@ -3551,6 +3620,15 @@ class ReportsRepository(BaseRepository[Employee]):
                     "employee_name": emp.employee_name,
                     "department_name": emp.department_name or "General",
                     "designation_name": emp.designation_name or "Staff",
+                    "full_day_count": full_day_cnt,
+                    "half_day_count": half_day_cnt,
+                    "absent_count": absent_cnt,
+                    "week_off_count": week_off_cnt,
+                    "paid_leave_count": paid_leave_cnt,
+                    "total_working_minutes": tot_work_min,
+                    "total_ot_minutes": tot_ot_min,
+                    "total_late_minutes": tot_late_min,
+                    "total_early_out_minutes": tot_early_min,
                     "daily_status": daily_status,
                 }
             )

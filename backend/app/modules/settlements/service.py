@@ -422,6 +422,43 @@ class SettlementService(BaseService):
         )
         return self.paginate(items, page=query.page, page_size=query.page_size, total_records=total)
 
+    async def list_all_loan_transactions(
+        self,
+        org_id: int,
+        query: LoanAdvanceTransactionSearchQuery,
+        employee_id: int | None = None,
+    ) -> PaginatedResponse[LoanAdvanceTransaction]:
+        """List and paginate org-wide ledger transactions for loans/advances."""
+        items = await self.loan_transactions.search_all_transactions(
+            org_id,
+            employee_id=employee_id,
+            transaction_type=(
+                getattr(query.transaction_type, "value", query.transaction_type)
+                if query.transaction_type
+                else None
+            ),
+            source=getattr(query.source, "value", query.source) if query.source else None,
+            date_from=query.date_from,
+            date_to=query.date_to,
+            sort_by=query.sort_by,
+            sort_order=query.sort_order or SortOrder.DESC,
+            page=query.page,
+            page_size=query.page_size,
+        )
+        total = await self.loan_transactions.search_all_transactions_count(
+            org_id,
+            employee_id=employee_id,
+            transaction_type=(
+                getattr(query.transaction_type, "value", query.transaction_type)
+                if query.transaction_type
+                else None
+            ),
+            source=getattr(query.source, "value", query.source) if query.source else None,
+            date_from=query.date_from,
+            date_to=query.date_to,
+        )
+        return self.paginate(items, page=query.page, page_size=query.page_size, total_records=total)
+
     # =========================================================================
     # 3. Arrears (Headers)
     # =========================================================================
@@ -431,6 +468,13 @@ class SettlementService(BaseService):
         await self._validate_employee(org_id, employee_id)
         arrears = await self.arrears.get_by_employee_id(org_id, employee_id)
         if not arrears:
+            raise ArrearsNotFoundException()
+        return arrears
+
+    async def get_arrears_by_id(self, org_id: int, arrears_id: int) -> EmployeeArrears:
+        """Retrieve an arrears header record by its primary key ID."""
+        arrears = await self.arrears.get_by_id(arrears_id)
+        if not arrears or arrears.org_id != org_id:
             raise ArrearsNotFoundException()
         return arrears
 
@@ -455,6 +499,208 @@ class SettlementService(BaseService):
             min_outstanding=query.min_outstanding,
             branch_id=query.branch_id,
             dept_id=query.dept_id,
+        )
+        return self.paginate(items, page=query.page, page_size=query.page_size, total_records=total)
+
+    async def create_arrears(
+        self, org_id: int, data: dict[str, Any], user_id: int
+    ) -> EmployeeArrears:
+        """Create a new employee arrears entry and post credit transaction."""
+        employee_id = data["employee_id"]
+        emp = await self._validate_employee(org_id, employee_id)
+
+        amount = Decimal(str(data["amount"]))
+        if amount <= 0:
+            raise InvalidTransactionException("Arrears amount must be positive.")
+
+        async with self.transaction():
+            arrears = await self.arrears.get_by_employee_id(org_id, employee_id)
+            if arrears is None:
+                arrears = await self.arrears.create(
+                    {
+                        "org_id": org_id,
+                        "employee_id": employee_id,
+                        "arrears_created": Decimal("0.00"),
+                        "arrears_paid": Decimal("0.00"),
+                        "outstanding_arrears": Decimal("0.00"),
+                    }
+                )
+
+            outstanding_before = arrears.outstanding_arrears
+            arrears.arrears_created += amount
+            arrears.outstanding_arrears += amount
+            outstanding_after = arrears.outstanding_arrears
+            arrears.updated_at = datetime.now()
+            await self.arrears.update(arrears, {})
+
+            # Record credit ledger transaction
+            await self.arrears_transactions.create(
+                {
+                    "org_id": org_id,
+                    "employee_arrears_id": arrears.id,
+                    "employee_id": employee_id,
+                    "transaction_date": data.get("transaction_date") or date.today(),
+                    "transaction_type": "credit",
+                    "amount": amount,
+                    "outstanding_before": outstanding_before,
+                    "outstanding_after": outstanding_after,
+                    "comment": data.get("comment"),
+                    "source": "manual",
+                    "created_by": user_id,
+                }
+            )
+
+            await self.audit.record(
+                org_id=org_id,
+                module="settlements",
+                sub_module="arrears",
+                action_type=ActionType.INSERT,
+                title="Create Arrears Entry",
+                description=f"Created arrears entry of {amount} for employee {emp.employee_name}.",
+                performed_by_user_id=user_id,
+                performed_by_name=f"User {user_id}",
+                employee_id=employee_id,
+                employee_name=emp.employee_name,
+            )
+
+            return arrears
+
+    async def update_arrears(
+        self, org_id: int, arrears_id: int, data: dict[str, Any], user_id: int
+    ) -> EmployeeArrears:
+        """Update fields of an arrears header record."""
+        arrears = await self.get_arrears_by_id(org_id, arrears_id)
+        emp = await self._validate_employee(org_id, arrears.employee_id)
+
+        updates: dict[str, Any] = {"updated_at": datetime.now()}
+
+        if "amount" in data and data["amount"] is not None:
+            new_amount = Decimal(str(data["amount"]))
+            if new_amount <= 0:
+                raise InvalidTransactionException("Arrears amount must be positive.")
+            diff = new_amount - arrears.arrears_created
+            arrears.arrears_created = new_amount
+            arrears.outstanding_arrears = max(Decimal("0.00"), arrears.outstanding_arrears + diff)
+
+        async with self.transaction():
+            updated = await self.arrears.update(arrears, updates)
+            await self.audit.record(
+                org_id=org_id,
+                module="settlements",
+                sub_module="arrears",
+                action_type=ActionType.UPDATE,
+                title="Update Arrears",
+                description=f"Updated arrears record #{arrears_id}.",
+                performed_by_user_id=user_id,
+                performed_by_name=f"User {user_id}",
+                employee_id=arrears.employee_id,
+                employee_name=emp.employee_name,
+            )
+            return updated
+
+    async def delete_arrears(self, org_id: int, arrears_id: int, user_id: int) -> None:
+        """Delete an arrears header record."""
+        arrears = await self.get_arrears_by_id(org_id, arrears_id)
+        emp = await self._validate_employee(org_id, arrears.employee_id)
+
+        async with self.transaction():
+            await self.arrears.delete(arrears)
+            await self.audit.record(
+                org_id=org_id,
+                module="settlements",
+                sub_module="arrears",
+                action_type=ActionType.DELETE,
+                title="Delete Arrears",
+                description=f"Deleted arrears record #{arrears_id}.",
+                performed_by_user_id=user_id,
+                performed_by_name=f"User {user_id}",
+                employee_id=arrears.employee_id,
+                employee_name=emp.employee_name,
+            )
+
+    async def pay_arrears(
+        self, org_id: int, arrears_id: int, data: dict[str, Any], user_id: int
+    ) -> ArrearsTransaction:
+        """Process payment (debit transaction) against an arrears record."""
+        arrears = await self.get_arrears_by_id(org_id, arrears_id)
+        emp = await self._validate_employee(org_id, arrears.employee_id)
+
+        amount = Decimal(str(data["amount"]))
+        if amount <= 0:
+            raise InvalidTransactionException("Payment amount must be positive.")
+        if amount > arrears.outstanding_arrears:
+            raise InsufficientArrearsException()
+
+        async with self.transaction():
+            outstanding_before = arrears.outstanding_arrears
+            arrears.arrears_paid += amount
+            arrears.outstanding_arrears -= amount
+            outstanding_after = arrears.outstanding_arrears
+            arrears.updated_at = datetime.now()
+            await self.arrears.update(arrears, {})
+
+            tx = await self.arrears_transactions.create(
+                {
+                    "org_id": org_id,
+                    "employee_arrears_id": arrears.id,
+                    "employee_id": arrears.employee_id,
+                    "transaction_date": data.get("transaction_date") or date.today(),
+                    "transaction_type": "debit",
+                    "amount": amount,
+                    "outstanding_before": outstanding_before,
+                    "outstanding_after": outstanding_after,
+                    "comment": data.get("comment"),
+                    "source": "manual",
+                    "created_by": user_id,
+                }
+            )
+
+            await self.audit.record(
+                org_id=org_id,
+                module="settlements",
+                sub_module="arrears_payment",
+                action_type=ActionType.INSERT,
+                title="Pay Arrears",
+                description=f"Paid {amount} towards arrears for employee {emp.employee_name}.",
+                performed_by_user_id=user_id,
+                performed_by_name=f"User {user_id}",
+                employee_id=arrears.employee_id,
+                employee_name=emp.employee_name,
+            )
+
+            return tx
+
+    async def list_all_arrears_transactions(
+        self, org_id: int, query: ArrearsTransactionSearchQuery
+    ) -> PaginatedResponse[ArrearsTransaction]:
+        """Retrieve org-wide arrears activity/transaction logs."""
+        items = await self.arrears_transactions.search_all_transactions(
+            org_id,
+            employee_id=getattr(query, "employee_id", None),
+            transaction_type=(
+                getattr(query.transaction_type, "value", query.transaction_type)
+                if query.transaction_type
+                else None
+            ),
+            source=getattr(query.source, "value", query.source) if query.source else None,
+            date_from=query.date_from,
+            date_to=query.date_to,
+            sort_by=query.sort_by,
+            sort_order=query.sort_order or SortOrder.DESC,
+            page=query.page,
+            page_size=query.page_size,
+        )
+        total = await self.arrears_transactions.search_all_transactions_count(
+            org_id,
+            employee_id=getattr(query, "employee_id", None),
+            transaction_type=(
+                getattr(query.transaction_type, "value", query.transaction_type)
+                if query.transaction_type
+                else None
+            ),
+            source=getattr(query.source, "value", query.source) if query.source else None,
+            date_from=query.date_from,
+            date_to=query.date_to,
         )
         return self.paginate(items, page=query.page, page_size=query.page_size, total_records=total)
 

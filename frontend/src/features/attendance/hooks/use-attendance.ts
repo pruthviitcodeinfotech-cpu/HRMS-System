@@ -21,7 +21,6 @@ import {
   LeaveTakenReportData,
   LeaveTakenReportRow,
   EmployeeDayWiseMasterReportQueryParams,
-  EmployeeDayWiseMasterReportData,
 } from "../services/attendance";
 
 import { leaveService } from "@/features/leaves/services";
