@@ -11,3 +11,6 @@ export * from "./components/attendance-loading";
 export * from "./components/attendance-master-view";
 export * from "./components/shift-wise-report-view";
 export * from "./components/daily-punch-report-view";
+export * from "./components/muster-report-view";
+export * from "./components/working-hours-report-view";
+export * from "./components/branch-wise-punch-report-view";

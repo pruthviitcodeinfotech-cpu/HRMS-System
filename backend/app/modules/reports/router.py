@@ -71,6 +71,14 @@ async def _map_report_result(
             request_id=get_request_id(),
         )
 
+    from pydantic import BaseModel
+    if isinstance(res, BaseModel) and hasattr(res, "data"):
+        return success_response(
+            data=res.data,
+            message=success_msg,
+            request_id=get_request_id(),
+        )
+
     return success_response(
         data=res,
         message=success_msg,
@@ -327,6 +335,32 @@ async def get_working_hours_matrix_report(
 
 
 @router.get(
+    "/attendance/branch-wise-punch",
+    response_model=None,
+    responses={
+        202: {
+            "model": SuccessResponse[ExportJobStatusResponse],
+            "description": "Large export job accepted.",
+        },
+        200: {"description": "JSON report data or synchronous file download (CSV/Excel/PDF)."},
+    },
+    summary="Branch Wise Punch Report",
+    description="Fetch multi-day branch wise punch matrix report grouped by employee.",
+    dependencies=[Depends(require_permission(_FEATURE_KEY, A.READ))],
+)
+async def get_branch_wise_punch_report(
+    service: ReportsServiceDep,
+    org_id: OrgIdDep,
+    current_user: CurrentUserDep,
+    response: Response,
+    query: ReportQueryDep,
+) -> Any:
+    """Retrieve filtered and paginated branch wise punch report."""
+    res = await service.get_branch_wise_punch_report(org_id=org_id, user=current_user, query=query)
+    return await _map_report_result(res, response)
+
+
+@router.get(
     "/attendance/muster",
     response_model=None,
     responses={
@@ -349,6 +383,38 @@ async def get_muster_report(
 ) -> Any:
     """Retrieve filtered and paginated muster roll report."""
     res = await service.get_muster_report(org_id=org_id, user=current_user, query=query)
+    return await _map_report_result(res, response)
+
+
+@router.get(
+    "/attendance/employee-day-wise-master",
+    response_model=None,
+    responses={
+        202: {
+            "model": SuccessResponse[ExportJobStatusResponse],
+            "description": "Large export job accepted.",
+        },
+        200: {"description": "JSON report data or synchronous file download (CSV/Excel/PDF)."},
+    },
+    summary="Employee Day Wise Master Report",
+    description="Fetch multi-day day-wise master report grouped by employee.",
+    dependencies=[Depends(require_permission(_FEATURE_KEY, A.READ))],
+)
+async def get_employee_day_wise_master_report(
+    service: ReportsServiceDep,
+    org_id: OrgIdDep,
+    current_user: CurrentUserDep,
+    response: Response,
+    query: ReportQueryDep,
+    department_id: int | None = Query(None, description="Filter by department id."),
+    designation_id: int | None = Query(None, description="Filter by designation id."),
+) -> Any:
+    """Retrieve filtered and paginated employee day-wise master report."""
+    if department_id is not None:
+        query.dept_id = department_id
+    if designation_id is not None:
+        query.designation_id = designation_id
+    res = await service.get_employee_day_wise_master_report(org_id=org_id, user=current_user, query=query)
     return await _map_report_result(res, response)
 
 
@@ -668,6 +734,35 @@ async def get_leave_summary_report(
 ) -> Any:
     """Retrieve leave summary report."""
     res = await service.get_leave_summary_report(org_id=org_id, user=current_user, query=query)
+    return await _map_report_result(res, response)
+
+
+@router.get(
+    "/leave/taken",
+    response_model=None,
+    responses={
+        202: {
+            "model": SuccessResponse[ExportJobStatusResponse],
+            "description": "Large export job accepted.",
+        },
+        200: {"description": "JSON matrix data or synchronous file download (CSV/Excel/PDF)."},
+    },
+    summary="Leave Taken Report",
+    description="Fetch leave taken matrix grouped by employee.",
+    dependencies=[Depends(require_permission(_FEATURE_KEY, A.READ))],
+)
+async def get_leave_taken_report(
+    service: ReportsServiceDep,
+    org_id: OrgIdDep,
+    current_user: CurrentUserDep,
+    response: Response,
+    query: ReportQueryDep,
+    department_id: int | None = Query(None, description="Filter by department id."),
+) -> Any:
+    """Retrieve filtered and paginated leave taken report."""
+    if department_id is not None:
+        query.dept_id = department_id
+    res = await service.get_leave_taken_report(org_id=org_id, user=current_user, query=query)
     return await _map_report_result(res, response)
 
 

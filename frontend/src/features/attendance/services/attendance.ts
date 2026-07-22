@@ -318,6 +318,36 @@ export const attendanceService = {
       q ? `/reports/attendance/muster?${q}` : "/reports/attendance/muster"
     );
   },
+
+  // GET /reports/attendance/branch-wise-punch
+  getBranchWisePunchReport: async (
+    params: BranchWisePunchReportQueryParams
+  ): Promise<ApiResponse<BranchWisePunchReportData>> => {
+    const q = buildQueryString(params);
+    return apiClient.get<ApiResponse<BranchWisePunchReportData>>(
+      q ? `/reports/attendance/branch-wise-punch?${q}` : "/reports/attendance/branch-wise-punch"
+    );
+  },
+
+  // GET /reports/leave/taken
+  getLeaveTakenReport: async (
+    params: LeaveTakenReportQueryParams
+  ): Promise<ApiResponse<LeaveTakenReportData>> => {
+    const q = buildQueryString(params);
+    return apiClient.get<ApiResponse<LeaveTakenReportData>>(
+      q ? `/reports/leave/taken?${q}` : "/reports/leave/taken"
+    );
+  },
+
+  // GET /reports/attendance/employee-day-wise-master
+  getEmployeeDayWiseMasterReport: async (
+    params: EmployeeDayWiseMasterReportQueryParams
+  ): Promise<ApiResponse<EmployeeDayWiseMasterReportData>> => {
+    const q = buildQueryString(params);
+    return apiClient.get<ApiResponse<EmployeeDayWiseMasterReportData>>(
+      q ? `/reports/attendance/employee-day-wise-master?${q}` : "/reports/attendance/employee-day-wise-master"
+    );
+  },
 };
 
 export interface DailyPunchCell {
@@ -454,3 +484,116 @@ export interface MusterReportQueryParams {
   sort_by?: string;
   sort_dir?: "asc" | "desc";
 }
+
+export interface BranchWisePunchCell {
+  minutes: number;
+  is_missing_punch: boolean;
+  has_punch: boolean;
+}
+
+export interface BranchWisePunchRow {
+  employee_id: number;
+  employee_code: string;
+  employee_name: string;
+  branch_name: string;
+  department_name: string;
+  designation_name: string;
+  total_working_minutes: number;
+  daily_punches: Record<string, BranchWisePunchCell>;
+}
+
+export interface BranchWisePunchReportData {
+  dates: string[];
+  items: BranchWisePunchRow[];
+  pagination: {
+    page: number;
+    page_size: number;
+    total_records: number;
+    total_pages: number;
+  };
+}
+
+export interface BranchWisePunchReportQueryParams {
+  date_from?: string;
+  date_to?: string;
+  branch_id?: number;
+  dept_id?: number;
+  employee_id?: number;
+  page?: number;
+  page_size?: number;
+  format?: string;
+  sort_by?: string;
+  sort_dir?: "asc" | "desc";
+}
+
+export interface LeaveTakenReportQueryParams {
+  date_from?: string;
+  date_to?: string;
+  branch_id?: number;
+  department_id?: number;
+  employee_id?: number;
+  page?: number;
+  page_size?: number;
+  format?: string;
+  sort_by?: string;
+  sort_dir?: "asc" | "desc";
+}
+
+export interface LeaveTakenReportRow {
+  employee_id: number;
+  employee_code: string;
+  employee_name: string;
+  department_name: string;
+  designation_name: string;
+  leaves: Record<string, number>;
+  total_leaves: number;
+}
+
+export interface LeaveTakenReportData {
+  leave_types: string[];
+  items: LeaveTakenReportRow[];
+  pagination: {
+    page: number;
+    page_size: number;
+    total_records: number;
+    total_pages: number;
+  };
+}
+
+export interface EmployeeDayWiseMasterReportQueryParams {
+  date_from?: string;
+  date_to?: string;
+  department_id?: number;
+  designation_id?: number;
+  page?: number;
+  page_size?: number;
+  format?: string;
+  sort_by?: string;
+  sort_dir?: "asc" | "desc";
+}
+
+export interface EmployeeDayWiseMasterCell {
+  status: string;
+}
+
+export interface EmployeeDayWiseMasterRow {
+  employee_id: number;
+  employee_code: string;
+  employee_name: string;
+  department_name: string;
+  designation_name: string;
+  daily_status: Record<string, EmployeeDayWiseMasterCell>;
+}
+
+export interface EmployeeDayWiseMasterReportData {
+  dates: string[];
+  items: EmployeeDayWiseMasterRow[];
+  pagination: {
+    page: number;
+    page_size: number;
+    total_records: number;
+    total_pages: number;
+  };
+}
+
+

@@ -27,6 +27,10 @@ from app.jobs.queue import JobName, enqueue
 from app.modules.reports.repository import ReportsRepository
 from app.shared.schemas.pagination import PaginationMeta
 from app.modules.reports.schemas import (
+    BranchWisePunchCellSchema,
+    BranchWisePunchRowSchema,
+    BranchWisePunchReportDataSchema,
+    BranchWisePunchReportResponse,
     ApprovalHistoryReportItemSchema,
     ApprovalHistoryReportResponse,
     ApprovalPerformanceReportItemSchema,
@@ -84,6 +88,13 @@ from app.modules.reports.schemas import (
     LeaveRequestReportItemSchema,
     LeaveRequestReportResponse,
     LeaveSummaryReportResponse,
+    LeaveTakenReportResponse,
+    LeaveTakenReportDataSchema,
+    LeaveTakenReportRowSchema,
+    EmployeeDayWiseMasterReportResponse,
+    EmployeeDayWiseMasterReportDataSchema,
+    EmployeeDayWiseMasterRowSchema,
+    EmployeeDayWiseMasterCellSchema,
     MissingPunchReportItemSchema,
     MissingPunchReportResponse,
     MonthlyAttendanceReportItemSchema,
@@ -900,6 +911,101 @@ class ReportsService(BaseService):
             ),
         )
 
+    async def get_branch_wise_punch_report(
+        self, org_id: int, user: CurrentUser, query: ReportQueryRequest
+    ) -> BranchWisePunchReportResponse | dict[str, Any] | bytes:
+        """Fetch multi-day branch wise punch matrix report."""
+        self._enforce_permissions(user, ["attendance"])
+        branch_ids, dept_ids = self._resolve_data_scopes(user)
+        effective_branch_ids = [query.branch_id] if query.branch_id is not None else branch_ids
+        effective_dept_ids = [query.dept_id] if query.dept_id is not None else dept_ids
+
+        today = datetime.date.today()
+        d_from = query.date_from or today.replace(day=1)
+        d_to = query.date_to or today
+
+        data_dict, total_records = await self.repo.get_branch_wise_punch_report(
+            org_id=org_id,
+            date_from=d_from,
+            date_to=d_to,
+            branch_ids=effective_branch_ids,
+            dept_ids=effective_dept_ids,
+            employee_id=query.employee_id,
+            sort_by=query.sort_by,
+            sort_dir=query.sort_dir,
+            page=query.page,
+            page_size=query.page_size,
+        )
+
+        if query.format in ("csv", "excel", "pdf"):
+            export_rows = []
+            for item in data_dict.get("items", []):
+                row_dict = {
+                    "Employee ID": item["employee_code"],
+                    "Employee Name": item["employee_name"],
+                    "Branch": item["branch_name"],
+                    "Department": item["department_name"],
+                    "Designation": item["designation_name"],
+                    "Total Working Hours": f"{item['total_working_minutes'] // 60}h {item['total_working_minutes'] % 60}m",
+                }
+                for d_str in data_dict.get("dates", []):
+                    cell = item["daily_punches"].get(d_str, {})
+                    if cell.get("has_punch"):
+                        if cell.get("is_missing_punch"):
+                            row_dict[d_str] = "0h 0m (Warning)"
+                        else:
+                            row_dict[d_str] = f"{cell['minutes'] // 60}h {cell['minutes'] % 60}m"
+                    else:
+                        row_dict[d_str] = "-"
+                export_rows.append(row_dict)
+
+            headers = list(export_rows[0].keys()) if export_rows else []
+            rows = [[r.get(h) for h in headers] for r in export_rows]
+
+            if query.format == "pdf":
+                file_bytes = self._generate_pdf_bytes("branch_wise_punch_report", headers, rows)
+                media_type = "application/pdf"
+                ext = "pdf"
+            else:
+                file_bytes = self._generate_csv_bytes(headers, rows)
+                media_type = (
+                    "text/csv"
+                    if query.format == "csv"
+                    else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+                ext = "csv" if query.format == "csv" else "xlsx"
+
+            return {
+                "file_bytes": file_bytes,
+                "filename": f"branch_wise_punch_report_{utcnow().strftime('%Y%m%d_%H%M%S')}.{ext}",
+                "media_type": media_type,
+            }
+
+        return BranchWisePunchReportResponse(
+            success=True,
+            data=BranchWisePunchReportDataSchema(
+                dates=data_dict["dates"],
+                items=[
+                    BranchWisePunchRowSchema(
+                        employee_id=it["employee_id"],
+                        employee_code=it["employee_code"],
+                        employee_name=it["employee_name"],
+                        branch_name=it["branch_name"],
+                        department_name=it["department_name"],
+                        designation_name=it["designation_name"],
+                        total_working_minutes=it["total_working_minutes"],
+                        daily_punches={
+                            k: BranchWisePunchCellSchema(**v) for k, v in it["daily_punches"].items()
+                        },
+                    )
+                    for it in data_dict["items"]
+                ],
+                pagination=PaginationMeta.build(
+                    page=query.page, page_size=query.page_size, total_records=total_records
+                ),
+            ),
+        )
+
     async def get_muster_report(
         self, org_id: int, user: CurrentUser, query: ReportQueryRequest
     ) -> MusterReportResponse | dict[str, Any] | bytes:
@@ -1550,3 +1656,173 @@ class ReportsService(BaseService):
             repo_func=self.repo.get_shift_assignments_report,
             response_cls=ReportPaginatedResponse,
         )
+
+    async def get_leave_taken_report(
+        self, org_id: int, user: CurrentUser, query: ReportQueryRequest
+    ) -> LeaveTakenReportResponse | dict[str, Any] | bytes:
+        """Fetch leave taken report matrix showing leaves taken per employee per active leave type."""
+        self._enforce_permissions(user, ["leave"])
+        branch_ids, dept_ids = self._resolve_data_scopes(user)
+        effective_branch_ids = [query.branch_id] if query.branch_id is not None else branch_ids
+        effective_dept_ids = [query.dept_id] if query.dept_id is not None else dept_ids
+
+        today = datetime.date.today()
+        d_from = query.date_from or today.replace(day=1)
+        d_to = query.date_to or today
+
+        data_dict, total_records = await self.repo.get_leave_taken_report(
+            org_id=org_id,
+            date_from=d_from,
+            date_to=d_to,
+            branch_ids=effective_branch_ids,
+            dept_ids=effective_dept_ids,
+            employee_id=query.employee_id,
+            sort_by=query.sort_by,
+            sort_dir=query.sort_dir,
+            page=query.page,
+            page_size=query.page_size,
+        )
+
+        if query.format in ("csv", "excel", "pdf"):
+            export_rows = []
+            for item in data_dict.get("items", []):
+                row_dict = {
+                    "Employee ID": item["employee_code"],
+                    "Employee Name": item["employee_name"],
+                    "Department": item["department_name"],
+                    "Designation": item["designation_name"],
+                }
+                for lt_alias in data_dict.get("leave_types", []):
+                    taken_count = item["leaves"].get(lt_alias, 0.0)
+                    row_dict[lt_alias.upper()] = taken_count
+                row_dict["Total Leaves"] = item["total_leaves"]
+                export_rows.append(row_dict)
+
+            headers = list(export_rows[0].keys()) if export_rows else []
+            rows = [[r.get(h) for h in headers] for r in export_rows]
+
+            if query.format == "pdf":
+                file_bytes = self._generate_pdf_bytes("leave_taken_report", headers, rows)
+                media_type = "application/pdf"
+                ext = "pdf"
+            else:
+                file_bytes = self._generate_csv_bytes(headers, rows)
+                media_type = (
+                    "text/csv"
+                    if query.format == "csv"
+                    else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+                ext = "csv" if query.format == "csv" else "xlsx"
+
+            return {
+                "file_bytes": file_bytes,
+                "filename": f"leave_taken_report_{utcnow().strftime('%Y%m%d_%H%M%S')}.{ext}",
+                "media_type": media_type,
+            }
+
+        return LeaveTakenReportResponse(
+            success=True,
+            data=LeaveTakenReportDataSchema(
+                leave_types=data_dict["leave_types"],
+                items=[
+                    LeaveTakenReportRowSchema(
+                        employee_id=it["employee_id"],
+                        employee_code=it["employee_code"],
+                        employee_name=it["employee_name"],
+                        department_name=it["department_name"],
+                        designation_name=it["designation_name"],
+                        leaves=it["leaves"],
+                        total_leaves=it["total_leaves"],
+                    )
+                    for it in data_dict["items"]
+                ],
+                pagination=PaginationMeta.build(
+                    page=query.page, page_size=query.page_size, total_records=total_records
+                ),
+            ),
+        )
+
+    async def get_employee_day_wise_master_report(
+        self, org_id: int, user: CurrentUser, query: ReportQueryRequest
+    ) -> EmployeeDayWiseMasterReportResponse | dict[str, Any] | bytes:
+        """Fetch multi-day day-wise master report grouped by employee."""
+        self._enforce_permissions(user, ["attendance"])
+        branch_ids, dept_ids = self._resolve_data_scopes(user)
+        effective_dept_ids = [query.dept_id] if query.dept_id is not None else dept_ids
+
+        today = datetime.date.today()
+        d_from = query.date_from or today.replace(day=1)
+        d_to = query.date_to or today
+
+        data_dict, total_records = await self.repo.get_employee_day_wise_master_report(
+            org_id=org_id,
+            date_from=d_from,
+            date_to=d_to,
+            dept_ids=effective_dept_ids,
+            designation_id=query.designation_id,
+            sort_by=query.sort_by,
+            sort_dir=query.sort_dir,
+            page=query.page,
+            page_size=query.page_size,
+        )
+
+        if query.format in ("csv", "excel", "pdf"):
+            export_rows = []
+            for item in data_dict.get("items", []):
+                row_dict = {
+                    "Employee ID": item["employee_code"],
+                    "Employee Name": item["employee_name"],
+                    "Department": item["department_name"],
+                    "Designation": item["designation_name"],
+                }
+                for d_str in data_dict.get("dates", []):
+                    cell = item["daily_status"].get(d_str, {})
+                    row_dict[d_str] = cell.get("status", "A")
+                export_rows.append(row_dict)
+
+            headers = list(export_rows[0].keys()) if export_rows else []
+            rows = [[r.get(h) for h in headers] for r in export_rows]
+
+            if query.format == "pdf":
+                file_bytes = self._generate_pdf_bytes("employee_day_wise_master", headers, rows)
+                media_type = "application/pdf"
+                ext = "pdf"
+            else:
+                file_bytes = self._generate_csv_bytes(headers, rows)
+                media_type = (
+                    "text/csv"
+                    if query.format == "csv"
+                    else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+                ext = "csv" if query.format == "csv" else "xlsx"
+
+            return {
+                "file_bytes": file_bytes,
+                "filename": f"employee_day_wise_master_{utcnow().strftime('%Y%m%d_%H%M%S')}.{ext}",
+                "media_type": media_type,
+            }
+
+        return EmployeeDayWiseMasterReportResponse(
+            success=True,
+            data=EmployeeDayWiseMasterReportDataSchema(
+                dates=data_dict["dates"],
+                items=[
+                    EmployeeDayWiseMasterRowSchema(
+                        employee_id=it["employee_id"],
+                        employee_code=it["employee_code"],
+                        employee_name=it["employee_name"],
+                        department_name=it["department_name"],
+                        designation_name=it["designation_name"],
+                        daily_status={
+                            d: EmployeeDayWiseMasterCellSchema(status=cell["status"])
+                            for d, cell in it["daily_status"].items()
+                        },
+                    )
+                    for it in data_dict["items"]
+                ],
+                pagination=PaginationMeta.build(
+                    page=query.page, page_size=query.page_size, total_records=total_records
+                ),
+            ),
+        )
+

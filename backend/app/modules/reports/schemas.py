@@ -413,6 +413,49 @@ class WorkingHoursMatrixReportResponse(BaseSchema):
     )
 
 
+class BranchWisePunchCellSchema(BaseSchema):
+    """Branch wise punch summary for a single date cell."""
+
+    minutes: int = Field(0, description="Total working duration in minutes.")
+    is_missing_punch: bool = Field(False, description="Flag indicating incomplete punch cycle or anomaly.")
+    has_punch: bool = Field(False, description="Flag indicating if the employee punched at all.")
+
+
+class BranchWisePunchRowSchema(BaseSchema):
+    """Employee row containing date-indexed daily punch matrix cells."""
+
+    employee_id: int = Field(..., description="Database employee identifier.")
+    employee_code: str = Field(..., description="Unique employee code.")
+    employee_name: str = Field(..., description="Full employee name.")
+    branch_name: str = Field(..., description="Branch name.")
+    department_name: str = Field(..., description="Department name.")
+    designation_name: str = Field(..., description="Designation name.")
+    total_working_minutes: int = Field(0, description="Sum of working minutes.")
+    daily_punches: dict[str, BranchWisePunchCellSchema] = Field(
+        default_factory=dict,
+        description="Map of date string (YYYY-MM-DD) to punch cell details.",
+    )
+
+
+class BranchWisePunchReportDataSchema(BaseSchema):
+    """Data payload for branch wise punch report matrix."""
+
+    dates: list[str] = Field(..., description="List of date strings (YYYY-MM-DD) in the range.")
+    items: list[BranchWisePunchRowSchema] = Field(..., description="Employee matrix rows.")
+    pagination: PaginationMeta = Field(..., description="Pagination markers.")
+
+
+class BranchWisePunchReportResponse(BaseSchema):
+    """Response wrapper for Branch Wise Punch Report."""
+
+    success: bool = Field(True, description="API execution status.")
+    data: BranchWisePunchReportDataSchema = Field(..., description="Matrix report payload.")
+    generated_at: datetime.datetime = Field(
+        default_factory=utcnow,
+        description="Timestamp when report was generated.",
+    )
+
+
 class MusterCellSchema(BaseSchema):
     """Attendance status summary for a single date cell in Muster Roll."""
 
@@ -1096,4 +1139,75 @@ __all__ = [
     "DepartmentSummaryReportItemSchema",
     "DepartmentSummaryReportResponse",
     "WorkforceSummaryReportResponse",
+    "LeaveTakenReportRowSchema",
+    "LeaveTakenReportDataSchema",
+    "LeaveTakenReportResponse",
 ]
+
+
+class LeaveTakenReportRowSchema(BaseSchema):
+    """Row representing leave taken by an employee with dynamic leave type cells."""
+
+    employee_id: int = Field(..., description="Employee database identifier.")
+    employee_code: str = Field(..., description="Unique employee code.")
+    employee_name: str = Field(..., description="Full employee name.")
+    department_name: str = Field(..., description="Department name.")
+    designation_name: str = Field(..., description="Designation name.")
+    leaves: dict[str, float] = Field(default_factory=dict, description="Map of leave type alias/code to taken leave days.")
+    total_leaves: float = Field(0.0, description="Sum of leaves taken in the specified range.")
+
+
+class LeaveTakenReportDataSchema(BaseSchema):
+    """Dynamic leave taken report payload."""
+
+    leave_types: list[str] = Field(..., description="Active leave type aliases in the system.")
+    items: list[LeaveTakenReportRowSchema] = Field(..., description="Rows of employee leave taken data.")
+    pagination: PaginationMeta = Field(..., description="Pagination metadata.")
+
+
+class LeaveTakenReportResponse(BaseSchema):
+    """Response envelope for leave taken report."""
+
+    success: bool = Field(True, description="API execution status.")
+    data: LeaveTakenReportDataSchema = Field(..., description="Matrix payload.")
+    generated_at: datetime.datetime = Field(default_factory=utcnow, description="Report generation timestamp.")
+
+
+class EmployeeDayWiseMasterCellSchema(BaseSchema):
+    """Attendance status for a single date cell in Day Wise Master."""
+
+    status: str = Field(..., description="Short status code (P, A, HD, WO, H, L, LWP, CO).")
+
+
+class EmployeeDayWiseMasterRowSchema(BaseSchema):
+    """Employee row containing date-indexed attendance status cells for Day Wise Master."""
+
+    employee_id: int = Field(..., description="Database employee identifier.")
+    employee_code: str = Field(..., description="Unique employee code.")
+    employee_name: str = Field(..., description="Full employee name.")
+    department_name: str = Field(..., description="Department name.")
+    designation_name: str = Field(..., description="Designation name.")
+    daily_status: dict[str, EmployeeDayWiseMasterCellSchema] = Field(
+        default_factory=dict,
+        description="Map of date string (YYYY-MM-DD) to day-wise attendance status details.",
+    )
+
+
+class EmployeeDayWiseMasterReportDataSchema(BaseSchema):
+    """Data payload for employee day-wise master report grid."""
+
+    dates: list[str] = Field(..., description="List of date strings (YYYY-MM-DD) in range.")
+    items: list[EmployeeDayWiseMasterRowSchema] = Field(..., description="Employee day-wise master rows.")
+    pagination: PaginationMeta = Field(..., description="Pagination markers.")
+
+
+class EmployeeDayWiseMasterReportResponse(BaseSchema):
+    """Response wrapper for Employee Day Wise Master Report."""
+
+    success: bool = Field(True, description="API execution status.")
+    data: EmployeeDayWiseMasterReportDataSchema = Field(..., description="Employee day-wise master report payload.")
+    generated_at: datetime.datetime = Field(
+        default_factory=utcnow,
+        description="Timestamp when report was generated.",
+    )
+

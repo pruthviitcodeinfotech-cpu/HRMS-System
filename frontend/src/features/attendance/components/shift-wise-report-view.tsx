@@ -470,9 +470,9 @@ export const ShiftWiseReportView: React.FC = () => {
                 onChange={(e) => setBranchId(e.target.value)}
                 className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg px-3 py-2 text-xs font-medium text-slate-700 dark:text-slate-200 focus:outline-hidden cursor-pointer"
               >
-                <option value="">Choose Branch</option>
+                <option value="" className="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100">Choose Branch</option>
                 {branchOptions?.map((b) => (
-                  <option key={b.branch_id} value={String(b.branch_id)}>
+                  <option key={b.branch_id} value={String(b.branch_id)} className="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100">
                     {b.branch_name}
                   </option>
                 ))}
@@ -486,9 +486,9 @@ export const ShiftWiseReportView: React.FC = () => {
                 onChange={(e) => setShiftId(e.target.value)}
                 className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg px-3 py-2 text-xs font-medium text-slate-700 dark:text-slate-200 focus:outline-hidden cursor-pointer"
               >
-                <option value="">Choose Shift</option>
+                <option value="" className="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100">Choose Shift</option>
                 {shiftOptions.map((s) => (
-                  <option key={s.id} value={String(s.id)}>
+                  <option key={s.id} value={String(s.id)} className="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100">
                     {s.name}
                   </option>
                 ))}

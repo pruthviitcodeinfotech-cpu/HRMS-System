@@ -976,6 +976,154 @@ class ReportsRepository(BaseRepository[Employee]):
 
         return {"dates": dates, "items": items}, total
 
+    async def get_branch_wise_punch_report(
+        self,
+        org_id: int,
+        date_from: datetime.date,
+        date_to: datetime.date,
+        branch_ids: list[int] | None = None,
+        dept_ids: list[int] | None = None,
+        employee_id: int | None = None,
+        sort_by: str | None = None,
+        sort_dir: str = "asc",
+        page: int = 1,
+        page_size: int = 25,
+    ) -> tuple[dict[str, Any], int]:
+        """Fetch multi-day branch wise punch matrix report grouped by employee."""
+        # 1. Build date strings list
+        dates: list[str] = []
+        curr = date_from
+        while curr <= date_to:
+            dates.append(curr.isoformat())
+            curr += datetime.timedelta(days=1)
+
+        # 2. Query Employees
+        emp_stmt = (
+            select(
+                Employee.employee_id,
+                Employee.employee_code,
+                Employee.employee_name,
+                Branch.branch_name.label("branch_name"),
+                Department.dept_name.label("department_name"),
+                Designation.designation_name.label("designation_name"),
+            )
+            .join(Branch, Employee.master_branch_id == Branch.branch_id, isouter=True)
+            .join(Department, Employee.dept_id == Department.dept_id, isouter=True)
+            .join(Designation, Employee.designation_id == Designation.designation_id, isouter=True)
+            .where(
+                Employee.org_id == org_id,
+                Employee.is_deleted.is_(False),
+                Employee.employment_status == "active",
+            )
+        )
+
+        if branch_ids:
+            emp_stmt = emp_stmt.where(Employee.master_branch_id.in_(branch_ids))
+        if dept_ids:
+            emp_stmt = emp_stmt.where(Employee.dept_id.in_(dept_ids))
+        if employee_id:
+            emp_stmt = emp_stmt.where(Employee.employee_id == employee_id)
+
+        # Count total
+        count_stmt = select(func.count()).select_from(emp_stmt.subquery())
+        total = (await self.session.execute(count_stmt)).scalar_one()
+
+        # Sorting & Pagination
+        direction = desc if sort_dir.lower() == "desc" else asc
+        if sort_by == "employee_name":
+            emp_stmt = emp_stmt.order_by(direction(Employee.employee_name))
+        elif sort_by == "employee_code":
+            emp_stmt = emp_stmt.order_by(direction(Employee.employee_code))
+        elif sort_by == "branch_name":
+            emp_stmt = emp_stmt.order_by(direction(Branch.branch_name))
+        elif sort_by == "department_name":
+            emp_stmt = emp_stmt.order_by(direction(Department.dept_name))
+        elif sort_by == "designation_name":
+            emp_stmt = emp_stmt.order_by(direction(Designation.designation_name))
+        elif sort_by == "total_working_minutes":
+            emp_stmt = emp_stmt.outerjoin(
+                AttendanceDay,
+                (Employee.employee_id == AttendanceDay.employee_id)
+                & AttendanceDay.attendance_date.between(date_from, date_to)
+            ).group_by(
+                Employee.employee_id,
+                Employee.employee_code,
+                Employee.employee_name,
+                Branch.branch_name,
+                Department.dept_name,
+                Designation.designation_name
+            ).order_by(direction(func.coalesce(func.sum(AttendanceDay.worked_minutes), 0)))
+        else:
+            emp_stmt = emp_stmt.order_by(Employee.employee_code.asc())
+
+        emp_stmt = emp_stmt.limit(page_size).offset((page - 1) * page_size)
+        emp_rows = (await self.session.execute(emp_stmt)).all()
+
+        if not emp_rows:
+            return {"dates": dates, "items": []}, total
+
+        emp_ids = [r.employee_id for r in emp_rows]
+
+        # 3. Batch query AttendanceDay records
+        days_stmt = select(AttendanceDay).where(
+            AttendanceDay.employee_id.in_(emp_ids),
+            AttendanceDay.attendance_date.between(date_from, date_to),
+        )
+        days_res = await self.session.execute(days_stmt)
+        days = days_res.scalars().all()
+
+        attendance_map: dict[tuple[int, str], AttendanceDay] = {
+            (d.employee_id, d.attendance_date.isoformat()): d for d in days
+        }
+
+        items: list[dict[str, Any]] = []
+        for emp in emp_rows:
+            emp_id = emp.employee_id
+            daily_punches: dict[str, dict[str, Any]] = {}
+            total_working_minutes = 0
+
+            for d_str in dates:
+                day_rec = attendance_map.get((emp_id, d_str))
+                if day_rec:
+                    w_mins = day_rec.total_working_minutes or 0
+                    total_working_minutes += w_mins
+
+                    status = day_rec.status.upper() if day_rec.status else "ABSENT"
+                    first_in = getattr(day_rec, "first_punch_in", None)
+                    last_out = getattr(day_rec, "last_punch_out", None)
+                    is_off_day = status in ("WEEK_OFF", "HOLIDAY", "WEEKOFF")
+                    has_punch = bool(first_in or last_out or w_mins > 0)
+                    is_missing = status == "MISSING_PUNCH" or bool(
+                        first_in and not last_out and not is_off_day
+                    )
+
+                    daily_punches[d_str] = {
+                        "minutes": w_mins,
+                        "is_missing_punch": is_missing,
+                        "has_punch": has_punch,
+                    }
+                else:
+                    daily_punches[d_str] = {
+                        "minutes": 0,
+                        "is_missing_punch": False,
+                        "has_punch": False,
+                    }
+
+            items.append(
+                {
+                    "employee_id": emp.employee_id,
+                    "employee_code": emp.employee_code,
+                    "employee_name": emp.employee_name,
+                    "branch_name": emp.branch_name or "-",
+                    "department_name": emp.department_name or "General",
+                    "designation_name": emp.designation_name or "-",
+                    "total_working_minutes": total_working_minutes,
+                    "daily_punches": daily_punches,
+                }
+            )
+
+        return {"dates": dates, "items": items}, total
+
     async def get_muster_report(
         self,
         org_id: int,
@@ -3131,3 +3279,281 @@ class ReportsRepository(BaseRepository[Employee]):
         res = await self.session.execute(stmt)
 
         return [dict(r._mapping) for r in res.all()], total
+
+    async def get_leave_taken_report(
+        self,
+        org_id: int,
+        date_from: datetime.date,
+        date_to: datetime.date,
+        branch_ids: list[int] | None = None,
+        dept_ids: list[int] | None = None,
+        employee_id: int | None = None,
+        sort_by: str | None = None,
+        sort_dir: str = "asc",
+        page: int = 1,
+        page_size: int = 25,
+    ) -> tuple[dict[str, Any], int]:
+        """Fetch leave taken report matrix showing leaves taken per employee per active leave type."""
+        # 1. Fetch active leave types for organization
+        leave_types_stmt = (
+            select(LeaveType)
+            .where(
+                LeaveType.org_id == org_id,
+                LeaveType.is_active.is_(True),
+                LeaveType.is_deleted.is_(False),
+            )
+            .order_by(LeaveType.alias.asc())
+        )
+        leave_types_res = await self.session.execute(leave_types_stmt)
+        leave_types = leave_types_res.scalars().all()
+        leave_type_aliases = [lt.alias.lower() for lt in leave_types]
+        leave_type_map = {lt.id: lt.alias.lower() for lt in leave_types}
+
+        # 2. Query Employees
+        emp_stmt = (
+            select(
+                Employee.employee_id,
+                Employee.employee_code,
+                Employee.employee_name,
+                Department.dept_name.label("department_name"),
+                Designation.designation_name.label("designation_name"),
+            )
+            .join(Department, Employee.dept_id == Department.dept_id, isouter=True)
+            .join(Designation, Employee.designation_id == Designation.designation_id, isouter=True)
+            .where(
+                Employee.org_id == org_id,
+                Employee.is_deleted.is_(False),
+                Employee.employment_status == "active",
+            )
+        )
+
+        if branch_ids:
+            emp_stmt = emp_stmt.where(Employee.master_branch_id.in_(branch_ids))
+        if dept_ids:
+            emp_stmt = emp_stmt.where(Employee.dept_id.in_(dept_ids))
+        if employee_id:
+            emp_stmt = emp_stmt.where(Employee.employee_id == employee_id)
+
+        # Count total
+        count_stmt = select(func.count()).select_from(emp_stmt.subquery())
+        total = (await self.session.execute(count_stmt)).scalar_one()
+
+        # Sorting
+        direction = desc if sort_dir.lower() == "desc" else asc
+        if sort_by == "employee_name":
+            emp_stmt = emp_stmt.order_by(direction(Employee.employee_name))
+        elif sort_by == "employee_code":
+            emp_stmt = emp_stmt.order_by(direction(Employee.employee_code))
+        elif sort_by == "department_name":
+            emp_stmt = emp_stmt.order_by(direction(Department.dept_name))
+        elif sort_by == "designation_name":
+            emp_stmt = emp_stmt.order_by(direction(Designation.designation_name))
+        else:
+            emp_stmt = emp_stmt.order_by(Employee.employee_code.asc())
+
+        emp_stmt = emp_stmt.limit(page_size).offset((page - 1) * page_size)
+        emp_rows = (await self.session.execute(emp_stmt)).all()
+
+        if not emp_rows:
+            return {"leave_types": leave_type_aliases, "items": []}, total
+
+        emp_ids = [r.employee_id for r in emp_rows]
+
+        # 3. Query all approved leave requests for these employees overlapping the range
+        leave_stmt = (
+            select(LeaveRequest)
+            .join(LeaveType, LeaveRequest.leave_type_id == LeaveType.id)
+            .where(
+                LeaveRequest.employee_id.in_(emp_ids),
+                LeaveRequest.status == "approved",
+                LeaveType.org_id == org_id,
+                LeaveRequest.start_date <= date_to,
+                LeaveRequest.end_date >= date_from,
+            )
+        )
+        leave_res = await self.session.execute(leave_stmt)
+        leave_requests = leave_res.scalars().all()
+
+        # 4. Process taken leaves
+        emp_leaves_map: dict[int, dict[str, float]] = {emp_id: {alias: 0.0 for alias in leave_type_aliases} for emp_id in emp_ids}
+
+        for lr in leave_requests:
+            emp_id = lr.employee_id
+            lt_alias = leave_type_map.get(lr.leave_type_id)
+            if not lt_alias or lt_alias not in emp_leaves_map[emp_id]:
+                continue
+            
+            # Calculate overlapping duration
+            overlap_start = max(lr.start_date, date_from)
+            overlap_end = min(lr.end_date, date_to)
+            overlap_days = (overlap_end - overlap_start).days + 1
+            total_lr_days = (lr.end_date - lr.start_date).days + 1
+            
+            # Duration weight
+            if total_lr_days > 0:
+                lr_duration = float(lr.duration_days)
+                overlap_taken = (lr_duration / total_lr_days) * overlap_days
+                emp_leaves_map[emp_id][lt_alias] += overlap_taken
+
+        items: list[dict[str, Any]] = []
+        for emp in emp_rows:
+            e_id = emp.employee_id
+            leaves_dict = emp_leaves_map[e_id]
+            total_leaves = sum(leaves_dict.values())
+            items.append({
+                "employee_id": e_id,
+                "employee_code": emp.employee_code,
+                "employee_name": emp.employee_name,
+                "department_name": emp.department_name or "-",
+                "designation_name": emp.designation_name or "-",
+                "leaves": leaves_dict,
+                "total_leaves": round(total_leaves, 2),
+            })
+
+        if sort_by == "total_leaves":
+            items.sort(key=lambda x: x["total_leaves"], reverse=(sort_dir.lower() == "desc"))
+
+        return {
+            "leave_types": leave_type_aliases,
+            "items": items,
+        }, total
+
+    async def get_employee_day_wise_master_report(
+        self,
+        org_id: int,
+        date_from: datetime.date,
+        date_to: datetime.date,
+        dept_ids: list[int] | None = None,
+        designation_id: int | None = None,
+        sort_by: str | None = None,
+        sort_dir: str = "asc",
+        page: int = 1,
+        page_size: int = 25,
+    ) -> tuple[dict[str, Any], int]:
+        """Fetch multi-day day-wise master report grouped by employee."""
+        # 1. Build date list
+        dates: list[str] = []
+        curr = date_from
+        while curr <= date_to:
+            dates.append(curr.isoformat())
+            curr += datetime.timedelta(days=1)
+
+        # 2. Query Employees
+        emp_stmt = (
+            select(
+                Employee.employee_id,
+                Employee.employee_code,
+                Employee.employee_name,
+                Department.dept_name.label("department_name"),
+                Designation.designation_name.label("designation_name"),
+            )
+            .join(Department, Employee.dept_id == Department.dept_id, isouter=True)
+            .join(Designation, Employee.designation_id == Designation.designation_id, isouter=True)
+            .where(
+                Employee.org_id == org_id,
+                Employee.is_deleted.is_(False),
+                Employee.employment_status == "active",
+            )
+        )
+
+        if dept_ids:
+            emp_stmt = emp_stmt.where(Employee.dept_id.in_(dept_ids))
+        if designation_id:
+            emp_stmt = emp_stmt.where(Employee.designation_id == designation_id)
+
+        # Count total
+        count_stmt = select(func.count()).select_from(emp_stmt.subquery())
+        total = (await self.session.execute(count_stmt)).scalar_one()
+
+        # Sorting & Pagination
+        direction = desc if sort_dir.lower() == "desc" else asc
+        if sort_by == "employee_name":
+            emp_stmt = emp_stmt.order_by(direction(Employee.employee_name))
+        elif sort_by == "department_name":
+            emp_stmt = emp_stmt.order_by(direction(Department.dept_name))
+        elif sort_by == "designation_name":
+            emp_stmt = emp_stmt.order_by(direction(Designation.designation_name))
+        else:
+            emp_stmt = emp_stmt.order_by(direction(Employee.employee_code))
+
+        emp_stmt = emp_stmt.limit(page_size).offset((page - 1) * page_size)
+        emp_rows = (await self.session.execute(emp_stmt)).all()
+
+        if not emp_rows:
+            return {"dates": dates, "items": []}, total
+
+        emp_ids = [r.employee_id for r in emp_rows]
+
+        # 3. Batch query AttendanceDay records with LeaveRequest + LeaveType join
+        days_stmt = (
+            select(
+                AttendanceDay.employee_id,
+                AttendanceDay.attendance_date,
+                AttendanceDay.status,
+                LeaveType.alias.label("leave_type_alias"),
+            )
+            .outerjoin(LeaveRequest, AttendanceDay.leave_id == LeaveRequest.id)
+            .outerjoin(LeaveType, LeaveRequest.leave_type_id == LeaveType.id)
+            .where(
+                AttendanceDay.employee_id.in_(emp_ids),
+                AttendanceDay.attendance_date.between(date_from, date_to),
+            )
+        )
+        days_res = await self.session.execute(days_stmt)
+        days_rows = days_res.all()
+
+        attendance_map: dict[tuple[int, str], tuple[str, str | None]] = {
+            (r.employee_id, r.attendance_date.isoformat()): (r.status, r.leave_type_alias)
+            for r in days_rows
+        }
+
+        items: list[dict[str, Any]] = []
+        for emp in emp_rows:
+            emp_id = emp.employee_id
+            daily_status: dict[str, dict[str, Any]] = {}
+
+            for d_str in dates:
+                day_info = attendance_map.get((emp_id, d_str))
+                if day_info:
+                    st_raw, lt_alias = day_info
+                    st_raw = (st_raw or "absent").lower()
+
+                    if st_raw == "present":
+                        code = "P"
+                    elif st_raw in ("half_day", "halfday"):
+                        code = "HD"
+                    elif st_raw in ("week_off", "weekoff"):
+                        code = "WO"
+                    elif st_raw == "holiday":
+                        code = "H"
+                    elif st_raw == "on_leave":
+                        if lt_alias:
+                            lt_upper = lt_alias.upper()
+                            if lt_upper == "LWP":
+                                code = "LWP"
+                            elif lt_upper in ("CO", "COMP_OFF", "COMPOFF"):
+                                code = "CO"
+                            else:
+                                code = "L"
+                        else:
+                            code = "L"
+                    else:
+                        code = "A"
+                else:
+                    code = "A"
+
+                daily_status[d_str] = {"status": code}
+
+            items.append(
+                {
+                    "employee_id": emp.employee_id,
+                    "employee_code": emp.employee_code,
+                    "employee_name": emp.employee_name,
+                    "department_name": emp.department_name or "General",
+                    "designation_name": emp.designation_name or "Staff",
+                    "daily_status": daily_status,
+                }
+            )
+
+        return {"dates": dates, "items": items}, total
+

@@ -303,9 +303,9 @@ export const WorkingHoursReportView: React.FC = () => {
               onChange={(e) => setBranchId(e.target.value)}
               className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg text-sm font-medium text-slate-700 dark:text-slate-200 focus:ring-2 focus:ring-sky-500 px-3 py-2"
             >
-              <option value="">Choose Branch</option>
+              <option value="" className="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100">Choose Branch</option>
               {branchOptions?.map((b) => (
-                <option key={b.branch_id} value={b.branch_id}>
+                <option key={b.branch_id} value={b.branch_id} className="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100">
                   {b.branch_name}
                 </option>
               ))}
