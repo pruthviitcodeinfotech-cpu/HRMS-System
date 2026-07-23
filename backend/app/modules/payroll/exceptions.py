@@ -82,3 +82,15 @@ class EmployeeNotFoundException(NotFoundException):
     """Raised when an employee is not found."""
     code = "EMPLOYEE_NOT_FOUND"
     message = "Employee not found."
+
+
+class PayrollValidationException(ConflictException):
+    """Raised when payroll operations fail validation rules."""
+    code = "PAYROLL_VALIDATION_ERROR"
+    message = "Payroll validation error."
+
+
+class PayrollFinalizationNotFoundException(NotFoundException):
+    """Raised when a finalized payroll record cannot be found."""
+    code = "PAYROLL_FINALIZATION_NOT_FOUND"
+    message = "Finalized payroll record not found."

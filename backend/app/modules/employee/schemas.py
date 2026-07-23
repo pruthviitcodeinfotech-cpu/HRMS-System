@@ -620,6 +620,7 @@ class EmployeeSummarySchema(BaseSchema):
     branch_name: str | None = None
     department_name: str | None = None
     designation_name: str | None = None
+    payroll_group_id: int | None = None
 
 
 class EmployeeSchema(EmployeeSummarySchema):

@@ -150,6 +150,9 @@ class PayrollGroup(Base):
     finalized_runs: Mapped[list["FinalizedPayrollRun"]] = relationship(  # noqa: F821
         back_populates="payroll_group"
     )
+    finalizations: Mapped[list["PayrollFinalization"]] = relationship(  # noqa: F821
+        back_populates="payroll_group"
+    )
     computed_rows: Mapped[list["PayrollComputedRow"]] = relationship(  # noqa: F821
         back_populates="payroll_group"
     )

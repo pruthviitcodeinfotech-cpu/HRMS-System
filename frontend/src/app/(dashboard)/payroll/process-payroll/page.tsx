@@ -33,7 +33,6 @@ import {
   useDepartmentOptions,
 } from "@/features/employees/hooks";
 import { BranchOption, DepartmentOption } from "@/features/employees/types";
-import { PayrollGroup } from "@/features/payroll/types";
 
 // Payroll Employee Record Interface
 export interface PayrollMatrixRecord {
@@ -277,22 +276,14 @@ export default function ProcessPayrollPage() {
   const qaArchetypeFilter = "all";
 
   // 1. MASTER DATA REUSE (Golden Rule Enforcement)
+  // 1. MASTER DATA REUSE (Golden Rule Enforcement)
   // Payroll Groups from Payroll Module
   const { data: groupsData } = usePayrollGroups();
-  const payrollGroups = useMemo<PayrollGroup[]>(() => groupsData?.items || [], [groupsData]);
-
-  const defaultPayrollGroupOptions = useMemo(() => [
-    { id: 1, name: "Monthly Payroll (With Compliance)" },
-    { id: 2, name: "Hourly Payroll" },
-    { id: 3, name: "Monthly Payroll (No Compliance)" },
-  ], []);
+  const payrollGroups = useMemo(() => groupsData?.items || [], [groupsData?.items]);
 
   const availablePayrollGroups = useMemo(() => {
-    if (payrollGroups.length > 0) {
-      return payrollGroups.map((g) => ({ id: g.id, name: g.group_name }));
-    }
-    return defaultPayrollGroupOptions;
-  }, [payrollGroups, defaultPayrollGroupOptions]);
+    return payrollGroups.map((g) => ({ id: g.id, name: g.name }));
+  }, [payrollGroups]);
 
   // Branch Lookup Options from Employee Module
   const { data: branchOptions = [] } = useBranchOptions();
@@ -302,7 +293,7 @@ export default function ProcessPayrollPage() {
 
   // Effective Payroll Group ID Selection
   const effectivePayrollGroupId = selectedPayrollGroupId ?? availablePayrollGroups[0]?.id;
-  const selectedGroup = availablePayrollGroups.find((g) => g.id === effectivePayrollGroupId) || availablePayrollGroups[0];
+  const selectedGroup = availablePayrollGroups.find((g) => g.id === effectivePayrollGroupId);
 
   // 2. LIVE BACKEND API INTEGRATION (React Query)
   const {
@@ -643,7 +634,7 @@ export default function ProcessPayrollPage() {
                 onClick={() => setShowPayrollGroupDropdown(!showPayrollGroupDropdown)}
                 className="w-full flex items-center justify-between bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-1.5 text-xs font-semibold text-slate-800 dark:text-slate-100 shadow-xs cursor-pointer hover:border-slate-300 dark:hover:border-slate-600 transition-colors"
               >
-                <span className="truncate pr-2">{selectedGroup.name}</span>
+                <span className="truncate pr-2">{selectedGroup?.name || "All Payroll Groups"}</span>
                 <div className="flex items-center gap-1 text-slate-400 shrink-0">
                   {selectedPayrollGroupId && (
                     <span
@@ -663,28 +654,34 @@ export default function ProcessPayrollPage() {
 
               {showPayrollGroupDropdown && (
                 <div className="absolute left-0 top-full mt-1.5 w-64 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl p-1 z-50 text-xs font-medium space-y-0.5 max-h-60 overflow-y-auto">
-                  {availablePayrollGroups.map((group) => {
-                    const isSelected = group.id === selectedGroup.id;
-                    return (
-                      <button
-                        key={group.id}
-                        type="button"
-                        onClick={() => {
-                          setSelectedPayrollGroupId(group.id);
-                          setShowPayrollGroupDropdown(false);
-                          setCurrentPage(1);
-                          refetchProcessMatrix();
-                        }}
-                        className={`w-full text-left px-3 py-2 rounded-lg cursor-pointer transition-colors ${
-                          isSelected
-                            ? "bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 font-semibold"
-                            : "hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300"
-                        }`}
-                      >
-                        {group.name}
-                      </button>
-                    );
-                  })}
+                  {availablePayrollGroups.length === 0 ? (
+                    <div className="px-3 py-3 text-center text-slate-400 font-medium">
+                      No Payroll Groups Found
+                    </div>
+                  ) : (
+                    availablePayrollGroups.map((group) => {
+                      const isSelected = group.id === selectedGroup?.id;
+                      return (
+                        <button
+                          key={group.id}
+                          type="button"
+                          onClick={() => {
+                            setSelectedPayrollGroupId(group.id);
+                            setShowPayrollGroupDropdown(false);
+                            setCurrentPage(1);
+                            refetchProcessMatrix();
+                          }}
+                          className={`w-full text-left px-3 py-2 rounded-lg cursor-pointer transition-colors ${
+                            isSelected
+                              ? "bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 font-semibold"
+                              : "hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300"
+                          }`}
+                        >
+                          {group.name}
+                        </button>
+                      );
+                    })
+                  )}
                 </div>
               )}
             </div>

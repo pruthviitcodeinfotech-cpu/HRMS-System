@@ -9,9 +9,12 @@ import {
   ArrowDown,
   X,
   ChevronDown,
+  AlertCircle,
+  SlidersHorizontal,
 } from "lucide-react";
 import { ProtectedRoute } from "@/features/auth";
 import { useEmployees } from "@/features/employees/hooks";
+import { usePayrollGroups, useAssignEmployeesToGroup } from "@/features/payroll/hooks/use-payroll";
 
 export interface AssignEmployeeRow {
   employee_id: number;
@@ -21,39 +24,38 @@ export interface AssignEmployeeRow {
   payroll_group: string;
 }
 
-// Initial dataset matching reference screenshot 2 exactly
-const INITIAL_ASSIGN_EMPLOYEES: AssignEmployeeRow[] = [
-  { employee_id: 37, employee_name: "chirag kanani", department: "Developer", designation: "Full Stack", payroll_group: "Monthly Payroll (No Compliance)" },
-  { employee_id: 36, employee_name: "maulik bhadani", department: "Developer", designation: "Full Stack", payroll_group: "Monthly Payroll (No Compliance)" },
-  { employee_id: 35, employee_name: "Priyansh Desai", department: "Developer", designation: "Full Stack", payroll_group: "Monthly Payroll (No Compliance)" },
-  { employee_id: 34, employee_name: "Kamlesh Sahu", department: "Developer", designation: "React.js", payroll_group: "Monthly Payroll (No Compliance)" },
-  { employee_id: 33, employee_name: "Hepit Talaviya", department: "Graphic Designer", designation: "Graphic Designer", payroll_group: "Monthly Payroll (No Compliance)" },
-  { employee_id: 31, employee_name: "Sneha Nadapara", department: "BDM", designation: "BDM", payroll_group: "Monthly Payroll (No Compliance)" },
-  { employee_id: 6, employee_name: "tanvin kheni", department: "Developer", designation: "Full Stack", payroll_group: "Monthly Payroll (No Compliance)" },
-  { employee_id: 28, employee_name: "Vipul Rawal", department: "Project Manager", designation: "Project Manager", payroll_group: "Monthly Payroll (No Compliance)" },
-  { employee_id: 27, employee_name: "Rutvik Manvar", department: "Developer", designation: "Backend Developer", payroll_group: "Monthly Payroll (No Compliance)" },
-  { employee_id: 3, employee_name: "Nakul verma", department: "Developer", designation: "Angular", payroll_group: "Monthly Payroll (No Compliance)" },
-];
-
 export default function AssignPayrollGroupPage() {
-  // Active employees query from Employee module (Golden Rule)
-  const { data: employeeData } = useEmployees({ page: 1, page_size: 100, status: "active" });
+  // Master Data hooks (Golden Rule)
+  const {
+    data: employeeData,
+    isLoading: isLoadingEmployees,
+    isError: isErrorEmployees,
+    refetch: refetchEmployees,
+  } = useEmployees({ page: 1, page_size: 100, status: "active" });
 
+  const { data: groupsData } = usePayrollGroups({ page: 1, page_size: 100 });
+  const assignMutation = useAssignEmployeesToGroup();
+
+  const groupsList = useMemo(() => groupsData?.items || [], [groupsData?.items]);
+
+  // Employee rows mapped from Employee master data
   const employeeRows: AssignEmployeeRow[] = useMemo(() => {
     if (employeeData?.items && employeeData.items.length > 0) {
       return employeeData.items.map((emp) => ({
         employee_id: emp.employee_id,
         employee_name: emp.employee_name,
-        department: emp.department_name || "Developer",
-        designation: emp.designation_name || "Full Stack",
-        payroll_group: "Monthly Payroll (No Compliance)",
+        department: emp.department_name || "-",
+        designation: emp.designation_name || "-",
+        payroll_group: emp.payroll_group_id
+          ? groupsList.find((g) => g.id === emp.payroll_group_id)?.name || "Assigned"
+          : "Unassigned",
       }));
     }
-    return INITIAL_ASSIGN_EMPLOYEES;
-  }, [employeeData]);
+    return [];
+  }, [employeeData, groupsList]);
 
   // Filters State
-  const [selectedPayrollType, setSelectedPayrollType] = useState<string>("Monthly Payroll (No Compliance)");
+  const [selectedPayrollType, setSelectedPayrollType] = useState<string>("");
   const [selectedEmployeeIds, setSelectedEmployeeIds] = useState<number[]>([]);
 
   // Sorting State
@@ -69,8 +71,8 @@ export default function AssignPayrollGroupPage() {
   const [singleTargetEmp, setSingleTargetEmp] = useState<AssignEmployeeRow | null>(null);
 
   // Form State inside Assign Drawer
-  const [salaryType, setSalaryType] = useState<string>("Monthly");
-  const [targetGroupChoice, setTargetGroupChoice] = useState<string>("Monthly Payroll (No Compliance)");
+  const [salaryType, setSalaryType] = useState<"monthly" | "hourly">("monthly");
+  const [targetGroupId, setTargetGroupId] = useState<number | null>(null);
 
   // Sorting Handler
   const handleSort = (field: keyof AssignEmployeeRow) => {
@@ -86,9 +88,13 @@ export default function AssignPayrollGroupPage() {
   const filteredEmployees = useMemo(() => {
     let result = employeeRows;
     if (selectedPayrollType) {
-      result = result.filter((emp) =>
-        emp.payroll_group.toLowerCase().includes(selectedPayrollType.toLowerCase())
-      );
+      if (selectedPayrollType === "Unassigned") {
+        result = result.filter((emp) => emp.payroll_group === "Unassigned");
+      } else {
+        result = result.filter(
+          (emp) => emp.payroll_group.toLowerCase() === selectedPayrollType.toLowerCase()
+        );
+      }
     }
 
     if (sortField) {
@@ -132,7 +138,8 @@ export default function AssignPayrollGroupPage() {
   // Open Single Employee Assign Drawer
   const handleOpenSingleAssign = (emp: AssignEmployeeRow) => {
     setSingleTargetEmp(emp);
-    setTargetGroupChoice(emp.payroll_group);
+    const defaultGroup = groupsList[0]?.id || null;
+    setTargetGroupId(defaultGroup);
     setShowAssignDrawer(true);
   };
 
@@ -143,25 +150,64 @@ export default function AssignPayrollGroupPage() {
       return;
     }
     setSingleTargetEmp(null);
+    const defaultGroup = groupsList[0]?.id || null;
+    setTargetGroupId(defaultGroup);
     setShowAssignDrawer(true);
   };
 
-  // Confirm Assign Group
-  const handleConfirmAssign = () => {
-    if (singleTargetEmp) {
-      toast.success(`Assigned "${singleTargetEmp.employee_name}" to ${targetGroupChoice}`);
-    } else {
-      toast.success(`Assigned ${selectedEmployeeIds.length} employees to ${targetGroupChoice}`);
-      setSelectedEmployeeIds([]);
+  // Confirm Assign Group Mutation
+  const handleConfirmAssign = async () => {
+    const empIdsToAssign = singleTargetEmp
+      ? [singleTargetEmp.employee_id]
+      : selectedEmployeeIds;
+
+    if (empIdsToAssign.length === 0) {
+      toast.error("No employees selected for assignment.");
+      return;
     }
-    setShowAssignDrawer(false);
+
+    if (!targetGroupId && groupsList.length > 0) {
+      setTargetGroupId(groupsList[0].id);
+    }
+
+    const assignedGroupId = targetGroupId || groupsList[0]?.id;
+    if (!assignedGroupId) {
+      toast.error("No active payroll group selected.");
+      return;
+    }
+
+    try {
+      await assignMutation.mutateAsync({
+        groupId: assignedGroupId,
+        payload: {
+          employee_ids: empIdsToAssign,
+          salary_type: salaryType,
+        },
+      });
+
+      const groupObj = groupsList.find((g) => g.id === assignedGroupId);
+      const groupName = groupObj?.name || "Payroll Group";
+
+      if (singleTargetEmp) {
+        toast.success(`Assigned "${singleTargetEmp.employee_name}" to ${groupName}`);
+      } else {
+        toast.success(`Assigned ${empIdsToAssign.length} employees to ${groupName}`);
+        setSelectedEmployeeIds([]);
+      }
+
+      setShowAssignDrawer(false);
+    } catch (err: unknown) {
+      const errorObj = err as { response?: { data?: { message?: string } }; message?: string };
+      const msg = errorObj?.response?.data?.message || errorObj?.message || "Failed to assign payroll group.";
+      toast.error(msg);
+    }
   };
 
   return (
-    <ProtectedRoute requiredPermission={{ feature: "payroll_processing", action: "read" }}>
+    <ProtectedRoute requiredPermission={{ feature: "payroll_group", action: "read" }}>
       <div className="p-4 md:p-6 space-y-6 bg-slate-50/50 dark:bg-slate-950/40 min-h-screen text-slate-800 dark:text-slate-200">
         
-        {/* Header Section matching Screenshot 2 */}
+        {/* Header Section */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
             <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-slate-100">
@@ -170,7 +216,7 @@ export default function AssignPayrollGroupPage() {
           </div>
 
           <div className="flex items-center gap-3">
-            {/* Payroll Group (Outline Button) */}
+            {/* Payroll Group Outline Button */}
             <Link
               href="/payroll/payroll-group"
               className="px-4 py-2 text-xs font-semibold text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700/60 rounded-lg transition-colors cursor-pointer shadow-xs"
@@ -178,7 +224,7 @@ export default function AssignPayrollGroupPage() {
               Payroll Group
             </Link>
 
-            {/* Select Group (Primary Button) */}
+            {/* Select Group Primary Button */}
             <button
               type="button"
               onClick={handleOpenBulkAssign}
@@ -194,212 +240,236 @@ export default function AssignPayrollGroupPage() {
           </div>
         </div>
 
-        {/* Filter Bar matching Screenshot 2 */}
+        {/* Filter Bar */}
         <div className="bg-white dark:bg-slate-900 p-4 border border-slate-200 dark:border-slate-800 rounded-xl space-y-2">
           <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
-            Payroll Type
+            Payroll Group
           </label>
-          
-          <div className="flex items-center gap-2">
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-xs font-medium text-slate-800 dark:text-slate-200">
-              <span>Monthly Without C...</span>
-              {selectedPayrollType && (
-                <button
-                  type="button"
-                  onClick={() => setSelectedPayrollType("")}
-                  className="hover:text-red-500 cursor-pointer"
-                >
-                  <X className="w-3.5 h-3.5 text-slate-400 hover:text-slate-600" />
-                </button>
-              )}
-              <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
-            </div>
+          <div className="flex items-center gap-2 max-w-xs">
+            <select
+              value={selectedPayrollType}
+              onChange={(e) => {
+                setSelectedPayrollType(e.target.value);
+                setCurrentPage(1);
+              }}
+              className="w-full p-2.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-xs font-medium text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+            >
+              <option value="">All Payroll Groups</option>
+              <option value="Unassigned">Unassigned Employees</option>
+              {groupsList.map((grp) => (
+                <option key={grp.id} value={grp.name}>
+                  {grp.name}
+                </option>
+              ))}
+            </select>
           </div>
         </div>
 
-        {/* Main Data Table matching Screenshot 2 */}
+        {/* Main Table */}
         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xs overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse min-w-[900px]">
-              <thead>
-                <tr className="bg-blue-50/70 dark:bg-slate-800/90 text-slate-700 dark:text-slate-300 text-xs font-semibold border-b border-slate-200 dark:border-slate-700 select-none">
-                  
-                  {/* Checkbox Header */}
-                  <th className="py-3 px-4 w-12 text-center">
-                    <input
-                      type="checkbox"
-                      onChange={handleSelectAll}
-                      checked={
-                        filteredEmployees.length > 0 &&
-                        selectedEmployeeIds.length === filteredEmployees.length
-                      }
-                      className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
-                    />
-                  </th>
+          {isLoadingEmployees ? (
+            <div className="p-8 space-y-4">
+              <div className="h-6 bg-slate-200 dark:bg-slate-800 rounded animate-pulse w-1/4" />
+              <div className="space-y-3">
+                {[1, 2, 3].map((i) => (
+                  <div key={i} className="h-12 bg-slate-100 dark:bg-slate-800/50 rounded animate-pulse" />
+                ))}
+              </div>
+            </div>
+          ) : isErrorEmployees ? (
+            <div className="p-12 text-center space-y-4">
+              <div className="w-12 h-12 rounded-full bg-red-100 dark:bg-red-950/50 text-red-600 dark:text-red-400 flex items-center justify-center mx-auto">
+                <AlertCircle className="w-6 h-6" />
+              </div>
+              <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
+                Failed to Load Employees
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm mx-auto">
+                An error occurred while fetching employee data.
+              </p>
+              <button
+                type="button"
+                onClick={() => refetchEmployees()}
+                className="px-4 py-2 text-xs font-semibold text-white bg-[#0B85C9] hover:bg-[#0974b0] rounded-lg cursor-pointer"
+              >
+                Retry
+              </button>
+            </div>
+          ) : paginatedRows.length === 0 ? (
+            <div className="p-12 text-center space-y-4">
+              <div className="w-12 h-12 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-400 flex items-center justify-center mx-auto">
+                <SlidersHorizontal className="w-6 h-6" />
+              </div>
+              <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
+                No Employees Found
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm mx-auto">
+                No active employees match the current filter selection.
+              </p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse min-w-[900px]">
+                <thead>
+                  <tr className="bg-blue-50/70 dark:bg-slate-800/90 text-slate-700 dark:text-slate-300 text-xs font-semibold border-b border-slate-200 dark:border-slate-700 select-none">
+                    <th className="py-3 px-4 w-10">
+                      <input
+                        type="checkbox"
+                        checked={
+                          paginatedRows.length > 0 &&
+                          paginatedRows.every((emp) =>
+                            selectedEmployeeIds.includes(emp.employee_id)
+                          )
+                        }
+                        onChange={handleSelectAll}
+                        className="rounded border-slate-300 dark:border-slate-700 text-[#0B85C9] focus:ring-[#0B85C9] cursor-pointer"
+                      />
+                    </th>
 
-                  {/* Employee ID Header */}
-                  <th
-                    onClick={() => handleSort("employee_id")}
-                    className="py-3 px-4 min-w-[120px] cursor-pointer hover:bg-blue-100/50 dark:hover:bg-slate-700 transition-colors"
-                  >
-                    <div className="flex items-center gap-1.5">
-                      <span>Employee ID</span>
-                      {sortField === "employee_id" ? (
-                        sortOrder === "asc" ? (
-                          <ArrowUp className="w-3.5 h-3.5 text-blue-600" />
-                        ) : (
-                          <ArrowDown className="w-3.5 h-3.5 text-blue-600" />
-                        )
-                      ) : (
-                        <ArrowUpDown className="w-3.5 h-3.5 text-slate-400" />
-                      )}
-                    </div>
-                  </th>
-
-                  {/* Employee Name Header */}
-                  <th
-                    onClick={() => handleSort("employee_name")}
-                    className="py-3 px-4 min-w-[200px] cursor-pointer hover:bg-blue-100/50 dark:hover:bg-slate-700 transition-colors"
-                  >
-                    <div className="flex items-center gap-1.5">
-                      <span>Employee Name</span>
-                      {sortField === "employee_name" ? (
-                        sortOrder === "asc" ? (
-                          <ArrowUp className="w-3.5 h-3.5 text-blue-600" />
-                        ) : (
-                          <ArrowDown className="w-3.5 h-3.5 text-blue-600" />
-                        )
-                      ) : (
-                        <ArrowUpDown className="w-3.5 h-3.5 text-slate-400" />
-                      )}
-                    </div>
-                  </th>
-
-                  {/* Department Header */}
-                  <th
-                    onClick={() => handleSort("department")}
-                    className="py-3 px-4 min-w-[160px] cursor-pointer hover:bg-blue-100/50 dark:hover:bg-slate-700 transition-colors"
-                  >
-                    <div className="flex items-center gap-1.5">
-                      <span>Department</span>
-                      {sortField === "department" ? (
-                        sortOrder === "asc" ? (
-                          <ArrowUp className="w-3.5 h-3.5 text-blue-600" />
-                        ) : (
-                          <ArrowDown className="w-3.5 h-3.5 text-blue-600" />
-                        )
-                      ) : (
-                        <ArrowUpDown className="w-3.5 h-3.5 text-slate-400" />
-                      )}
-                    </div>
-                  </th>
-
-                  {/* Designation Header */}
-                  <th
-                    onClick={() => handleSort("designation")}
-                    className="py-3 px-4 min-w-[160px] cursor-pointer hover:bg-blue-100/50 dark:hover:bg-slate-700 transition-colors"
-                  >
-                    <div className="flex items-center gap-1.5">
-                      <span>Designation</span>
-                      {sortField === "designation" ? (
-                        sortOrder === "asc" ? (
-                          <ArrowUp className="w-3.5 h-3.5 text-blue-600" />
-                        ) : (
-                          <ArrowDown className="w-3.5 h-3.5 text-blue-600" />
-                        )
-                      ) : (
-                        <ArrowUpDown className="w-3.5 h-3.5 text-slate-400" />
-                      )}
-                    </div>
-                  </th>
-
-                  {/* Payroll Group Header */}
-                  <th
-                    onClick={() => handleSort("payroll_group")}
-                    className="py-3 px-4 min-w-[220px] cursor-pointer hover:bg-blue-100/50 dark:hover:bg-slate-700 transition-colors"
-                  >
-                    <div className="flex items-center gap-1.5">
-                      <span>Payroll Group</span>
-                      {sortField === "payroll_group" ? (
-                        sortOrder === "asc" ? (
-                          <ArrowUp className="w-3.5 h-3.5 text-blue-600" />
-                        ) : (
-                          <ArrowDown className="w-3.5 h-3.5 text-blue-600" />
-                        )
-                      ) : (
-                        <ArrowUpDown className="w-3.5 h-3.5 text-slate-400" />
-                      )}
-                    </div>
-                  </th>
-
-                  {/* Action Header */}
-                  <th className="py-3 px-4 min-w-[160px]">
-                    Action
-                  </th>
-                </tr>
-              </thead>
-
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-xs">
-                {paginatedRows.map((row) => {
-                  const isChecked = selectedEmployeeIds.includes(row.employee_id);
-                  return (
-                    <tr
-                      key={row.employee_id}
-                      className={`hover:bg-slate-50/60 dark:hover:bg-slate-800/40 transition-colors ${
-                        isChecked ? "bg-blue-50/30 dark:bg-blue-950/20" : ""
-                      }`}
+                    <th
+                      onClick={() => handleSort("employee_id")}
+                      className="py-3 px-4 min-w-[120px] cursor-pointer hover:bg-blue-100/50 dark:hover:bg-slate-700 transition-colors"
                     >
-                      {/* Checkbox Cell */}
-                      <td className="py-3.5 px-4 text-center">
+                      <div className="flex items-center gap-1.5">
+                        <span>Employee ID</span>
+                        {sortField === "employee_id" ? (
+                          sortOrder === "asc" ? (
+                            <ArrowUp className="w-3.5 h-3.5 text-blue-600" />
+                          ) : (
+                            <ArrowDown className="w-3.5 h-3.5 text-blue-600" />
+                          )
+                        ) : (
+                          <ArrowUpDown className="w-3.5 h-3.5 text-slate-400" />
+                        )}
+                      </div>
+                    </th>
+
+                    <th
+                      onClick={() => handleSort("employee_name")}
+                      className="py-3 px-4 min-w-[200px] cursor-pointer hover:bg-blue-100/50 dark:hover:bg-slate-700 transition-colors"
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span>Employee Name</span>
+                        {sortField === "employee_name" ? (
+                          sortOrder === "asc" ? (
+                            <ArrowUp className="w-3.5 h-3.5 text-blue-600" />
+                          ) : (
+                            <ArrowDown className="w-3.5 h-3.5 text-blue-600" />
+                          )
+                        ) : (
+                          <ArrowUpDown className="w-3.5 h-3.5 text-slate-400" />
+                        )}
+                      </div>
+                    </th>
+
+                    <th
+                      onClick={() => handleSort("department")}
+                      className="py-3 px-4 min-w-[160px] cursor-pointer hover:bg-blue-100/50 dark:hover:bg-slate-700 transition-colors"
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span>Department</span>
+                        {sortField === "department" ? (
+                          sortOrder === "asc" ? (
+                            <ArrowUp className="w-3.5 h-3.5 text-blue-600" />
+                          ) : (
+                            <ArrowDown className="w-3.5 h-3.5 text-blue-600" />
+                          )
+                        ) : (
+                          <ArrowUpDown className="w-3.5 h-3.5 text-slate-400" />
+                        )}
+                      </div>
+                    </th>
+
+                    <th
+                      onClick={() => handleSort("designation")}
+                      className="py-3 px-4 min-w-[160px] cursor-pointer hover:bg-blue-100/50 dark:hover:bg-slate-700 transition-colors"
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span>Designation</span>
+                        {sortField === "designation" ? (
+                          sortOrder === "asc" ? (
+                            <ArrowUp className="w-3.5 h-3.5 text-blue-600" />
+                          ) : (
+                            <ArrowDown className="w-3.5 h-3.5 text-blue-600" />
+                          )
+                        ) : (
+                          <ArrowUpDown className="w-3.5 h-3.5 text-slate-400" />
+                        )}
+                      </div>
+                    </th>
+
+                    <th
+                      onClick={() => handleSort("payroll_group")}
+                      className="py-3 px-4 min-w-[240px] cursor-pointer hover:bg-blue-100/50 dark:hover:bg-slate-700 transition-colors"
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span>Payroll Group</span>
+                        {sortField === "payroll_group" ? (
+                          sortOrder === "asc" ? (
+                            <ArrowUp className="w-3.5 h-3.5 text-blue-600" />
+                          ) : (
+                            <ArrowDown className="w-3.5 h-3.5 text-blue-600" />
+                          )
+                        ) : (
+                          <ArrowUpDown className="w-3.5 h-3.5 text-slate-400" />
+                        )}
+                      </div>
+                    </th>
+
+                    <th className="py-3 px-4 min-w-[160px]">Action</th>
+                  </tr>
+                </thead>
+
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-xs">
+                  {paginatedRows.map((emp) => (
+                    <tr
+                      key={emp.employee_id}
+                      className="hover:bg-slate-50/60 dark:hover:bg-slate-800/40 transition-colors"
+                    >
+                      <td className="py-3.5 px-4">
                         <input
                           type="checkbox"
-                          checked={isChecked}
-                          onChange={() => handleToggleRow(row.employee_id)}
-                          className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                          checked={selectedEmployeeIds.includes(emp.employee_id)}
+                          onChange={() => handleToggleRow(emp.employee_id)}
+                          className="rounded border-slate-300 dark:border-slate-700 text-[#0B85C9] focus:ring-[#0B85C9] cursor-pointer"
                         />
                       </td>
 
-                      {/* Employee ID */}
-                      <td className="py-3.5 px-4 font-medium text-slate-700 dark:text-slate-300">
-                        {row.employee_id}
+                      <td className="py-3.5 px-4 font-mono text-slate-700 dark:text-slate-300 font-medium">
+                        {emp.employee_id}
                       </td>
 
-                      {/* Employee Name */}
-                      <td className="py-3.5 px-4 font-medium text-slate-900 dark:text-slate-100">
-                        {row.employee_name}
+                      <td className="py-3.5 px-4 font-semibold text-slate-900 dark:text-slate-100">
+                        {emp.employee_name}
                       </td>
 
-                      {/* Department */}
                       <td className="py-3.5 px-4 text-slate-700 dark:text-slate-300">
-                        {row.department}
+                        {emp.department}
                       </td>
 
-                      {/* Designation */}
                       <td className="py-3.5 px-4 text-slate-700 dark:text-slate-300">
-                        {row.designation}
+                        {emp.designation}
                       </td>
 
-                      {/* Payroll Group */}
-                      <td className="py-3.5 px-4 text-slate-700 dark:text-slate-300">
-                        {row.payroll_group}
+                      <td className="py-3.5 px-4 text-slate-700 dark:text-slate-300 font-medium">
+                        {emp.payroll_group}
                       </td>
 
-                      {/* Action Button */}
                       <td className="py-3.5 px-4">
                         <button
                           type="button"
-                          onClick={() => handleOpenSingleAssign(row)}
-                          className="px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700/60 rounded-lg transition-colors cursor-pointer"
+                          onClick={() => handleOpenSingleAssign(emp)}
+                          className="px-3 py-1 text-xs font-semibold text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 rounded-lg cursor-pointer transition-colors shadow-2xs"
                         >
                           Assign Payroll Group
                         </button>
                       </td>
                     </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
 
           {/* Footer Controls & Pagination */}
           <div className="flex flex-col sm:flex-row items-center justify-between gap-3 p-3.5 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 text-xs">
@@ -453,14 +523,14 @@ export default function AssignPayrollGroupPage() {
         </div>
 
         {/* ---------------------------------------------------- */}
-        {/* ASSIGN PAYROLL GROUP DRAWER matching Screenshot 3    */}
+        {/* ASSIGN PAYROLL GROUP DRAWER                          */}
         {/* ---------------------------------------------------- */}
         {showAssignDrawer && (
           <div className="fixed inset-0 z-50 overflow-hidden bg-black/50 backdrop-blur-xs flex justify-end">
             <div className="w-full max-w-md bg-white dark:bg-slate-900 h-full shadow-2xl flex flex-col border-l border-slate-200 dark:border-slate-800 animate-in slide-in-from-right duration-200">
               
               {/* Drawer Header */}
-              <div className="flex items-center justify-between px-6 py-4 bg-blue-50/60 dark:bg-slate-800/80 border-b border-slate-200 dark:border-slate-800">
+              <div className="flex items-center justify-between px-6 py-4 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800">
                 <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">
                   Assign Payroll Group
                 </h2>
@@ -473,94 +543,70 @@ export default function AssignPayrollGroupPage() {
                 </button>
               </div>
 
-              {/* Drawer Content */}
-              <div className="flex-1 flex flex-col justify-between overflow-hidden">
-                <div className="p-6 space-y-6 text-xs overflow-y-auto flex-1">
-                  
-                  {/* Salary Type Dropdown */}
-                  <div>
-                    <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
-                      Salary Type
-                    </label>
+              {/* Drawer Form Body */}
+              <div className="p-6 space-y-6 text-xs overflow-y-auto flex-1">
+                
+                {/* Salary Type Select */}
+                <div>
+                  <label className="block font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+                    Salary Type
+                  </label>
+                  <div className="relative">
                     <select
                       value={salaryType}
-                      onChange={(e) => setSalaryType(e.target.value)}
-                      className="w-full p-2.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg font-medium text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+                      onChange={(e) => setSalaryType(e.target.value as "monthly" | "hourly")}
+                      className="w-full p-2.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg font-medium text-slate-800 dark:text-slate-100 appearance-none focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer pr-8"
                     >
-                      <option value="Monthly">Monthly</option>
-                      <option value="Hourly">Hourly</option>
+                      <option value="monthly">Monthly</option>
+                      <option value="hourly">Hourly</option>
                     </select>
-                  </div>
-
-                  {/* Payroll Group Radio Options */}
-                  <div>
-                    <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-2">
-                      Payroll Group
-                    </label>
-
-                    <div className="space-y-2.5">
-                      <label className="flex items-center gap-2.5 cursor-pointer">
-                        <input
-                          type="radio"
-                          name="target_payroll_group"
-                          value="Monthly Payroll (No Compliance)"
-                          checked={targetGroupChoice === "Monthly Payroll (No Compliance)"}
-                          onChange={(e) => setTargetGroupChoice(e.target.value)}
-                          className="w-4 h-4 text-blue-600 focus:ring-blue-500 cursor-pointer"
-                        />
-                        <span className="font-medium text-slate-800 dark:text-slate-200">
-                          Monthly Payroll (No Compliance)
-                        </span>
-                      </label>
-
-                      <label className="flex items-center gap-2.5 cursor-pointer">
-                        <input
-                          type="radio"
-                          name="target_payroll_group"
-                          value="Hourly Payroll"
-                          checked={targetGroupChoice === "Hourly Payroll"}
-                          onChange={(e) => setTargetGroupChoice(e.target.value)}
-                          className="w-4 h-4 text-blue-600 focus:ring-blue-500 cursor-pointer"
-                        />
-                        <span className="font-medium text-slate-800 dark:text-slate-200">
-                          Hourly Payroll
-                        </span>
-                      </label>
-
-                      <label className="flex items-center gap-2.5 cursor-pointer">
-                        <input
-                          type="radio"
-                          name="target_payroll_group"
-                          value="Monthly Payroll (With Compliance)"
-                          checked={targetGroupChoice === "Monthly Payroll (With Compliance)"}
-                          onChange={(e) => setTargetGroupChoice(e.target.value)}
-                          className="w-4 h-4 text-blue-600 focus:ring-blue-500 cursor-pointer"
-                        />
-                        <span className="font-medium text-slate-800 dark:text-slate-200">
-                          Monthly Payroll (With Compliance)
-                        </span>
-                      </label>
-                    </div>
+                    <ChevronDown className="w-4 h-4 text-slate-400 absolute right-2.5 top-3 pointer-events-none" />
                   </div>
                 </div>
 
-                {/* Drawer Footer matching Screenshot 3 */}
-                <div className="flex items-center justify-end gap-3 px-6 py-3.5 bg-blue-50/70 dark:bg-slate-800/80 border-t border-slate-200 dark:border-slate-800">
-                  <button
-                    type="button"
-                    onClick={() => setShowAssignDrawer(false)}
-                    className="px-5 py-2 text-xs font-semibold text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 rounded-lg cursor-pointer transition-colors"
-                  >
-                    Close
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleConfirmAssign}
-                    className="px-5 py-2 text-xs font-semibold text-white bg-[#0B85C9] hover:bg-[#0974b0] rounded-lg cursor-pointer shadow-xs transition-colors"
-                  >
-                    Assign Group
-                  </button>
+                {/* Payroll Group Select Dropdown */}
+                <div>
+                  <label className="block font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+                    Payroll Group
+                  </label>
+                  <div className="relative">
+                    <select
+                      value={targetGroupId || ""}
+                      onChange={(e) => setTargetGroupId(Number(e.target.value) || null)}
+                      className="w-full p-2.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg font-medium text-slate-800 dark:text-slate-100 appearance-none focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer pr-8"
+                    >
+                      {groupsList.length === 0 ? (
+                        <option value="">No Groups Available</option>
+                      ) : (
+                        groupsList.map((grp) => (
+                          <option key={grp.id} value={grp.id}>
+                            {grp.name}
+                          </option>
+                        ))
+                      )}
+                    </select>
+                    <ChevronDown className="w-4 h-4 text-slate-400 absolute right-2.5 top-3 pointer-events-none" />
+                  </div>
                 </div>
+              </div>
+
+              {/* Drawer Footer */}
+              <div className="flex items-center justify-end gap-3 px-6 py-3.5 bg-blue-50/70 dark:bg-slate-800/80 border-t border-slate-200 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setShowAssignDrawer(false)}
+                  className="px-5 py-2 text-xs font-semibold text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 rounded-lg cursor-pointer transition-colors"
+                >
+                  Close
+                </button>
+                <button
+                  type="button"
+                  disabled={assignMutation.isPending}
+                  onClick={handleConfirmAssign}
+                  className="px-5 py-2 text-xs font-semibold text-white bg-[#0B85C9] hover:bg-[#0974b0] rounded-lg shadow-xs cursor-pointer transition-colors disabled:opacity-50"
+                >
+                  Assign Group
+                </button>
               </div>
             </div>
           </div>

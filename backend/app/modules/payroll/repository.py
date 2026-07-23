@@ -23,8 +23,10 @@ from typing import Any
 
 from sqlalchemy import and_, delete, desc, func, insert, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import joinedload, selectinload
 
 from app.modules.employee.models.employee import Employee
+from app.modules.employee.models.organization import Department, Designation
 from app.modules.payroll.constants import (
     AdjustmentSource,
     PaymentStatus,
@@ -37,6 +39,8 @@ from app.modules.payroll.models import (
     FinalizedPayrollRun,
     PayrollColumnSetting,
     PayrollComputedRow,
+    PayrollFinalization,
+    PayrollFinalizationEmployee,
     PayrollGroup,
     PayrollSalaryCycle,
     PayrollSetting,
@@ -112,23 +116,74 @@ class PayrollGroupRepository(BaseRepository[PayrollGroup]):
         )
         await self.session.execute(stmt)
 
+    async def clear_defaults_for_type(
+        self, org_id: int, payroll_type: str, exclude_id: int | None = None
+    ) -> None:
+        """Reset is_default to False for all groups in org matching payroll_type."""
+        stmt = update(PayrollGroup).where(
+            PayrollGroup.org_id == org_id,
+            PayrollGroup.payroll_type == payroll_type,
+            PayrollGroup.is_default.is_(True),
+        )
+        if exclude_id is not None:
+            stmt = stmt.where(PayrollGroup.id != exclude_id)
+        stmt = stmt.values(is_default=False)
+        await self.session.execute(stmt)
+
     async def search(
-        self, org_id: int, *, page: int = 1, page_size: int = 25
+        self,
+        org_id: int,
+        *,
+        search: str | None = None,
+        payroll_type: str | None = None,
+        is_default: bool | None = None,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
+        page: int = 1,
+        page_size: int = 25,
     ) -> list[PayrollGroup]:
-        """Search and list active payroll groups in the organization."""
+        """Search and list active payroll groups with filtering and sorting."""
         stmt = select(PayrollGroup).where(
             PayrollGroup.org_id == org_id,
             PayrollGroup.is_deleted.is_(False),
-        ).order_by(PayrollGroup.name)
+        )
+        if search:
+            stmt = stmt.where(PayrollGroup.name.ilike(f"%{search.strip()}%"))
+        if payroll_type:
+            stmt = stmt.where(PayrollGroup.payroll_type == payroll_type)
+        if is_default is not None:
+            stmt = stmt.where(PayrollGroup.is_default.is_(is_default))
+
+        # Sorting
+        sort_col = getattr(PayrollGroup, sort_by, PayrollGroup.created_at)
+        if sort_order.lower() == "asc":
+            stmt = stmt.order_by(sort_col.asc())
+        else:
+            stmt = stmt.order_by(sort_col.desc())
+
         stmt = apply_pagination(stmt, page=page, page_size=page_size)
         return list((await self.session.execute(stmt)).scalars().all())
 
-    async def search_count(self, org_id: int) -> int:
-        """Count active payroll groups in the organization."""
+    async def search_count(
+        self,
+        org_id: int,
+        *,
+        search: str | None = None,
+        payroll_type: str | None = None,
+        is_default: bool | None = None,
+    ) -> int:
+        """Count active payroll groups matching search criteria."""
         stmt = select(func.count()).select_from(PayrollGroup).where(
             PayrollGroup.org_id == org_id,
             PayrollGroup.is_deleted.is_(False),
         )
+        if search:
+            stmt = stmt.where(PayrollGroup.name.ilike(f"%{search.strip()}%"))
+        if payroll_type:
+            stmt = stmt.where(PayrollGroup.payroll_type == payroll_type)
+        if is_default is not None:
+            stmt = stmt.where(PayrollGroup.is_default.is_(is_default))
+
         return int((await self.session.execute(stmt)).scalar_one())
 
 
@@ -152,11 +207,7 @@ class EmployeePayrollGroupAssignmentRepository(BaseRepository[EmployeePayrollGro
     async def get_by_employees(
         self, employee_ids: Sequence[int]
     ) -> list[EmployeePayrollGroupAssignment]:
-        """Bulk-retrieve assignment records for a set of employees in a single query.
-
-        ``employee_id`` is unique on this table, so callers may safely key the result
-        by employee id.
-        """
+        """Bulk-retrieve assignment records for a set of employees in a single query."""
         if not employee_ids:
             return []
         stmt = select(EmployeePayrollGroupAssignment).where(
@@ -170,6 +221,92 @@ class EmployeePayrollGroupAssignmentRepository(BaseRepository[EmployeePayrollGro
             EmployeePayrollGroupAssignment.payroll_group_id == group_id
         )
         return list((await self.session.execute(stmt)).scalars().all())
+
+    async def count_by_group(self, group_id: int) -> int:
+        """Count total employees assigned to a payroll group."""
+        stmt = select(func.count()).select_from(EmployeePayrollGroupAssignment).where(
+            EmployeePayrollGroupAssignment.payroll_group_id == group_id
+        )
+        return int((await self.session.execute(stmt)).scalar_one())
+
+    async def count_by_groups(self, group_ids: Sequence[int]) -> dict[int, int]:
+        """Bulk count employees assigned across multiple groups."""
+        if not group_ids:
+            return {}
+        stmt = (
+            select(
+                EmployeePayrollGroupAssignment.payroll_group_id,
+                func.count().label("cnt"),
+            )
+            .where(EmployeePayrollGroupAssignment.payroll_group_id.in_(group_ids))
+            .group_by(EmployeePayrollGroupAssignment.payroll_group_id)
+        )
+        rows = (await self.session.execute(stmt)).all()
+        counts = {gid: 0 for gid in group_ids}
+        for gid, cnt in rows:
+            counts[gid] = cnt
+        return counts
+
+    async def get_assigned_employees(
+        self,
+        org_id: int,
+        group_id: int,
+        page: int = 1,
+        page_size: int = 25,
+        search: str | None = None,
+    ) -> tuple[int, list[dict[str, Any]]]:
+        """Retrieve paginated active employees assigned to a specific group."""
+        stmt = (
+            select(
+                Employee.employee_id,
+                Employee.employee_code,
+                Employee.employee_name,
+                Department.dept_name.label("department_name"),
+                Designation.designation_name.label("designation_name"),
+                EmployeePayrollGroupAssignment.assigned_at,
+            )
+            .join(
+                EmployeePayrollGroupAssignment,
+                Employee.employee_id == EmployeePayrollGroupAssignment.employee_id,
+            )
+            .outerjoin(Department, Employee.dept_id == Department.dept_id)
+            .outerjoin(Designation, Employee.designation_id == Designation.designation_id)
+            .where(
+                Employee.org_id == org_id,
+                Employee.is_deleted.is_(False),
+                EmployeePayrollGroupAssignment.payroll_group_id == group_id,
+            )
+        )
+
+        if search:
+            pattern = f"%{search.strip()}%"
+            stmt = stmt.where(
+                or_(
+                    Employee.employee_name.ilike(pattern),
+                    Employee.employee_code.ilike(pattern),
+                )
+            )
+
+        # Count query
+        count_stmt = select(func.count()).select_from(stmt.subquery())
+        total = int((await self.session.execute(count_stmt)).scalar_one())
+
+        # Paginated query
+        stmt = apply_pagination(stmt.order_by(Employee.employee_id.desc()), page=page, page_size=page_size)
+        rows = (await self.session.execute(stmt)).all()
+
+        items = []
+        for r in rows:
+            items.append({
+                "employee_id": r.employee_id,
+                "employee_code": r.employee_code,
+                "employee_name": r.employee_name,
+                "department_name": r.department_name,
+                "designation_name": r.designation_name,
+                "assigned_at": r.assigned_at,
+            })
+
+        return total, items
 
 
 # ===========================================================================
@@ -367,6 +504,82 @@ class FinalizedPayrollRunRepository(BaseRepository[FinalizedPayrollRun]):
             conds.append(FinalizedPayrollRun.cycle_to <= date_to)
 
         stmt = select(func.count()).select_from(FinalizedPayrollRun).where(and_(*conds))
+        return int((await self.session.execute(stmt)).scalar_one())
+
+
+class PayrollFinalizationRepository(BaseRepository[PayrollFinalization]):
+    """CRUD operations and searches for PayrollFinalization."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        super().__init__(session, PayrollFinalization)
+
+    async def get_by_id_in_org(self, org_id: int, fin_id: int) -> PayrollFinalization | None:
+        """Retrieve a specific finalization record scoped to the organization."""
+        stmt = (
+            select(PayrollFinalization)
+            .options(
+                joinedload(PayrollFinalization.payroll_group),
+                selectinload(PayrollFinalization.employees),
+            )
+            .where(
+                PayrollFinalization.id == fin_id,
+                PayrollFinalization.org_id == org_id,
+            )
+        )
+        return (await self.session.execute(stmt.limit(1))).scalar_one_or_none()
+
+    async def search(
+        self,
+        org_id: int,
+        *,
+        payroll_group_id: int | None = None,
+        status: str | None = None,
+        from_date: date | None = None,
+        to_date: date | None = None,
+        page: int = 1,
+        page_size: int = 25,
+    ) -> list[PayrollFinalization]:
+        """Search and list finalized payroll history records in the organization."""
+        conds = [PayrollFinalization.org_id == org_id]
+        if payroll_group_id is not None:
+            conds.append(PayrollFinalization.payroll_group_id == payroll_group_id)
+        if status is not None:
+            conds.append(PayrollFinalization.status == status)
+        if from_date is not None:
+            conds.append(PayrollFinalization.from_date >= from_date)
+        if to_date is not None:
+            conds.append(PayrollFinalization.to_date <= to_date)
+
+        stmt = (
+            select(PayrollFinalization)
+            .options(joinedload(PayrollFinalization.payroll_group))
+            .where(and_(*conds))
+            .order_by(desc(PayrollFinalization.from_date), desc(PayrollFinalization.id))
+        )
+        stmt = apply_pagination(stmt, page=page, page_size=page_size)
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def search_count(
+        self,
+        org_id: int,
+        *,
+        payroll_group_id: int | None = None,
+        status: str | None = None,
+        from_date: date | None = None,
+        to_date: date | None = None,
+    ) -> int:
+        """Count finalized payroll history records in the organization."""
+        conds = [PayrollFinalization.org_id == org_id]
+        if payroll_group_id is not None:
+            conds.append(PayrollFinalization.payroll_group_id == payroll_group_id)
+        if status is not None:
+            conds.append(PayrollFinalization.status == status)
+        if from_date is not None:
+            conds.append(PayrollFinalization.from_date >= from_date)
+        if to_date is not None:
+            conds.append(PayrollFinalization.to_date <= to_date)
+
+        stmt = select(func.count()).select_from(PayrollFinalization).where(and_(*conds))
         return int((await self.session.execute(stmt)).scalar_one())
 
 

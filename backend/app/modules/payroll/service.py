@@ -48,6 +48,8 @@ from app.modules.payroll.models import (
     FinalizedPayrollRun,
     PayrollColumnSetting,
     PayrollComputedRow,
+    PayrollFinalization,
+    PayrollFinalizationEmployee,
     PayrollGroup,
     PayrollSalaryCycle,
     PayrollSetting,
@@ -60,6 +62,7 @@ from app.modules.payroll.repository import (
     FinalizedPayrollRunRepository,
     PayrollColumnSettingRepository,
     PayrollComputedRowRepository,
+    PayrollFinalizationRepository,
     PayrollGroupRepository,
     PayrollSalaryCycleRepository,
     PayrollSettingRepository,
@@ -73,12 +76,21 @@ from app.modules.payroll.schemas import (
     BulkAttendanceAdjustmentBatchUpdateSchema,
     BulkAttendanceAdjustmentMatrixItemSchema,
     BulkAttendanceAdjustmentMatrixResponseSchema,
+    PayrollFinalizationCancelSchema,
+    PayrollFinalizationCreateSchema,
+    PayrollFinalizationEmployeeSchema,
+    PayrollFinalizationListResponse,
+    PayrollFinalizationPaySchema,
+    PayrollFinalizationResponseSchema,
     BulkAttendanceAdjustmentResetSchema,
     EmployeeGroupAssignRequestSchema,
+    GroupEmployeesResponseSchema,
     PayrollColumnSettingsReplaceSchema,
     PayrollCycleCreateSchema,
     PayrollCycleUpdateSchema,
+    PayrollGroupAssignEmployeesSchema,
     PayrollGroupCreateSchema,
+    PayrollGroupResponseSchema,
     PayrollGroupUpdateSchema,
     PayrollProcessItemResultSchema,
     PayrollProcessRequestSchema,
@@ -168,6 +180,7 @@ class PayrollService(BaseService):
         self.cycles = PayrollSalaryCycleRepository(session)
         self.columns = PayrollColumnSettingRepository(session)
         self.runs = FinalizedPayrollRunRepository(session)
+        self.finalizations = PayrollFinalizationRepository(session)
         self.computed_rows = PayrollComputedRowRepository(session)
         self.adjustments = AttendanceAdjustmentRepository(session)
         self.penalties = AttendanceAdjustmentPenaltyRepository(session)
@@ -260,10 +273,12 @@ class PayrollService(BaseService):
 
     # --- 2. Payroll Groups (Salary Structures) ------------------------------
 
+    # --- 2. Payroll Groups (Salary Structures) ------------------------------
+
     async def create_group(
         self, org_id: int, payload: PayrollGroupCreateSchema, user_id: int
-    ) -> PayrollGroup:
-        """Create a new payroll group and enforce default policy constraints."""
+    ) -> PayrollGroupResponseSchema:
+        """Create a new payroll group and enforce default policy constraints per payroll type."""
         async with self.transaction():
             # Validate name uniqueness among non-deleted groups in this org
             name_exists = await self.groups.name_exists(org_id, payload.name)
@@ -271,7 +286,7 @@ class PayrollService(BaseService):
                 raise PayrollGroupNameExistsException()
 
             if payload.is_default:
-                await self.groups.clear_defaults_except(org_id, 0)
+                await self.groups.clear_defaults_for_type(org_id, payload.payroll_type.value)
 
             group = await self.groups.create(
                 {
@@ -295,24 +310,61 @@ class PayrollService(BaseService):
                 performed_by_user_id=user_id,
                 performed_by_name=f"User {user_id}",
             )
-        return group
+
+        resp = PayrollGroupResponseSchema.model_validate(group)
+        resp.employee_count = 0
+        return resp
 
     async def list_groups(
-        self, org_id: int, page: int, page_size: int
-    ) -> PaginatedResponse[PayrollGroup]:
-        """List paginated payroll groups."""
-        groups = await self.groups.search(org_id, page=page, page_size=page_size)
-        total = await self.groups.search_count(org_id)
-        return self.paginate(groups, page=page, page_size=page_size, total_records=total)
+        self,
+        org_id: int,
+        *,
+        search: str | None = None,
+        payroll_type: str | None = None,
+        is_default: bool | None = None,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
+        page: int = 1,
+        page_size: int = 25,
+    ) -> PaginatedResponse[PayrollGroupResponseSchema]:
+        """List paginated payroll groups with search, filters, sorting, and employee count."""
+        groups = await self.groups.search(
+            org_id,
+            search=search,
+            payroll_type=payroll_type,
+            is_default=is_default,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            page=page,
+            page_size=page_size,
+        )
+        total = await self.groups.search_count(
+            org_id, search=search, payroll_type=payroll_type, is_default=is_default
+        )
 
-    async def get_group(self, org_id: int, group_id: int) -> PayrollGroup:
+        group_ids = [g.id for g in groups]
+        emp_counts = await self.assignments.count_by_groups(group_ids)
+
+        items = []
+        for g in groups:
+            item = PayrollGroupResponseSchema.model_validate(g)
+            item.employee_count = emp_counts.get(g.id, 0)
+            items.append(item)
+
+        return self.paginate(items, page=page, page_size=page_size, total_records=total)
+
+    async def get_group(self, org_id: int, group_id: int) -> PayrollGroupResponseSchema:
         """Get payroll group details scoped by org."""
-        return await self._validate_payroll_group(org_id, group_id)
+        group = await self._validate_payroll_group(org_id, group_id)
+        emp_count = await self.assignments.count_by_group(group_id)
+        resp = PayrollGroupResponseSchema.model_validate(group)
+        resp.employee_count = emp_count
+        return resp
 
     async def update_group(
         self, org_id: int, group_id: int, payload: PayrollGroupUpdateSchema, user_id: int
-    ) -> PayrollGroup:
-        """Update payroll group and clear other default groups if updated as default."""
+    ) -> PayrollGroupResponseSchema:
+        """Update payroll group and enforce one default per payroll type."""
         group = await self._validate_payroll_group(org_id, group_id)
         update_data = payload.model_dump(exclude_unset=True)
 
@@ -324,10 +376,17 @@ class PayrollService(BaseService):
                 if name_exists:
                     raise PayrollGroupNameExistsException()
 
+            target_type = update_data.get("payroll_type", group.payroll_type)
+            if isinstance(target_type, Enum):
+                target_type = target_type.value
+
             if update_data.get("is_default"):
-                await self.groups.clear_defaults_except(org_id, group_id)
+                await self.groups.clear_defaults_for_type(org_id, target_type, exclude_id=group_id)
 
             update_data["updated_by"] = user_id
+            if "payroll_type" in update_data and isinstance(update_data["payroll_type"], Enum):
+                update_data["payroll_type"] = update_data["payroll_type"].value
+
             updated = await self.groups.update(group, update_data)
 
             await self.audit.record(
@@ -340,19 +399,36 @@ class PayrollService(BaseService):
                 performed_by_user_id=user_id,
                 performed_by_name=f"User {user_id}",
             )
-        return updated
+
+        emp_count = await self.assignments.count_by_group(group_id)
+        resp = PayrollGroupResponseSchema.model_validate(updated)
+        resp.employee_count = emp_count
+        return resp
 
     async def delete_group(self, org_id: int, group_id: int, user_id: int) -> None:
-        """Soft delete a payroll group if it is not currently in use."""
+        """Soft delete a payroll group enforcing Business Rules."""
         group = await self._validate_payroll_group(org_id, group_id)
 
-        # Check if assigned to any employees
+        # Rule: Cannot delete Default Group
+        if group.is_default:
+            raise PayrollGroupInUseException("Default payroll group cannot be deleted.")
+
+        # Rule: Cannot delete Group with employees unless reassigned
+        emp_count = await self.assignments.count_by_group(group_id)
+        if emp_count > 0:
+            raise PayrollGroupInUseException(
+                "Cannot delete payroll group with assigned employees. Reassign employees before deletion."
+            )
+
+        # Check if assigned in Employee table
         stmt_emp = select(Employee.employee_id).where(
             Employee.payroll_group_id == group_id, Employee.is_deleted.is_(False)
         )
         has_employees = (await self.session.execute(stmt_emp.limit(1))).first() is not None
         if has_employees:
-            raise PayrollGroupInUseException("Group is assigned to active employees.")
+            raise PayrollGroupInUseException(
+                "Cannot delete payroll group with assigned employees. Reassign employees before deletion."
+            )
 
         # Check if referenced by cycles
         stmt_cycle = select(PayrollSalaryCycle.id).where(
@@ -383,6 +459,85 @@ class PayrollService(BaseService):
                 performed_by_user_id=user_id,
                 performed_by_name=f"User {user_id}",
             )
+
+    async def assign_employees_to_group(
+        self,
+        org_id: int,
+        group_id: int,
+        payload: PayrollGroupAssignEmployeesSchema,
+        user_id: int,
+    ) -> int:
+        """Batch assign employees to a specific payroll group."""
+        group = await self._validate_payroll_group(org_id, group_id)
+        assigned_count = 0
+
+        async with self.transaction():
+            for emp_id in payload.employee_ids:
+                existing = await self.assignments.get_by_employee(emp_id)
+                prev_gid = existing.payroll_group_id if existing else None
+
+                if existing:
+                    await self.assignments.update(
+                        existing,
+                        {
+                            "payroll_group_id": group_id,
+                            "salary_type": payload.salary_type.value,
+                            "previous_group_id": prev_gid,
+                            "assigned_by": user_id,
+                            "assigned_at": utcnow(),
+                        },
+                    )
+                else:
+                    await self.assignments.create(
+                        {
+                            "employee_id": emp_id,
+                            "payroll_group_id": group_id,
+                            "salary_type": payload.salary_type.value,
+                            "previous_group_id": None,
+                            "assigned_by": user_id,
+                            "assigned_at": utcnow(),
+                        }
+                    )
+
+                # Update Employee table FK
+                emp = await self.employees.get_by_id(emp_id)
+                if emp and emp.org_id == org_id:
+                    await self.employees.update(emp, {"payroll_group_id": group_id})
+
+                assigned_count += 1
+
+            await self.audit.record(
+                org_id=org_id,
+                module="payroll",
+                sub_module="assignments",
+                action_type=ActionType.UPDATE,
+                title="Assign Employees to Group",
+                description=f"Assigned {assigned_count} employees to payroll group '{group.name}'.",
+                performed_by_user_id=user_id,
+                performed_by_name=f"User {user_id}",
+            )
+
+        return assigned_count
+
+    async def get_group_employees(
+        self,
+        org_id: int,
+        group_id: int,
+        page: int = 1,
+        page_size: int = 25,
+        search: str | None = None,
+    ) -> GroupEmployeesResponseSchema:
+        """Get paginated list of employees assigned to group_id."""
+        group = await self._validate_payroll_group(org_id, group_id)
+        total, items = await self.assignments.get_assigned_employees(
+            org_id=org_id, group_id=group_id, page=page, page_size=page_size, search=search
+        )
+        return GroupEmployeesResponseSchema(
+            payroll_group_id=group.id,
+            payroll_group_name=group.name,
+            total_employees=total,
+            items=items,
+        )
 
     # --- 3. Employee Group Assignment ---------------------------------------
 
@@ -1144,6 +1299,42 @@ class PayrollService(BaseService):
                     "is_definalized": False,
                 }
             )
+
+            # 1b. Create corresponding PayrollFinalization record for history details page
+            gross_sum = sum(Decimal(str(r.gross_earnings or 0)) for r in comp_rows)
+            deduction_sum = sum(Decimal(str(r.total_deductions or 0)) for r in comp_rows)
+            fin_obj = PayrollFinalization(
+                org_id=org_id,
+                payroll_group_id=payload.payroll_group_id,
+                from_date=payload.cycle_from,
+                to_date=payload.cycle_to,
+                payroll_module="Monthly Payroll",
+                employee_count=len(comp_rows),
+                gross_amount=gross_sum,
+                deduction_amount=deduction_sum,
+                net_payable=total_amount,
+                finalized_amount=total_amount,
+                status="Finalized",
+                finalized_by=user_id,
+                finalized_on=utcnow(),
+            )
+            self.session.add(fin_obj)
+            await self.session.flush()
+
+            for r in comp_rows:
+                emp_obj = PayrollFinalizationEmployee(
+                    payroll_finalization_id=fin_obj.id,
+                    employee_id=r.employee_id,
+                    loan_amount=Decimal(str(r.loan_advance_deduction or 0)),
+                    arrears_amount=Decimal(str(r.arrears_amount or 0)),
+                    net_salary=Decimal(str(r.to_pay or 0)),
+                    json_snapshot={
+                        "employee_id": r.employee_id,
+                        "gross_earnings": str(r.gross_earnings or 0),
+                        "to_pay": str(r.to_pay or 0),
+                    },
+                )
+                self.session.add(emp_obj)
 
             # 2. Lock computed rows
             for row in comp_rows:
@@ -2201,4 +2392,315 @@ class PayrollService(BaseService):
         if not rows:
             raise NotFoundException(f"Payroll record for employee {employee_id} not found.")
         return PayrollComputedRowSchema.model_validate(rows[0])
+
+    # ===========================================================================
+    # 20. Finalized Payroll History & Immutability Engine
+    # ===========================================================================
+
+    async def finalize_payroll_record(
+        self,
+        org_id: int,
+        payload: PayrollFinalizationCreateSchema,
+        user_id: int,
+    ) -> PayrollFinalizationResponseSchema:
+        """Finalize payroll for a group & cycle range, creating an immutable history record and frozen employee snapshots."""
+        group = await self._validate_payroll_group(org_id, payload.payroll_group_id)
+
+        # Process/compute rows for group employees in date range
+        process_resp = await self.process_payroll(
+            org_id=org_id,
+            payload=PayrollProcessRequestSchema(
+                payroll_group_id=payload.payroll_group_id,
+                date_from=payload.from_date,
+                date_to=payload.to_date,
+                salary_type="monthly",
+            ),
+            user_id=user_id,
+        )
+
+        computed_items = process_resp.items
+        emp_ids = [r.employee_id for r in computed_items]
+        emp_map: dict[int, Employee] = {}
+        if emp_ids:
+            emp_rows = await self.employees.get_by_ids(org_id, emp_ids)
+            emp_map = {e.employee_id: e for e in emp_rows}
+
+        gross_sum = Decimal("0.00")
+        deduction_sum = Decimal("0.00")
+        net_sum = Decimal("0.00")
+
+        employee_snapshots = []
+        for r in computed_items:
+            emp_info = emp_map.get(r.employee_id)
+            emp_code = emp_info.employee_code if emp_info else f"EMP{r.employee_id}"
+            emp_name = emp_info.employee_name if emp_info else f"Employee {r.employee_id}"
+
+            gross = Decimal(str(r.gross_earnings))
+            deduction = Decimal(str(r.penalties_amount)) + Decimal(str(r.loan_advance_deduction))
+            net = Decimal(str(r.to_pay))
+
+            gross_sum += gross
+            deduction_sum += deduction
+            net_sum += net
+
+            att_summary = {
+                "total_days": r.total_days,
+                "full_days": r.full_day_count,
+                "half_days": r.half_day_count,
+                "off_days": r.off_day_count,
+                "paid_leaves": float(r.paid_leave_count),
+                "paid_days": float(r.paid_day_count),
+                "unpaid_days": float(r.unpaid_day_count),
+            }
+
+            earnings_summary = {
+                "daily_wage": float(r.daily_wage),
+                "gross_wages": float(r.gross_wages),
+                "overtime_amount": float(r.overtime_amount),
+                "extras_amount": float(r.extras_amount),
+                "gross_earnings": float(r.gross_earnings),
+            }
+
+            deduction_summary = {
+                "penalties_amount": float(r.penalties_amount),
+                "loan_deduction": float(r.loan_advance_deduction),
+            }
+
+            snapshot = {
+                "employee_id": r.employee_id,
+                "employee_code": emp_code,
+                "employee_name": emp_name,
+                "attendance": att_summary,
+                "earnings": earnings_summary,
+                "deductions": deduction_summary,
+                "loan_amount": float(r.loan_advance_deduction),
+                "arrears_amount": float(r.arrears_amount),
+                "net_salary": float(r.to_pay),
+            }
+
+            employee_snapshots.append({
+                "employee_id": r.employee_id,
+                "attendance_summary": att_summary,
+                "earnings_summary": earnings_summary,
+                "deduction_summary": deduction_summary,
+                "loan_amount": Decimal(str(r.loan_advance_deduction)),
+                "arrears_amount": Decimal(str(r.arrears_amount)),
+                "net_salary": net,
+                "json_snapshot": snapshot,
+            })
+
+        async with self.transaction():
+            fin_obj = PayrollFinalization(
+                org_id=org_id,
+                payroll_group_id=payload.payroll_group_id,
+                payroll_period_id=None,
+                from_date=payload.from_date,
+                to_date=payload.to_date,
+                payroll_module=payload.payroll_module,
+                employee_count=len(computed_items),
+                gross_amount=gross_sum,
+                deduction_amount=deduction_sum,
+                net_payable=net_sum,
+                finalized_amount=net_sum,
+                paid_amount=None,
+                paid_on=None,
+                status="Finalized",
+                finalized_by=user_id,
+                finalized_on=utcnow(),
+                remarks=payload.remarks,
+            )
+            self.session.add(fin_obj)
+            await self.session.flush()
+
+            for emp_snap in employee_snapshots:
+                emp_obj = PayrollFinalizationEmployee(
+                    payroll_finalization_id=fin_obj.id,
+                    employee_id=emp_snap["employee_id"],
+                    attendance_summary=emp_snap["attendance_summary"],
+                    earnings_summary=emp_snap["earnings_summary"],
+                    deduction_summary=emp_snap["deduction_summary"],
+                    loan_amount=emp_snap["loan_amount"],
+                    arrears_amount=emp_snap["arrears_amount"],
+                    net_salary=emp_snap["net_salary"],
+                    json_snapshot=emp_snap["json_snapshot"],
+                )
+                self.session.add(emp_obj)
+
+            await self.session.flush()
+
+            await self.audit.record(
+                org_id=org_id,
+                module="payroll",
+                sub_module="finalization",
+                action_type=ActionType.CREATE,
+                title="Finalize Payroll Record",
+                description=f"Finalized payroll for group '{group.name}' from {payload.from_date} to {payload.to_date} with {len(computed_items)} employees (Total: {net_sum}).",
+                performed_by_user_id=user_id,
+                performed_by_name=f"User {user_id}",
+            )
+
+        return await self.get_finalized_payroll_detail(org_id, fin_obj.id)
+
+    async def list_finalized_payrolls(
+        self,
+        org_id: int,
+        group_id: int | None = None,
+        from_date: date | None = None,
+        to_date: date | None = None,
+        status: str | None = None,
+        page: int = 1,
+        page_size: int = 25,
+    ) -> PayrollFinalizationListResponse:
+        """List paginated finalized payroll history records."""
+        total = await self.finalizations.search_count(
+            org_id=org_id,
+            payroll_group_id=group_id,
+            from_date=from_date,
+            to_date=to_date,
+            status=status,
+        )
+        records = await self.finalizations.search(
+            org_id=org_id,
+            payroll_group_id=group_id,
+            from_date=from_date,
+            to_date=to_date,
+            status=status,
+            page=page,
+            page_size=page_size,
+        )
+
+        items = []
+        for r in records:
+            item = PayrollFinalizationResponseSchema.model_validate(r)
+            item.payroll_group_name = r.payroll_group.name if r.payroll_group else None
+            items.append(item)
+
+        return self.paginate(items, page=page, page_size=page_size, total_records=total)
+
+    async def get_finalized_payroll_detail(
+        self,
+        org_id: int,
+        finalization_id: int,
+    ) -> PayrollFinalizationResponseSchema:
+        """Retrieve complete details for a finalized payroll including frozen employee snapshots."""
+        fin = await self.finalizations.get_by_id_in_org(org_id, finalization_id)
+        if not fin:
+            raise NotFoundException(f"Finalized payroll record {finalization_id} not found.")
+
+        resp = PayrollFinalizationResponseSchema.model_validate(fin)
+        resp.payroll_group_name = fin.payroll_group.name if fin.payroll_group else None
+
+        emp_ids = [e.employee_id for e in fin.employees]
+        emp_map: dict[int, Employee] = {}
+        if emp_ids:
+            emp_rows = await self.employees.get_by_ids(org_id, emp_ids)
+            emp_map = {e.employee_id: e for e in emp_rows}
+
+        employees_list = []
+        for e in fin.employees:
+            emp_info = emp_map.get(e.employee_id)
+            emp_code = emp_info.employee_code if emp_info else f"EMP{e.employee_id}"
+            emp_name = emp_info.employee_name if emp_info else f"Employee {e.employee_id}"
+
+            employees_list.append(
+                PayrollFinalizationEmployeeSchema(
+                    id=e.id,
+                    payroll_finalization_id=e.payroll_finalization_id,
+                    employee_id=e.employee_id,
+                    employee_code=emp_code,
+                    employee_name=emp_name,
+                    attendance_summary=e.attendance_summary,
+                    earnings_summary=e.earnings_summary,
+                    deduction_summary=e.deduction_summary,
+                    loan_amount=e.loan_amount,
+                    arrears_amount=e.arrears_amount,
+                    net_salary=e.net_salary,
+                    json_snapshot=e.json_snapshot or {},
+                    created_at=e.created_at,
+                )
+            )
+
+        resp.employees = employees_list
+        return resp
+
+    async def pay_finalized_payroll(
+        self,
+        org_id: int,
+        finalization_id: int,
+        payload: PayrollFinalizationPaySchema,
+        user_id: int,
+    ) -> PayrollFinalizationResponseSchema:
+        """Mark a finalized payroll as Paid and record disbursement information."""
+        fin = await self.finalizations.get_by_id_in_org(org_id, finalization_id)
+        if not fin:
+            raise NotFoundException(f"Finalized payroll record {finalization_id} not found.")
+
+        if fin.status == "Cancelled":
+            raise PayrollValidationException("Cancelled payroll cannot be marked as paid.")
+
+        pay_amt = payload.paid_amount if payload.paid_amount is not None else fin.finalized_amount
+        pay_date = payload.paid_on if payload.paid_on is not None else utcnow()
+
+        async with self.transaction():
+            update_dict: dict[str, Any] = {
+                "paid_amount": pay_amt,
+                "paid_on": pay_date,
+                "status": "Paid",
+                "updated_at": utcnow(),
+            }
+            if payload.remarks:
+                update_dict["remarks"] = f"{fin.remarks or ''}\n[Payment Note]: {payload.remarks}".strip()
+
+            await self.finalizations.update(fin, update_dict)
+
+            await self.audit.record(
+                org_id=org_id,
+                module="payroll",
+                sub_module="finalization",
+                action_type=ActionType.UPDATE,
+                title="Mark Payroll Paid",
+                description=f"Marked finalized payroll ID {finalization_id} as Paid (Paid Amount: {pay_amt}).",
+                performed_by_user_id=user_id,
+                performed_by_name=f"User {user_id}",
+            )
+
+        return await self.get_finalized_payroll_detail(org_id, finalization_id)
+
+    async def cancel_finalized_payroll(
+        self,
+        org_id: int,
+        finalization_id: int,
+        payload: PayrollFinalizationCancelSchema,
+        user_id: int,
+    ) -> PayrollFinalizationResponseSchema:
+        """Cancel a finalized payroll record."""
+        fin = await self.finalizations.get_by_id_in_org(org_id, finalization_id)
+        if not fin:
+            raise NotFoundException(f"Finalized payroll record {finalization_id} not found.")
+
+        if fin.status == "Paid":
+            raise PayrollValidationException("Paid payroll cannot be cancelled.")
+
+        async with self.transaction():
+            update_dict: dict[str, Any] = {
+                "status": "Cancelled",
+                "updated_at": utcnow(),
+            }
+            if payload.reason:
+                update_dict["remarks"] = f"{fin.remarks or ''}\n[Cancelled]: {payload.reason}".strip()
+
+            await self.finalizations.update(fin, update_dict)
+
+            await self.audit.record(
+                org_id=org_id,
+                module="payroll",
+                sub_module="finalization",
+                action_type=ActionType.UPDATE,
+                title="Cancel Finalized Payroll",
+                description=f"Cancelled finalized payroll ID {finalization_id}. Reason: {payload.reason or 'N/A'}.",
+                performed_by_user_id=user_id,
+                performed_by_name=f"User {user_id}",
+            )
+
+        return await self.get_finalized_payroll_detail(org_id, finalization_id)
 

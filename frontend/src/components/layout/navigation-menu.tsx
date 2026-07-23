@@ -35,6 +35,7 @@ export const NavigationMenu = ({ sidebarOpen }: NavigationMenuProps) => {
     Reports: true,
     Settlements: true,
     Payroll: true,
+    "User Management": true,
   });
 
   const toggleExpand = (label: string) => {
@@ -103,7 +104,7 @@ export const NavigationMenu = ({ sidebarOpen }: NavigationMenuProps) => {
       icon: CheckSquare,
       hasChevron: false,
       isNew: false,
-      permission: { feature: "approvals", action: "read" },
+      permission: { feature: "approval", action: "read" },
     },
     {
       href: "/payroll",
@@ -126,7 +127,7 @@ export const NavigationMenu = ({ sidebarOpen }: NavigationMenuProps) => {
       icon: Receipt,
       hasChevron: true,
       isNew: true,
-      permission: { feature: "settlements", action: "read" },
+      permission: { feature: "settlement", action: "read" },
       items: [
         { href: "/settlements/loan-advance", label: "Loan & Advance", isNew: true },
         { href: "/settlements/arrears", label: "Arrears", isNew: true },
@@ -156,7 +157,7 @@ export const NavigationMenu = ({ sidebarOpen }: NavigationMenuProps) => {
       icon: LineChart,
       hasChevron: false,
       isNew: false,
-      permission: { feature: "dynamic_reports", action: "read" },
+      permission: { feature: "reports", action: "read" },
     },
     {
       href: "/users",
@@ -165,6 +166,10 @@ export const NavigationMenu = ({ sidebarOpen }: NavigationMenuProps) => {
       hasChevron: true,
       isNew: false,
       permission: { feature: "user_management", action: "read" },
+      items: [
+        { href: "/allTemplates", label: "Rights Templates" },
+        { href: "/users", label: "Manage Users" },
+      ] as const,
     },
     {
       href: "/activity-logs",
@@ -172,7 +177,7 @@ export const NavigationMenu = ({ sidebarOpen }: NavigationMenuProps) => {
       icon: History,
       hasChevron: false,
       isNew: false,
-      permission: { feature: "activity_logs", action: "read" },
+      permission: { feature: "audit", action: "read" },
     },
     {
       href: "/settings",

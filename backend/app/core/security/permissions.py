@@ -199,7 +199,9 @@ def build_effective_permissions(
     """
     features: dict[str, FeaturePermission] = {}
     for row in feature_rows or []:
-        key = str(row["feature_key"])
+        key = str(row.get("feature_key") or row.get("feature") or "").strip()
+        if not key:
+            continue
         features[key] = FeaturePermission(
             feature_key=key,
             can_create=bool(row.get("can_create", False)),

@@ -259,6 +259,13 @@ class AssignRoleRequest(BaseSchema):
     template_id: int
 
 
+class BulkAssignRoleRequest(BaseSchema):
+    """Body for ``POST /users/bulk-template``."""
+
+    user_ids: list[int] = Field(..., min_length=1)
+    template_id: int
+
+
 class UserRoleSchema(BaseSchema):
     """Response for ``GET /users/{user_id}/template`` — the single assigned template."""
 

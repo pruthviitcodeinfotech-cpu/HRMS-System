@@ -15,6 +15,10 @@ from app.modules.payroll.models.adjustments import (
     AttendanceAdjustmentExtraHours,
     AttendanceAdjustmentPenalty,
 )
+from app.modules.payroll.models.finalization import (
+    PayrollFinalization,
+    PayrollFinalizationEmployee,
+)
 from app.modules.payroll.models.run import FinalizedPayrollRun, PayrollComputedRow
 from app.modules.payroll.models.settings import (
     EmployeePayrollGroupAssignment,
@@ -35,4 +39,6 @@ __all__ = [
     "AttendanceAdjustmentExtraHours",
     "FinalizedPayrollRun",
     "PayrollComputedRow",
+    "PayrollFinalization",
+    "PayrollFinalizationEmployee",
 ]

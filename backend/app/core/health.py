@@ -39,9 +39,10 @@ class DependencyUnavailableError(RuntimeError):
 async def check_database() -> tuple[bool, str | None]:
     """Return ``(healthy, error)`` for the database."""
     try:
-        async with asyncio.timeout(_PROBE_TIMEOUT_SECONDS):
+        async def _exec():
             async with get_session_factory()() as session:
                 await session.execute(text("SELECT 1"))
+        await asyncio.wait_for(_exec(), timeout=_PROBE_TIMEOUT_SECONDS)
         return True, None
     except Exception as exc:  # noqa: BLE001 - any failure means "not ready"
         return False, str(exc)
@@ -52,8 +53,7 @@ async def check_redis() -> tuple[bool, str | None]:
     from app.core.cache.redis import get_redis
 
     try:
-        async with asyncio.timeout(_PROBE_TIMEOUT_SECONDS):
-            await get_redis().ping()
+        await asyncio.wait_for(get_redis().ping(), timeout=_PROBE_TIMEOUT_SECONDS)
         return True, None
     except Exception as exc:  # noqa: BLE001
         return False, str(exc)

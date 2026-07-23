@@ -4,19 +4,104 @@ import { payrollService } from "../services/payroll";
 export const payrollKeys = {
   all: ["payroll"] as const,
   groups: (params?: Record<string, unknown>) => [...payrollKeys.all, "groups", params || {}] as const,
+  groupDetails: (id: number) => [...payrollKeys.all, "group-details", id] as const,
+  groupEmployees: (groupId: number, params?: Record<string, unknown>) => [...payrollKeys.all, "group-employees", groupId, params || {}] as const,
   cycles: (params?: Record<string, unknown>) => [...payrollKeys.all, "cycles", params || {}] as const,
   adjustments: (params?: Record<string, unknown>) => [...payrollKeys.all, "adjustments", params || {}] as const,
   bulkMatrix: (params?: Record<string, unknown>) => [...payrollKeys.all, "bulk-matrix", params || {}] as const,
   finalizedRuns: (params?: Record<string, unknown>) => [...payrollKeys.all, "finalized-runs", params || {}] as const,
+  finalizedPayroll: (params?: Record<string, unknown>) => [...payrollKeys.all, "finalized-payroll", params || {}] as const,
+  finalizedPayrollDetail: (id: number) => [...payrollKeys.all, "finalized-payroll-detail", id] as const,
 };
 
-export const usePayrollGroups = (params?: { page?: number; page_size?: number }) => {
+export const usePayrollGroups = (params?: {
+  search?: string;
+  payroll_type?: string;
+  is_default?: boolean;
+  sort_by?: string;
+  sort_order?: string;
+  page?: number;
+  page_size?: number;
+}) => {
   return useQuery({
     queryKey: payrollKeys.groups(params),
     queryFn: async () => {
       const res = await payrollService.getGroups(params);
       return res.data;
     },
+  });
+};
+
+export const usePayrollGroupDetails = (id: number) => {
+  return useQuery({
+    queryKey: payrollKeys.groupDetails(id),
+    queryFn: async () => {
+      const res = await payrollService.getGroupDetails(id);
+      return res.data;
+    },
+    enabled: !!id,
+  });
+};
+
+export const useCreatePayrollGroup = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (data: { name: string; payroll_type: string; is_default?: boolean }) => {
+      const res = await payrollService.createGroup(data);
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: payrollKeys.all });
+    },
+  });
+};
+
+export const useUpdatePayrollGroup = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, data }: { id: number; data: { name?: string; payroll_type?: string; is_default?: boolean } }) => {
+      const res = await payrollService.updateGroup(id, data);
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: payrollKeys.all });
+    },
+  });
+};
+
+export const useDeletePayrollGroup = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: number) => {
+      await payrollService.deleteGroup(id);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: payrollKeys.all });
+    },
+  });
+};
+
+export const useAssignEmployeesToGroup = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ groupId, payload }: { groupId: number; payload: { employee_ids: number[]; salary_type?: "monthly" | "hourly" } }) => {
+      const res = await payrollService.assignEmployeesToGroup(groupId, payload);
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: payrollKeys.all });
+    },
+  });
+};
+
+export const useGroupEmployees = (groupId: number, params?: { page?: number; page_size?: number; search?: string }) => {
+  return useQuery({
+    queryKey: payrollKeys.groupEmployees(groupId, params),
+    queryFn: async () => {
+      const res = await payrollService.getGroupEmployees(groupId, params);
+      return res.data;
+    },
+    enabled: !!groupId,
   });
 };
 
@@ -182,3 +267,56 @@ export const useProcessPayrollEmployeeDetail = (
   });
 };
 
+// ============================================================
+// Finalized Payroll History Hooks
+// ============================================================
+
+export const useFinalizedPayroll = (params?: {
+  page?: number;
+  page_size?: number;
+  payroll_group_id?: number;
+  from_date?: string;
+  to_date?: string;
+  status?: string;
+}) => {
+  return useQuery({
+    queryKey: payrollKeys.finalizedPayroll(params),
+    queryFn: async () => {
+      const res = await payrollService.getFinalizedPayroll(params);
+      return res.data;
+    },
+    retry: 2,
+    staleTime: 30_000,
+  });
+};
+
+export const useFinalizedPayrollDetails = (id: number | null) => {
+  return useQuery({
+    queryKey: payrollKeys.finalizedPayrollDetail(id ?? 0),
+    queryFn: async () => {
+      const res = await payrollService.getFinalizedPayrollDetails(id!);
+      return res.data;
+    },
+    enabled: !!id,
+    retry: 2,
+  });
+};
+
+export const usePayPayroll = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      id,
+      payload,
+    }: {
+      id: number;
+      payload?: { paid_amount?: number; paid_on?: string; payment_method?: string; remarks?: string };
+    }) => {
+      const res = await payrollService.payFinalizedPayroll(id, payload);
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: payrollKeys.finalizedPayroll() });
+    },
+  });
+};

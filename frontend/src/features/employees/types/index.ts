@@ -31,6 +31,7 @@ export interface EmployeeSummary {
   branch_name: string | null;
   department_name: string | null;
   designation_name: string | null;
+  payroll_group_id: number | null;
 }
 
 /** Shared paged-list metadata returned by every list endpoint. */

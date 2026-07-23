@@ -94,6 +94,7 @@ class PayrollGroupResponseSchema(BaseSchema):
     payroll_type: PayrollType = Field(..., description="Payroll type configuration.")
     is_default: bool = Field(..., description="True if group is default for organization.")
     is_deleted: bool = Field(..., description="True if group is soft-deleted.")
+    employee_count: int = Field(default=0, description="Total active employees assigned to group.")
     created_by: int | None = Field(default=None, description="User ID of creator.")
     updated_by: int | None = Field(default=None, description="User ID of last updater.")
     created_at: datetime = Field(..., description="Creation timestamp.")
@@ -128,6 +129,33 @@ class PayrollGroupUpdateSchema(BaseSchema):
         if value is not None and not value.strip():
             raise ValueError("name must not be empty or whitespace.")
         return value.strip() if value is not None else None
+
+
+class PayrollGroupAssignEmployeesSchema(BaseSchema):
+    """Payload for batch assigning employees to a payroll group."""
+
+    employee_ids: list[int] = Field(..., min_length=1, description="List of employee IDs to assign.")
+    salary_type: PayrollSalaryType = Field(default=PayrollSalaryType.MONTHLY, description="Salary type context.")
+
+
+class AssignedEmployeeItemSchema(BaseSchema):
+    """Response item representing an employee assigned to a payroll group."""
+
+    employee_id: int = Field(..., description="Employee ID.")
+    employee_code: str | None = Field(default=None, description="Employee code.")
+    employee_name: str = Field(..., description="Employee full name.")
+    department_name: str | None = Field(default=None, description="Department name.")
+    designation_name: str | None = Field(default=None, description="Designation name.")
+    assigned_at: datetime | None = Field(default=None, description="Timestamp of group assignment.")
+
+
+class GroupEmployeesResponseSchema(BaseSchema):
+    """Response schema enclosing list of employees assigned to a group."""
+
+    payroll_group_id: int = Field(..., description="Payroll group ID.")
+    payroll_group_name: str = Field(..., description="Payroll group name.")
+    total_employees: int = Field(..., description="Total count of assigned employees.")
+    items: list[AssignedEmployeeItemSchema] = Field(..., description="List of assigned employees.")
 
 
 class PayrollGroupListResponse(PaginatedResponse[PayrollGroupResponseSchema]):
@@ -572,6 +600,84 @@ class BulkAttendanceAdjustmentResetSchema(BaseSchema):
 
 
 # ===========================================================================
+# 11. Finalized Payroll History Schemas
+# ===========================================================================
+
+class PayrollFinalizationCreateSchema(BaseSchema):
+    """Payload for creating a finalized payroll record with frozen snapshots."""
+
+    payroll_group_id: int = Field(..., description="ID of the payroll group to finalize.")
+    from_date: date = Field(..., description="Cycle start date.")
+    to_date: date = Field(..., description="Cycle end date.")
+    payroll_module: str = Field(default="Monthly Payroll", description="Payroll module name.")
+    remarks: str | None = Field(default=None, description="Optional notes or remarks.")
+
+
+class PayrollFinalizationPaySchema(BaseSchema):
+    """Payload for marking a finalized payroll as paid."""
+
+    paid_amount: Decimal | None = Field(default=None, description="Paid amount (defaults to finalized_amount).")
+    paid_on: datetime | None = Field(default=None, description="Disbursement datetime.")
+    payment_method: str | None = Field(default=None, description="Payment method/channel.")
+    remarks: str | None = Field(default=None, description="Optional payment notes.")
+
+
+class PayrollFinalizationCancelSchema(BaseSchema):
+    """Payload for cancelling a finalized payroll."""
+
+    reason: str | None = Field(default=None, description="Reason for cancellation.")
+
+
+class PayrollFinalizationEmployeeSchema(BaseSchema):
+    """Frozen employee payroll snapshot record."""
+
+    id: int
+    payroll_finalization_id: int
+    employee_id: int
+    employee_code: str | None = None
+    employee_name: str | None = None
+    attendance_summary: dict[str, Any] | None = None
+    earnings_summary: dict[str, Any] | None = None
+    deduction_summary: dict[str, Any] | None = None
+    loan_amount: Decimal = Field(default=Decimal("0.00"))
+    arrears_amount: Decimal = Field(default=Decimal("0.00"))
+    net_salary: Decimal = Field(default=Decimal("0.00"))
+    json_snapshot: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+
+
+class PayrollFinalizationResponseSchema(BaseSchema):
+    """Full finalized payroll envelope record."""
+
+    id: int
+    org_id: int
+    payroll_group_id: int
+    payroll_group_name: str | None = None
+    payroll_period_id: int | None = None
+    from_date: date
+    to_date: date
+    payroll_module: str
+    employee_count: int
+    gross_amount: Decimal
+    deduction_amount: Decimal
+    net_payable: Decimal
+    finalized_amount: Decimal
+    paid_amount: Decimal | None = None
+    paid_on: datetime | None = None
+    status: str
+    finalized_by: int
+    finalized_on: datetime
+    remarks: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    employees: list[PayrollFinalizationEmployeeSchema] = Field(default_factory=list)
+
+
+class PayrollFinalizationListResponse(PaginatedResponse[PayrollFinalizationResponseSchema]):
+    """Paginated list of finalized payroll history records."""
+
+
+# ===========================================================================
 # Module exports
 # ===========================================================================
 
@@ -628,4 +734,11 @@ __all__ = [
     "BulkAttendanceAdjustmentBatchUpdateSchema",
     "BulkAttendanceAdjustmentBatchUpdateResponseSchema",
     "BulkAttendanceAdjustmentResetSchema",
+    # Finalized Payroll History
+    "PayrollFinalizationCreateSchema",
+    "PayrollFinalizationPaySchema",
+    "PayrollFinalizationCancelSchema",
+    "PayrollFinalizationEmployeeSchema",
+    "PayrollFinalizationResponseSchema",
+    "PayrollFinalizationListResponse",
 ]

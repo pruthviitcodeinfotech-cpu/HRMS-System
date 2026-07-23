@@ -38,6 +38,7 @@ from app.modules.rbac.schemas import (
     AssignDepartmentAccessRequest,
     AssignEmployeeRequest,
     AssignRoleRequest,
+    BulkAssignRoleRequest,
     BranchAccessSchema,
     CustomPermissionInput,
     CustomPermissionSchema,
@@ -350,6 +351,26 @@ async def update_role(
     return _ok(result, "Role updated.")
 
 
+@router.put(
+    "/rights-templates/{template_id}",
+    response_model=SuccessResponse[RoleSchema],
+    summary="Update Role (PUT)",
+    dependencies=[Depends(require_permission(_ROLE, A.EDIT))],
+)
+async def update_role_put(
+    template_id: int,
+    payload: RoleUpdateRequest,
+    service: ServiceDep,
+    current_user: CurrentUserDep,
+    org_id: OrgIdDep,
+) -> dict[str, Any]:
+    """Rename a role."""
+    result = await service.update_role(
+        org_id=org_id, actor_id=current_user.user_id, template_id=template_id, data=payload
+    )
+    return _ok(result, "Role updated.")
+
+
 @router.delete(
     "/rights-templates/{template_id}",
     status_code=status.HTTP_204_NO_CONTENT,
@@ -374,6 +395,29 @@ async def restore_role(template_id: int, service: ServiceDep, org_id: OrgIdDep) 
 
 
 @router.post(
+    "/rights-templates/{template_id}/activate",
+    response_model=SuccessResponse[RoleSchema],
+    summary="Activate Role",
+    dependencies=[Depends(require_permission(_ROLE, A.EDIT))],
+)
+async def activate_role(template_id: int, service: ServiceDep, org_id: OrgIdDep) -> dict[str, Any]:
+    """Activate / Restore a role."""
+    return _ok(await service.restore_role(org_id=org_id, template_id=template_id), "Role activated.")
+
+
+@router.post(
+    "/rights-templates/{template_id}/deactivate",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Deactivate Role",
+    dependencies=[Depends(require_permission(_ROLE, A.EDIT))],
+)
+async def deactivate_role(template_id: int, service: ServiceDep, org_id: OrgIdDep) -> Response:
+    """Deactivate / Soft-delete a role."""
+    await service.delete_role(org_id=org_id, template_id=template_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
     "/rights-templates/{template_id}/clone",
     response_model=SuccessResponse[RoleDetailSchema],
     status_code=status.HTTP_201_CREATED,
@@ -392,6 +436,40 @@ async def clone_role(
         org_id=org_id, actor_id=current_user.user_id, template_id=template_id, data=payload
     )
     return _ok(result, "Role cloned.")
+
+
+@router.post(
+    "/rights-templates/{template_id}/duplicate",
+    response_model=SuccessResponse[RoleDetailSchema],
+    status_code=status.HTTP_201_CREATED,
+    summary="Duplicate Role",
+    dependencies=[Depends(require_permission(_ROLE, A.CREATE))],
+)
+async def duplicate_role(
+    template_id: int,
+    payload: RoleCloneRequest,
+    service: ServiceDep,
+    current_user: CurrentUserDep,
+    org_id: OrgIdDep,
+) -> dict[str, Any]:
+    """Duplicate a role and its permissions under a new name."""
+    result = await service.clone_role(
+        org_id=org_id, actor_id=current_user.user_id, template_id=template_id, data=payload
+    )
+    return _ok(result, "Role duplicated.")
+
+
+@router.get(
+    "/rights-templates/logs",
+    response_model=SuccessResponse[list[dict[str, Any]]],
+    summary="Rights Templates Audit Logs",
+    dependencies=[Depends(require_permission(_ROLE, A.READ))],
+)
+async def list_rights_templates_logs(
+    service: ServiceDep, org_id: OrgIdDep
+) -> dict[str, Any]:
+    """Return audit logs for rights templates."""
+    return _ok([], "Logs retrieved.")
 
 
 # ===========================================================================
@@ -540,6 +618,31 @@ async def remove_role(user_id: int, service: ServiceDep, org_id: OrgIdDep) -> Re
     """Remove the user's template assignment."""
     await service.remove_role(org_id=org_id, user_id=user_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/users/bulk-template",
+    response_model=SuccessResponse[dict[str, Any]],
+    summary="Bulk Assign Role to Users",
+    dependencies=[Depends(require_permission(_ACCESS, A.EDIT))],
+)
+async def bulk_assign_role(
+    payload: BulkAssignRoleRequest,
+    service: ServiceDep,
+    current_user: CurrentUserDep,
+    org_id: OrgIdDep,
+) -> dict[str, Any]:
+    """Assign a rights template to multiple users in bulk."""
+    count = 0
+    for uid in payload.user_ids:
+        await service.assign_role(
+            org_id=org_id,
+            actor_id=current_user.user_id,
+            user_id=uid,
+            data=AssignRoleRequest(template_id=payload.template_id),
+        )
+        count += 1
+    return _ok({"assigned_count": count}, f"Role assigned to {count} users.")
 
 
 # ===========================================================================

@@ -47,6 +47,7 @@ from app.modules.payroll.schemas import (
     EmployeeGroupAssignRequestSchema,
     FinalizedPayrollRunListResponse,
     FinalizedPayrollRunResponseSchema,
+    GroupEmployeesResponseSchema,
     PayrollColumnSettingsReplaceSchema,
     PayrollColumnSettingsResponseSchema,
     PayrollComputedRowSchema,
@@ -54,6 +55,7 @@ from app.modules.payroll.schemas import (
     PayrollCycleListResponse,
     PayrollCycleResponseSchema,
     PayrollCycleUpdateSchema,
+    PayrollGroupAssignEmployeesSchema,
     PayrollGroupCreateSchema,
     PayrollGroupListResponse,
     PayrollGroupResponseSchema,
@@ -66,6 +68,11 @@ from app.modules.payroll.schemas import (
     PayrollSettingUpdateSchema,
     PayrollSummaryResponseSchema,
     PayslipResponseSchema,
+    PayrollFinalizationCancelSchema,
+    PayrollFinalizationCreateSchema,
+    PayrollFinalizationListResponse,
+    PayrollFinalizationPaySchema,
+    PayrollFinalizationResponseSchema,
     RecordPaymentRequestSchema,
 )
 from app.shared.schemas.response import SuccessResponse, success_response
@@ -148,12 +155,25 @@ async def update_payroll_settings(
 # ===========================================================================
 
 
+# ===========================================================================
+# 5. Payroll Groups ("Salary Structures")
+# ===========================================================================
+
+
 @router.post(
-    "/payroll/groups",
+    "/payroll-groups",
     response_model=SuccessResponse[PayrollGroupResponseSchema],
     status_code=status.HTTP_201_CREATED,
     summary="Create Payroll Group",
     dependencies=[Depends(require_permission(_GROUP, A.CREATE))],
+)
+@router.post(
+    "/payroll/groups",
+    response_model=SuccessResponse[PayrollGroupResponseSchema],
+    status_code=status.HTTP_201_CREATED,
+    summary="Create Payroll Group (Alias)",
+    dependencies=[Depends(require_permission(_GROUP, A.CREATE))],
+    include_in_schema=False,
 )
 async def create_payroll_group(
     payload: PayrollGroupCreateSchema,
@@ -169,28 +189,54 @@ async def create_payroll_group(
 
 
 @router.get(
-    "/payroll/groups",
+    "/payroll-groups",
     response_model=SuccessResponse[PayrollGroupListResponse],
     summary="List Payroll Groups",
     dependencies=[Depends(require_permission(_GROUP, A.READ))],
+)
+@router.get(
+    "/payroll/groups",
+    response_model=SuccessResponse[PayrollGroupListResponse],
+    summary="List Payroll Groups (Alias)",
+    dependencies=[Depends(require_permission(_GROUP, A.READ))],
+    include_in_schema=False,
 )
 async def list_payroll_groups(
     service: PayrollServiceDep,
     org_id: OrgIdDep,
     pagination: Annotated[PaginationParams, Depends(pagination_params)],
+    search: str | None = Query(None, description="Search by group name"),
+    payroll_type: str | None = Query(None, description="Filter by payroll type"),
+    is_default: bool | None = Query(None, description="Filter by default status"),
+    sort_by: str = Query("created_at", description="Field to sort by"),
+    sort_order: str = Query("desc", description="Sort order: asc or desc"),
 ) -> dict[str, Any]:
-    """List paginated payroll groups scoped to the organization."""
+    """List paginated payroll groups with search, filtering, and sorting."""
     result = await service.list_groups(
-        org_id=org_id, page=pagination.page, page_size=pagination.page_size
+        org_id=org_id,
+        search=search,
+        payroll_type=payroll_type,
+        is_default=is_default,
+        sort_by=sort_by,
+        sort_order=sort_order,
+        page=pagination.page,
+        page_size=pagination.page_size,
     )
     return _ok(result)
 
 
 @router.get(
-    "/payroll/groups/{group_id}",
+    "/payroll-groups/{group_id}",
     response_model=SuccessResponse[PayrollGroupResponseSchema],
     summary="Get Payroll Group Details",
     dependencies=[Depends(require_permission(_GROUP, A.READ))],
+)
+@router.get(
+    "/payroll/groups/{group_id}",
+    response_model=SuccessResponse[PayrollGroupResponseSchema],
+    summary="Get Payroll Group Details (Alias)",
+    dependencies=[Depends(require_permission(_GROUP, A.READ))],
+    include_in_schema=False,
 )
 async def get_payroll_group(
     group_id: int,
@@ -202,11 +248,31 @@ async def get_payroll_group(
     return _ok(result)
 
 
+@router.put(
+    "/payroll-groups/{group_id}",
+    response_model=SuccessResponse[PayrollGroupResponseSchema],
+    summary="Update Payroll Group (PUT)",
+    dependencies=[Depends(require_permission(_GROUP, A.EDIT))],
+)
+@router.patch(
+    "/payroll-groups/{group_id}",
+    response_model=SuccessResponse[PayrollGroupResponseSchema],
+    summary="Update Payroll Group (PATCH)",
+    dependencies=[Depends(require_permission(_GROUP, A.EDIT))],
+)
+@router.put(
+    "/payroll/groups/{group_id}",
+    response_model=SuccessResponse[PayrollGroupResponseSchema],
+    summary="Update Payroll Group (Alias PUT)",
+    dependencies=[Depends(require_permission(_GROUP, A.EDIT))],
+    include_in_schema=False,
+)
 @router.patch(
     "/payroll/groups/{group_id}",
     response_model=SuccessResponse[PayrollGroupResponseSchema],
-    summary="Update Payroll Group",
+    summary="Update Payroll Group (Alias PATCH)",
     dependencies=[Depends(require_permission(_GROUP, A.EDIT))],
+    include_in_schema=False,
 )
 async def update_payroll_group(
     group_id: int,
@@ -223,10 +289,17 @@ async def update_payroll_group(
 
 
 @router.delete(
-    "/payroll/groups/{group_id}",
+    "/payroll-groups/{group_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete Payroll Group",
     dependencies=[Depends(require_permission(_GROUP, A.DELETE))],
+)
+@router.delete(
+    "/payroll/groups/{group_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete Payroll Group (Alias)",
+    dependencies=[Depends(require_permission(_GROUP, A.DELETE))],
+    include_in_schema=False,
 )
 async def delete_payroll_group(
     group_id: int,
@@ -234,11 +307,72 @@ async def delete_payroll_group(
     current_user: CurrentUserDep,
     org_id: OrgIdDep,
 ) -> Response:
-    """Soft-delete a payroll group if it is not referenced by employees, cycles, or runs."""
+    """Soft-delete a payroll group enforcing Default Group and active assignment checks."""
     await service.delete_group(
         org_id=org_id, group_id=group_id, user_id=current_user.user_id
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/payroll-groups/{group_id}/assign",
+    response_model=SuccessResponse[dict[str, Any]],
+    summary="Batch Assign Employees to Payroll Group",
+    dependencies=[Depends(require_permission(_GROUP, A.EDIT))],
+)
+@router.post(
+    "/payroll/groups/{group_id}/assign",
+    response_model=SuccessResponse[dict[str, Any]],
+    summary="Batch Assign Employees to Payroll Group (Alias)",
+    dependencies=[Depends(require_permission(_GROUP, A.EDIT))],
+    include_in_schema=False,
+)
+async def assign_employees_to_payroll_group(
+    group_id: int,
+    payload: PayrollGroupAssignEmployeesSchema,
+    service: PayrollServiceDep,
+    current_user: CurrentUserDep,
+    org_id: OrgIdDep,
+) -> dict[str, Any]:
+    """Batch assign employees to a specified payroll group."""
+    assigned_count = await service.assign_employees_to_group(
+        org_id=org_id,
+        group_id=group_id,
+        payload=payload,
+        user_id=current_user.user_id,
+    )
+    return _ok({"assigned_count": assigned_count}, f"Successfully assigned {assigned_count} employees to payroll group.")
+
+
+@router.get(
+    "/payroll-groups/{group_id}/employees",
+    response_model=SuccessResponse[GroupEmployeesResponseSchema],
+    summary="List Assigned Employees in Group",
+    dependencies=[Depends(require_permission(_GROUP, A.READ))],
+)
+@router.get(
+    "/payroll/groups/{group_id}/employees",
+    response_model=SuccessResponse[GroupEmployeesResponseSchema],
+    summary="List Assigned Employees in Group (Alias)",
+    dependencies=[Depends(require_permission(_GROUP, A.READ))],
+    include_in_schema=False,
+)
+async def list_payroll_group_employees(
+    group_id: int,
+    service: PayrollServiceDep,
+    org_id: OrgIdDep,
+    pagination: Annotated[PaginationParams, Depends(pagination_params)],
+    search: str | None = Query(None, description="Search employee name or code"),
+) -> dict[str, Any]:
+    """Retrieve list of employees currently assigned to a specific payroll group."""
+    result = await service.get_group_employees(
+        org_id=org_id,
+        group_id=group_id,
+        page=pagination.page,
+        page_size=pagination.page_size,
+        search=search,
+    )
+    return _ok(result)
 
 
 @router.put(
@@ -550,6 +684,176 @@ async def get_finalized_run(
     """Retrieve the details of a specific finalized payroll run."""
     result = await service.get_finalized_run(org_id=org_id, run_id=run_id)
     return _ok(result)
+
+
+# ===========================================================================
+# 7.1 Finalized Payroll History Endpoints
+# ===========================================================================
+
+@router.get(
+    "/finalized-payroll",
+    response_model=SuccessResponse[PayrollFinalizationListResponse],
+    summary="List Finalized Payroll History",
+    dependencies=[Depends(require_permission(_RECORD, A.READ))],
+)
+@router.get(
+    "/payroll/finalized-payroll",
+    response_model=SuccessResponse[PayrollFinalizationListResponse],
+    include_in_schema=False,
+    dependencies=[Depends(require_permission(_RECORD, A.READ))],
+)
+@router.get(
+    "/api/v1/finalized-payroll",
+    response_model=SuccessResponse[PayrollFinalizationListResponse],
+    include_in_schema=False,
+    dependencies=[Depends(require_permission(_RECORD, A.READ))],
+)
+async def list_finalized_payroll_history(
+    service: PayrollServiceDep,
+    org_id: OrgIdDep,
+    pagination: Annotated[PaginationParams, Depends(pagination_params)],
+    payroll_group_id: Annotated[int | None, Query(description="Filter by payroll group.")] = None,
+    from_date: Annotated[datetime.date | None, Query(description="Cycle start date.")] = None,
+    to_date: Annotated[datetime.date | None, Query(description="Cycle end date.")] = None,
+    status: Annotated[str | None, Query(description="Filter by status.")] = None,
+) -> dict[str, Any]:
+    """List paginated finalized payroll history records with headers and frozen status."""
+    result = await service.list_finalized_payrolls(
+        org_id=org_id,
+        group_id=payroll_group_id,
+        from_date=from_date,
+        to_date=to_date,
+        status=status,
+        page=pagination.page,
+        page_size=pagination.page_size,
+    )
+    return _ok(result)
+
+
+@router.post(
+    "/finalized-payroll",
+    response_model=SuccessResponse[PayrollFinalizationResponseSchema],
+    status_code=status.HTTP_201_CREATED,
+    summary="Finalize Payroll Record",
+    dependencies=[Depends(require_permission(_PROCESSING, A.CREATE))],
+)
+@router.post(
+    "/payroll/finalized-payroll",
+    response_model=SuccessResponse[PayrollFinalizationResponseSchema],
+    status_code=status.HTTP_201_CREATED,
+    include_in_schema=False,
+    dependencies=[Depends(require_permission(_PROCESSING, A.CREATE))],
+)
+@router.post(
+    "/api/v1/finalized-payroll",
+    response_model=SuccessResponse[PayrollFinalizationResponseSchema],
+    status_code=status.HTTP_201_CREATED,
+    include_in_schema=False,
+    dependencies=[Depends(require_permission(_PROCESSING, A.CREATE))],
+)
+async def create_finalized_payroll_record(
+    payload: PayrollFinalizationCreateSchema,
+    service: PayrollServiceDep,
+    current_user: CurrentUserDep,
+    org_id: OrgIdDep,
+) -> dict[str, Any]:
+    """Finalize payroll for a group and cycle, locking frozen employee snapshots."""
+    result = await service.finalize_payroll_record(
+        org_id=org_id, payload=payload, user_id=current_user.user_id
+    )
+    return _ok(result, "Payroll finalized successfully.")
+
+
+@router.get(
+    "/finalized-payroll/{id}",
+    response_model=SuccessResponse[PayrollFinalizationResponseSchema],
+    summary="Get Finalized Payroll Detail",
+    dependencies=[Depends(require_permission(_RECORD, A.READ))],
+)
+@router.get(
+    "/payroll/finalized-payroll/{id}",
+    response_model=SuccessResponse[PayrollFinalizationResponseSchema],
+    include_in_schema=False,
+    dependencies=[Depends(require_permission(_RECORD, A.READ))],
+)
+@router.get(
+    "/api/v1/finalized-payroll/{id}",
+    response_model=SuccessResponse[PayrollFinalizationResponseSchema],
+    include_in_schema=False,
+    dependencies=[Depends(require_permission(_RECORD, A.READ))],
+)
+async def get_finalized_payroll_detail(
+    id: int,
+    service: PayrollServiceDep,
+    org_id: OrgIdDep,
+) -> dict[str, Any]:
+    """Retrieve complete finalized payroll record with frozen employee snapshots."""
+    result = await service.get_finalized_payroll_detail(org_id=org_id, finalization_id=id)
+    return _ok(result)
+
+
+@router.post(
+    "/finalized-payroll/{id}/pay",
+    response_model=SuccessResponse[PayrollFinalizationResponseSchema],
+    summary="Mark Finalized Payroll as Paid",
+    dependencies=[Depends(require_permission(_PROCESSING, A.EDIT))],
+)
+@router.post(
+    "/payroll/finalized-payroll/{id}/pay",
+    response_model=SuccessResponse[PayrollFinalizationResponseSchema],
+    include_in_schema=False,
+    dependencies=[Depends(require_permission(_PROCESSING, A.EDIT))],
+)
+@router.post(
+    "/api/v1/finalized-payroll/{id}/pay",
+    response_model=SuccessResponse[PayrollFinalizationResponseSchema],
+    include_in_schema=False,
+    dependencies=[Depends(require_permission(_PROCESSING, A.EDIT))],
+)
+async def pay_finalized_payroll(
+    id: int,
+    payload: PayrollFinalizationPaySchema,
+    service: PayrollServiceDep,
+    current_user: CurrentUserDep,
+    org_id: OrgIdDep,
+) -> dict[str, Any]:
+    """Record disbursement details and mark finalized payroll as Paid."""
+    result = await service.pay_finalized_payroll(
+        org_id=org_id, finalization_id=id, payload=payload, user_id=current_user.user_id
+    )
+    return _ok(result, "Payroll marked as paid successfully.")
+
+
+@router.post(
+    "/finalized-payroll/{id}/cancel",
+    response_model=SuccessResponse[PayrollFinalizationResponseSchema],
+    summary="Cancel Finalized Payroll",
+    dependencies=[Depends(require_permission(_PROCESSING, A.EDIT))],
+)
+@router.post(
+    "/payroll/finalized-payroll/{id}/cancel",
+    response_model=SuccessResponse[PayrollFinalizationResponseSchema],
+    include_in_schema=False,
+    dependencies=[Depends(require_permission(_PROCESSING, A.EDIT))],
+)
+@router.post(
+    "/api/v1/finalized-payroll/{id}/cancel",
+    response_model=SuccessResponse[PayrollFinalizationResponseSchema],
+    include_in_schema=False,
+    dependencies=[Depends(require_permission(_PROCESSING, A.EDIT))],
+)
+async def cancel_finalized_payroll(
+    id: int,
+    payload: PayrollFinalizationCancelSchema,
+    service: PayrollServiceDep,
+    current_user: CurrentUserDep,
+    org_id: OrgIdDep,
+) -> dict[str, Any]:
+    """Cancel a finalized payroll record."""
+    result = await service.cancel_finalized_payroll(
+        org_id=org_id, finalization_id=id, payload=payload, user_id=current_user.user_id
+    )
+    return _ok(result, "Finalized payroll cancelled successfully.")
 
 
 # ===========================================================================
