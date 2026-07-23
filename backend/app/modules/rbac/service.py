@@ -286,7 +286,15 @@ class RBACService(BaseService):
             has_employee=has_employee,
             include_deleted=include_deleted,
         )
-        items = [UserSummarySchema.model_validate(row) for row in rows]
+        user_ids = [u.id for u in rows]
+        roles_map = await self._assigned_roles_map(user_ids) if user_ids else {}
+
+        items = []
+        for row in rows:
+            summary = UserSummarySchema.model_validate(row)
+            summary.template = roles_map.get(row.id)
+            items.append(summary)
+
         return UserListResponse.build(
             items=items, page=page, page_size=page_size, total_records=total
         )
@@ -1154,6 +1162,24 @@ class RBACService(BaseService):
             return None
         role = await self.roles.get_by_id(assignment.template_id)
         return RoleRefSchema.model_validate(role) if role else None
+
+    async def _assigned_roles_map(self, user_ids: list[int]) -> dict[int, RoleRefSchema]:
+        """Fetch assigned roles for a list of user IDs in a single batch query (no N+1)."""
+        if not user_ids:
+            return {}
+        from app.modules.rbac.models.membership import UserTemplateAssignment
+        from app.modules.rbac.models.rights import RightsTemplate
+
+        stmt = (
+            select(UserTemplateAssignment.user_id, RightsTemplate.id, RightsTemplate.name)
+            .join(RightsTemplate, RightsTemplate.id == UserTemplateAssignment.template_id)
+            .where(UserTemplateAssignment.user_id.in_(user_ids))
+        )
+        res = await self.session.execute(stmt)
+        result = {}
+        for uid, r_id, r_name in res.all():
+            result[uid] = RoleRefSchema(id=r_id, name=r_name)
+        return result
 
     @staticmethod
     def _user_schema(user: User) -> UserSchema:

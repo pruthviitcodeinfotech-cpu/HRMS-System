@@ -371,6 +371,26 @@ async def update_role_put(
     return _ok(result, "Role updated.")
 
 
+@router.post(
+    "/rights-templates/{template_id}",
+    response_model=SuccessResponse[RoleSchema],
+    summary="Update Role (POST)",
+    dependencies=[Depends(require_permission(_ROLE, A.EDIT))],
+)
+async def update_role_post(
+    template_id: int,
+    payload: RoleUpdateRequest,
+    service: ServiceDep,
+    current_user: CurrentUserDep,
+    org_id: OrgIdDep,
+) -> dict[str, Any]:
+    """Rename a role (POST method alias)."""
+    result = await service.update_role(
+        org_id=org_id, actor_id=current_user.user_id, template_id=template_id, data=payload
+    )
+    return _ok(result, "Role updated.")
+
+
 @router.delete(
     "/rights-templates/{template_id}",
     status_code=status.HTTP_204_NO_CONTENT,

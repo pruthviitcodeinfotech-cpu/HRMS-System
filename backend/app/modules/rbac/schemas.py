@@ -121,6 +121,7 @@ class UserSummarySchema(BaseSchema):
     employee_id: int | None = None
     last_login_at: datetime | None = None
     created_at: datetime
+    template: RoleRefSchema | None = None
 
 
 class UserSchema(UserSummarySchema):
@@ -176,6 +177,8 @@ class RoleUpdateRequest(BaseSchema):
     """Body for ``PATCH /rights-templates/{template_id}``."""
 
     name: str = Field(..., min_length=1, max_length=150)
+    description: str | None = Field(default=None)
+    is_active: bool | None = Field(default=None)
 
     @field_validator("name")
     @classmethod

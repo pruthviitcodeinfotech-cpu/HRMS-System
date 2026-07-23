@@ -399,8 +399,11 @@ export function UserManagementPage() {
 
                   {/* Data Rows */}
                   {!isLoading &&
-                    sortedItems.map((template) => {
+                    sortedItems.map((template, idx) => {
                       const isDeleted = template.is_deleted ?? false;
+                      const isNearBottom =
+                        idx >= Math.max(0, sortedItems.length - 2) ||
+                        sortedItems.length <= 3;
                       return (
                         <tr
                           key={template.id}
@@ -447,7 +450,11 @@ export function UserManagementPage() {
 
                             {/* Action Dropdown Menu */}
                             {activeActionRowId === template.id && (
-                              <div className="absolute right-4 top-full mt-1 z-50 w-52 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-md shadow-xl py-1 text-left animate-in fade-in zoom-in-95 duration-150">
+                              <div
+                                className={`absolute right-4 z-50 w-52 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700/90 rounded-lg shadow-2xl py-1.5 text-left animate-in fade-in zoom-in-95 duration-150 ${
+                                  isNearBottom ? "bottom-full mb-1" : "top-full mt-1"
+                                }`}
+                              >
                                 {/* View */}
                                 <button
                                   onClick={() => {
