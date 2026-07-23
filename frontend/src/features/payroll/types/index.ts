@@ -86,3 +86,39 @@ export interface EmployeeGroupAssignment {
   current_group_name?: string | null;
   effective_from?: string | null;
 }
+
+export interface BulkAttendanceMatrixItem {
+  employee_id: number;
+  employee_code: string;
+  employee_name: string;
+  department_name: string;
+  designation_name: string;
+  branch_id: number;
+  branch_name: string;
+  attendance: Record<string, string>;
+}
+
+export interface BulkAttendanceMatrixResponse {
+  dates: string[];
+  items: BulkAttendanceMatrixItem[];
+  pagination: {
+    page: number;
+    page_size: number;
+    total_records: number;
+    total_pages: number;
+  };
+}
+
+export interface BulkAttendanceCellUpdate {
+  employee_id: number;
+  attendance_date: string;
+  adjusted_status: string;
+  original_status?: string | null;
+  reason?: string | null;
+}
+
+export interface BulkAttendanceBatchUpdatePayload {
+  date_from?: string;
+  date_to?: string;
+  updates: BulkAttendanceCellUpdate[];
+}

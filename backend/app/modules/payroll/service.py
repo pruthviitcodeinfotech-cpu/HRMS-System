@@ -9,7 +9,7 @@ from __future__ import annotations
 import io
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import date, time
+from datetime import date, time, timedelta
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
@@ -69,6 +69,11 @@ from app.modules.payroll.schemas import (
     AttendanceAdjustmentExtraHoursCreateSchema,
     AttendanceAdjustmentPenaltyCreateSchema,
     AttendanceAdjustmentUpdateSchema,
+    BulkAttendanceAdjustmentBatchUpdateResponseSchema,
+    BulkAttendanceAdjustmentBatchUpdateSchema,
+    BulkAttendanceAdjustmentMatrixItemSchema,
+    BulkAttendanceAdjustmentMatrixResponseSchema,
+    BulkAttendanceAdjustmentResetSchema,
     EmployeeGroupAssignRequestSchema,
     PayrollColumnSettingsReplaceSchema,
     PayrollCycleCreateSchema,
@@ -84,6 +89,7 @@ from app.modules.payroll.schemas import (
     PayslipSectionItemSchema,
     RecordPaymentRequestSchema,
 )
+from app.shared.schemas.pagination import PaginationMeta
 from app.modules.rbac.repository import UserRepository
 from app.modules.settlements.models import (
     ArrearsTransaction,
@@ -1803,3 +1809,396 @@ class PayrollService(BaseService):
                 employee_id=payload.employee_id,
             )
         return eh
+
+    # ===========================================================================
+    # Bulk Attendance Adjustments Matrix (Phase 2)
+    # ===========================================================================
+
+    async def get_bulk_attendance_matrix(
+        self,
+        org_id: int,
+        date_from: date,
+        date_to: date,
+        branch_id: int | None = None,
+        dept_id: int | None = None,
+        search: str | None = None,
+        page: int = 1,
+        page_size: int = 25,
+    ) -> BulkAttendanceAdjustmentMatrixResponseSchema:
+        """Fetch attendance status matrix for employees over a date range."""
+        employees = await self.adjustments.search_matrix_employees(
+            org_id=org_id,
+            branch_id=branch_id,
+            dept_id=dept_id,
+            search=search,
+            page=page,
+            page_size=page_size,
+        )
+        total_records = await self.adjustments.count_matrix_employees(
+            org_id=org_id,
+            branch_id=branch_id,
+            dept_id=dept_id,
+            search=search,
+        )
+
+        date_strs: list[str] = []
+        curr = date_from
+        while curr <= date_to and len(date_strs) < 31:
+            date_strs.append(curr.isoformat())
+            curr = curr + timedelta(days=1)
+
+        if not employees:
+            meta = PaginationMeta.build(page=page, page_size=page_size, total_records=total_records)
+            return BulkAttendanceAdjustmentMatrixResponseSchema(
+                dates=date_strs,
+                items=[],
+                pagination=meta,
+            )
+
+        emp_ids = [e.employee_id for e in employees]
+
+        adjustments_list = await self.adjustments.get_adjustments_for_employees(
+            org_id=org_id,
+            employee_ids=emp_ids,
+            date_from=date_from,
+            date_to=date_to,
+        )
+        adj_map: dict[tuple[int, str], str] = {
+            (a.employee_id, a.attendance_date.isoformat()): a.adjusted_status for a in adjustments_list
+        }
+
+        items: list[BulkAttendanceAdjustmentMatrixItemSchema] = []
+        for emp in employees:
+            attendance_map: dict[str, str] = {}
+            for d_str in date_strs:
+                if (emp.employee_id, d_str) in adj_map:
+                    attendance_map[d_str] = adj_map[(emp.employee_id, d_str)]
+                else:
+                    d_obj = date.fromisoformat(d_str)
+                    attendance_map[d_str] = "WO" if d_obj.weekday() == 6 else "FD"
+
+            items.append(
+                BulkAttendanceAdjustmentMatrixItemSchema(
+                    employee_id=emp.employee_id,
+                    employee_code=emp.employee_code,
+                    employee_name=emp.employee_name,
+                    department_name=getattr(emp, "department_name", None) or "General",
+                    designation_name=getattr(emp, "designation_name", None) or "Staff",
+                    branch_id=emp.master_branch_id,
+                    branch_name=getattr(emp, "branch_name", None) or "Main HQ",
+                    attendance=attendance_map,
+                )
+            )
+
+        meta = PaginationMeta.build(page=page, page_size=page_size, total_records=total_records)
+        return BulkAttendanceAdjustmentMatrixResponseSchema(
+            dates=date_strs,
+            items=items,
+            pagination=meta,
+        )
+
+    async def batch_update_bulk_attendance_adjustments(
+        self,
+        org_id: int,
+        payload: BulkAttendanceAdjustmentBatchUpdateSchema,
+        user_id: int,
+    ) -> BulkAttendanceAdjustmentBatchUpdateResponseSchema:
+        """Batch save modified attendance cells for employees."""
+        if not payload.updates:
+            return BulkAttendanceAdjustmentBatchUpdateResponseSchema(
+                updated_count=0,
+                message="No cell updates provided.",
+            )
+
+        emp_ids = list({u.employee_id for u in payload.updates})
+        min_date = min(u.attendance_date for u in payload.updates)
+        max_date = max(u.attendance_date for u in payload.updates)
+
+        stmt_comp = select(PayrollComputedRow.id).where(
+            PayrollComputedRow.employee_id.in_(emp_ids),
+            PayrollComputedRow.cycle_from <= max_date,
+            PayrollComputedRow.cycle_to >= min_date,
+            PayrollComputedRow.is_finalized.is_(True),
+        )
+        finalized = (await self.session.execute(stmt_comp.limit(1))).first() is not None
+        if finalized:
+            raise PayrollAlreadyFinalizedException()
+
+        saved_count = 0
+        async with self.transaction():
+            for update_item in payload.updates:
+                existing = await self.adjustments.get_adjustment(
+                    update_item.employee_id, update_item.attendance_date
+                )
+                if existing:
+                    await self.adjustments.update(
+                        existing,
+                        {
+                            "adjusted_status": update_item.adjusted_status,
+                            "original_status": update_item.original_status,
+                            "adjusted_by": user_id,
+                            "adjusted_at": utcnow(),
+                            "adjustment_source": "spreadsheet",
+                        },
+                    )
+                else:
+                    await self.adjustments.create(
+                        {
+                            "org_id": org_id,
+                            "employee_id": update_item.employee_id,
+                            "attendance_date": update_item.attendance_date,
+                            "original_status": update_item.original_status,
+                            "adjusted_status": update_item.adjusted_status,
+                            "is_forced_overwrite": True,
+                            "has_punch_error": False,
+                            "adjustment_source": "spreadsheet",
+                            "adjusted_by": user_id,
+                            "adjusted_at": utcnow(),
+                        }
+                    )
+                saved_count += 1
+
+            await self.audit.record(
+                org_id=org_id,
+                module="payroll",
+                sub_module="bulk_adjustments",
+                action_type=ActionType.UPDATE,
+                title="Batch Bulk Attendance Adjustments",
+                description=f"Saved batch update of {saved_count} attendance status cell adjustments.",
+                performed_by_user_id=user_id,
+                performed_by_name=f"User {user_id}",
+            )
+
+        return BulkAttendanceAdjustmentBatchUpdateResponseSchema(
+            updated_count=saved_count,
+            message=f"Successfully saved {saved_count} attendance adjustments.",
+        )
+
+    async def reset_bulk_attendance_adjustments(
+        self,
+        org_id: int,
+        payload: BulkAttendanceAdjustmentResetSchema,
+        user_id: int,
+    ) -> int:
+        """Reset bulk attendance adjustments for a given date range and scope."""
+        async with self.transaction():
+            reset_count = await self.adjustments.bulk_reset_adjustments(
+                org_id=org_id,
+                date_from=payload.date_from,
+                date_to=payload.date_to,
+                branch_id=payload.branch_id,
+                employee_ids=payload.employee_ids,
+            )
+            await self.audit.record(
+                org_id=org_id,
+                module="payroll",
+                sub_module="bulk_adjustments",
+                action_type=ActionType.DELETE,
+                title="Reset Bulk Attendance Adjustments",
+                description=f"Reset {reset_count} attendance adjustments between {payload.date_from} and {payload.date_to}.",
+                performed_by_user_id=user_id,
+                performed_by_name=f"User {user_id}",
+            )
+        return reset_count
+
+    async def export_bulk_attendance_adjustments_excel(
+        self,
+        org_id: int,
+        date_from: date,
+        date_to: date,
+        branch_id: int | None = None,
+        dept_id: int | None = None,
+        search: str | None = None,
+    ) -> bytes:
+        """Export attendance adjustment matrix as an Excel workbook (.xlsx)."""
+        import openpyxl
+        from openpyxl.styles import Alignment, Font, PatternFill
+
+        matrix_data = await self.get_bulk_attendance_matrix(
+            org_id=org_id,
+            date_from=date_from,
+            date_to=date_to,
+            branch_id=branch_id,
+            dept_id=dept_id,
+            search=search,
+            page=1,
+            page_size=10000,
+        )
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Bulk Attendance Adjustments"
+
+        headers = ["Employee ID", "Employee Name", "Department", "Designation", "Branch"]
+        for d_str in matrix_data.dates:
+            d_obj = date.fromisoformat(d_str)
+            headers.append(f"{d_obj.strftime('%d-%b')} ({d_obj.strftime('%a')})")
+
+        ws.append(headers)
+
+        header_fill = PatternFill(start_color="1E293B", end_color="1E293B", fill_type="solid")
+        header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+        for col_num in range(1, len(headers) + 1):
+            cell = ws.cell(row=1, column=col_num)
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+
+        for emp in matrix_data.items:
+            row = [
+                emp.employee_code,
+                emp.employee_name,
+                emp.department_name,
+                emp.designation_name,
+                emp.branch_name,
+            ]
+            for d_str in matrix_data.dates:
+                row.append(emp.attendance.get(d_str, "FD"))
+            ws.append(row)
+
+        output = io.BytesIO()
+        wb.save(output)
+        return output.getvalue()
+
+    # --- 9. Process Payroll APIs (Phase 2) -----------------------------------
+
+    async def get_process_payroll_matrix(
+        self,
+        org_id: int,
+        date_from: date,
+        date_to: date,
+        payroll_group_id: int | None = None,
+        branch_id: int | None = None,
+        dept_id: int | None = None,
+        search: str | None = None,
+        page: int = 1,
+        page_size: int = 25,
+    ) -> PayrollRecordListResponse:
+        """Fetch process payroll matrix for employees over a date range."""
+        rows = await self.computed_rows.search(
+            org_id=org_id,
+            payroll_group_id=payroll_group_id,
+            cycle_from=date_from,
+            cycle_to=date_to,
+            branch_id=branch_id,
+            dept_id=dept_id,
+            page=page,
+            page_size=page_size,
+        )
+        total_records = await self.computed_rows.search_count(
+            org_id=org_id,
+            payroll_group_id=payroll_group_id,
+            cycle_from=date_from,
+            cycle_to=date_to,
+            branch_id=branch_id,
+            dept_id=dept_id,
+        )
+        meta = PaginationMeta.build(page=page, page_size=page_size, total_records=total_records)
+        items = [PayrollComputedRowSchema.model_validate(row) for row in rows]
+        return PayrollRecordListResponse(items=items, pagination=meta)
+
+    async def calculate_process_payroll(
+        self,
+        org_id: int,
+        payload: PayrollProcessRequestSchema,
+        user_id: int,
+    ) -> PayrollProcessResponseSchema:
+        """Calculate or recalculate payroll matrix for target employees."""
+        return await self.generate_payroll_records(org_id=org_id, payload=payload, user_id=user_id)
+
+    async def finalize_process_payroll(
+        self,
+        org_id: int,
+        payload: PayrollProcessRequestSchema,
+        user_id: int,
+    ) -> FinalizedPayrollRunResponseSchema:
+        """Lock and finalize payroll run for a period."""
+        return await self.finalize_payroll(org_id=org_id, payload=payload, user_id=user_id)
+
+    async def export_process_payroll(
+        self,
+        org_id: int,
+        date_from: date,
+        date_to: date,
+        payroll_group_id: int | None = None,
+        branch_id: int | None = None,
+        dept_id: int | None = None,
+    ) -> bytes:
+        """Generate Excel spreadsheet for process payroll matrix."""
+        rows = await self.computed_rows.search(
+            org_id=org_id,
+            payroll_group_id=payroll_group_id,
+            cycle_from=date_from,
+            cycle_to=date_to,
+            branch_id=branch_id,
+            dept_id=dept_id,
+            page=1,
+            page_size=1000,
+        )
+
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Process Payroll"
+
+        headers = [
+            "Employee ID", "Full Day", "Half Day", "Off Days", "Paid Leaves",
+            "Paid Days", "Unpaid Days", "Daily Wage", "Gross Wages",
+            "Overtime", "Penalties", "Extras", "Gross Earnings",
+            "Loan & Advance", "Arrears", "Net Payable",
+        ]
+        ws.append(headers)
+
+        header_font = Font(bold=True, color="FFFFFF")
+        header_fill = PatternFill(start_color="0B85C9", end_color="0B85C9", fill_type="solid")
+        for col_idx in range(1, len(headers) + 1):
+            cell = ws.cell(row=1, column=col_idx)
+            cell.font = header_font
+            cell.fill = header_fill
+
+        for r in rows:
+            ws.append([
+                r.employee_id,
+                r.full_day_count,
+                r.half_day_count,
+                r.off_day_count,
+                float(r.paid_leave_count),
+                float(r.paid_day_count),
+                float(r.unpaid_day_count),
+                float(r.daily_wage),
+                float(r.gross_wages),
+                float(r.overtime_amount),
+                float(r.penalties_amount),
+                float(r.extras_amount),
+                float(r.gross_earnings),
+                float(r.loan_advance_deduction),
+                float(r.arrears_amount),
+                float(r.to_pay),
+            ])
+
+        stream = io.BytesIO()
+        wb.save(stream)
+        return stream.getvalue()
+
+    async def get_process_payroll_employee_detail(
+        self,
+        org_id: int,
+        employee_id: int,
+        date_from: date,
+        date_to: date,
+    ) -> PayrollComputedRowSchema:
+        """Fetch detailed computed row breakdown for a single employee."""
+        rows = await self.computed_rows.search(
+            org_id=org_id,
+            employee_id=employee_id,
+            cycle_from=date_from,
+            cycle_to=date_to,
+            page=1,
+            page_size=1,
+        )
+        if not rows:
+            raise NotFoundException(f"Payroll record for employee {employee_id} not found.")
+        return PayrollComputedRowSchema.model_validate(rows[0])
+

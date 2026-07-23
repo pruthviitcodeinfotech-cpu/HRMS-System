@@ -39,6 +39,10 @@ from app.modules.payroll.schemas import (
     AttendanceAdjustmentPenaltyResponseSchema,
     AttendanceAdjustmentResponseSchema,
     AttendanceAdjustmentUpdateSchema,
+    BulkAttendanceAdjustmentBatchUpdateResponseSchema,
+    BulkAttendanceAdjustmentBatchUpdateSchema,
+    BulkAttendanceAdjustmentMatrixResponseSchema,
+    BulkAttendanceAdjustmentResetSchema,
     EmployeeGroupAssignmentResponseSchema,
     EmployeeGroupAssignRequestSchema,
     FinalizedPayrollRunListResponse,
@@ -859,3 +863,245 @@ async def delete_adjustment(
         org_id=org_id, adjustment_id=adjustment_id, user_id=current_user.user_id
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ===========================================================================
+# 11. Bulk Attendance Adjustments (Phase 2)
+# ===========================================================================
+
+
+@router.get(
+    "/payroll/bulk-attendance-adjustments",
+    response_model=SuccessResponse[BulkAttendanceAdjustmentMatrixResponseSchema],
+    summary="Get Bulk Attendance Adjustment Matrix",
+    dependencies=[Depends(require_permission(_ADJUSTMENT, A.READ))],
+)
+async def get_bulk_attendance_matrix(
+    service: PayrollServiceDep,
+    org_id: OrgIdDep,
+    pagination: Annotated[PaginationParams, Depends(pagination_params)],
+    date_from: Annotated[datetime.date, Query(description="Start date (inclusive).")],
+    date_to: Annotated[datetime.date, Query(description="End date (inclusive).")],
+    branch_id: Annotated[int | None, Query(description="Filter by branch ID.")] = None,
+    dept_id: Annotated[int | None, Query(description="Filter by department ID.")] = None,
+    search: Annotated[str | None, Query(description="Search by employee name or code.")] = None,
+) -> dict[str, Any]:
+    """Fetch paginated attendance adjustment matrix grid for employees."""
+    result = await service.get_bulk_attendance_matrix(
+        org_id=org_id,
+        date_from=date_from,
+        date_to=date_to,
+        branch_id=branch_id,
+        dept_id=dept_id,
+        search=search,
+        page=pagination.page,
+        page_size=pagination.page_size,
+    )
+    return _ok(result)
+
+
+@router.put(
+    "/payroll/bulk-attendance-adjustments",
+    response_model=SuccessResponse[BulkAttendanceAdjustmentBatchUpdateResponseSchema],
+    summary="Batch Update Bulk Attendance Adjustments",
+    dependencies=[Depends(require_permission(_ADJUSTMENT, A.EDIT))],
+)
+async def batch_update_bulk_attendance_adjustments(
+    payload: BulkAttendanceAdjustmentBatchUpdateSchema,
+    service: PayrollServiceDep,
+    current_user: CurrentUserDep,
+    org_id: OrgIdDep,
+) -> dict[str, Any]:
+    """Batch save modified attendance status cells for employees."""
+    result = await service.batch_update_bulk_attendance_adjustments(
+        org_id=org_id,
+        payload=payload,
+        user_id=current_user.user_id,
+    )
+    return _ok(result, result.message)
+
+
+@router.post(
+    "/payroll/bulk-attendance-adjustments/reset",
+    response_model=SuccessResponse[dict[str, Any]],
+    summary="Reset Bulk Attendance Adjustments",
+    dependencies=[Depends(require_permission(_ADJUSTMENT, A.EDIT))],
+)
+async def reset_bulk_attendance_adjustments(
+    payload: BulkAttendanceAdjustmentResetSchema,
+    service: PayrollServiceDep,
+    current_user: CurrentUserDep,
+    org_id: OrgIdDep,
+) -> dict[str, Any]:
+    """Reset bulk attendance status adjustments back to defaults/punches."""
+    reset_count = await service.reset_bulk_attendance_adjustments(
+        org_id=org_id,
+        payload=payload,
+        user_id=current_user.user_id,
+    )
+    return _ok({"reset_count": reset_count}, f"Reset {reset_count} attendance adjustments.")
+
+
+@router.get(
+    "/payroll/bulk-attendance-adjustments/export",
+    summary="Export Bulk Attendance Adjustments Excel",
+    dependencies=[Depends(require_permission(_ADJUSTMENT, A.READ))],
+)
+async def export_bulk_attendance_adjustments_excel(
+    service: PayrollServiceDep,
+    org_id: OrgIdDep,
+    date_from: Annotated[datetime.date, Query(description="Start date (inclusive).")],
+    date_to: Annotated[datetime.date, Query(description="End date (inclusive).")],
+    branch_id: Annotated[int | None, Query(description="Filter by branch ID.")] = None,
+    dept_id: Annotated[int | None, Query(description="Filter by department ID.")] = None,
+    search: Annotated[str | None, Query(description="Search by employee name or code.")] = None,
+) -> StreamingResponse:
+    """Download exported Excel spreadsheet (.xlsx) of the bulk attendance matrix."""
+    excel_bytes = await service.export_bulk_attendance_adjustments_excel(
+        org_id=org_id,
+        date_from=date_from,
+        date_to=date_to,
+        branch_id=branch_id,
+        dept_id=dept_id,
+        search=search,
+    )
+    filename = f"Bulk_Attendance_Adjustments_{date_from}_to_{date_to}.xlsx"
+    return StreamingResponse(
+        io.BytesIO(excel_bytes),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+# ===========================================================================
+# 12. Process Payroll Endpoints (Phase 2)
+# ===========================================================================
+
+
+@router.get(
+    "/payroll/process",
+    response_model=SuccessResponse[PayrollRecordListResponse],
+    summary="Get Process Payroll Matrix",
+    dependencies=[Depends(require_permission(_PROCESSING, A.READ))],
+)
+async def get_process_payroll_matrix(
+    service: PayrollServiceDep,
+    org_id: OrgIdDep,
+    date_from: Annotated[datetime.date, Query(description="Start date (YYYY-MM-DD).")],
+    date_to: Annotated[datetime.date, Query(description="End date (YYYY-MM-DD).")],
+    payroll_group_id: Annotated[int | None, Query(description="Optional payroll group ID.")] = None,
+    branch_id: Annotated[int | None, Query(description="Optional branch ID.")] = None,
+    dept_id: Annotated[int | None, Query(description="Optional department ID.")] = None,
+    search: Annotated[str | None, Query(description="Search employee name or code.")] = None,
+    pagination: PaginationParams = Depends(pagination_params),
+) -> dict[str, Any]:
+    """Fetch process payroll matrix for employees over a date range."""
+    result = await service.get_process_payroll_matrix(
+        org_id=org_id,
+        date_from=date_from,
+        date_to=date_to,
+        payroll_group_id=payroll_group_id,
+        branch_id=branch_id,
+        dept_id=dept_id,
+        search=search,
+        page=pagination.page,
+        page_size=pagination.page_size,
+    )
+    return _ok(result, "Process payroll matrix fetched successfully.")
+
+
+@router.post(
+    "/payroll/process/calculate",
+    response_model=SuccessResponse[PayrollProcessResponseSchema],
+    summary="Calculate Process Payroll",
+    dependencies=[Depends(require_permission(_PROCESSING, A.EDIT))],
+)
+async def calculate_process_payroll(
+    payload: PayrollProcessRequestSchema,
+    service: PayrollServiceDep,
+    current_user: CurrentUserDep,
+    org_id: OrgIdDep,
+) -> dict[str, Any]:
+    """Run payroll calculation for target employees in a period."""
+    result = await service.calculate_process_payroll(
+        org_id=org_id,
+        payload=payload,
+        user_id=current_user.user_id,
+    )
+    return _ok(result, "Payroll calculated successfully.")
+
+
+@router.post(
+    "/payroll/process/finalize",
+    response_model=SuccessResponse[FinalizedPayrollRunResponseSchema],
+    summary="Finalize Process Payroll Run",
+    dependencies=[Depends(require_permission(_PROCESSING, A.EDIT))],
+)
+async def finalize_process_payroll(
+    payload: PayrollProcessRequestSchema,
+    service: PayrollServiceDep,
+    current_user: CurrentUserDep,
+    org_id: OrgIdDep,
+) -> dict[str, Any]:
+    """Lock and finalize payroll run for a period."""
+    result = await service.finalize_process_payroll(
+        org_id=org_id,
+        payload=payload,
+        user_id=current_user.user_id,
+    )
+    return _ok(result, "Payroll run finalized and locked successfully.")
+
+
+@router.get(
+    "/payroll/process/export",
+    summary="Export Process Payroll Excel",
+    dependencies=[Depends(require_permission(_PROCESSING, A.READ))],
+)
+async def export_process_payroll_excel(
+    service: PayrollServiceDep,
+    org_id: OrgIdDep,
+    date_from: Annotated[datetime.date, Query(description="Start date (YYYY-MM-DD).")],
+    date_to: Annotated[datetime.date, Query(description="End date (YYYY-MM-DD).")],
+    payroll_group_id: Annotated[int | None, Query(description="Optional payroll group ID.")] = None,
+    branch_id: Annotated[int | None, Query(description="Optional branch ID.")] = None,
+    dept_id: Annotated[int | None, Query(description="Optional department ID.")] = None,
+) -> StreamingResponse:
+    """Download exported Excel spreadsheet (.xlsx) of process payroll matrix."""
+    excel_bytes = await service.export_process_payroll(
+        org_id=org_id,
+        date_from=date_from,
+        date_to=date_to,
+        payroll_group_id=payroll_group_id,
+        branch_id=branch_id,
+        dept_id=dept_id,
+    )
+    filename = f"Process_Payroll_{date_from}_to_{date_to}.xlsx"
+    return StreamingResponse(
+        io.BytesIO(excel_bytes),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get(
+    "/payroll/process/{employee_id}",
+    response_model=SuccessResponse[PayrollComputedRowSchema],
+    summary="Get Process Payroll Employee Detail",
+    dependencies=[Depends(require_permission(_PROCESSING, A.READ))],
+)
+async def get_process_payroll_employee_detail(
+    employee_id: int,
+    service: PayrollServiceDep,
+    org_id: OrgIdDep,
+    date_from: Annotated[datetime.date, Query(description="Start date (YYYY-MM-DD).")],
+    date_to: Annotated[datetime.date, Query(description="End date (YYYY-MM-DD).")],
+) -> dict[str, Any]:
+    """Fetch detailed payroll calculation slip breakdown for a single employee."""
+    result = await service.get_process_payroll_employee_detail(
+        org_id=org_id,
+        employee_id=employee_id,
+        date_from=date_from,
+        date_to=date_to,
+    )
+    return _ok(result, "Employee payroll details fetched successfully.")
+

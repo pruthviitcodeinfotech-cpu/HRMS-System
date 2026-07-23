@@ -22,7 +22,7 @@ from app.modules.payroll.constants import (
     WorkingHourType,
 )
 from app.shared.base.schema import BaseSchema
-from app.shared.schemas.pagination import PaginatedResponse
+from app.shared.schemas.pagination import PaginatedResponse, PaginationMeta
 
 # ===========================================================================
 # 1. Payroll Configuration
@@ -486,6 +486,92 @@ class AttendanceAdjustmentExtraHoursResponseSchema(BaseSchema):
 
 
 # ===========================================================================
+# 11. Bulk Attendance Adjustments Matrix (Phase 2)
+# ===========================================================================
+
+
+class BulkAttendanceAdjustmentMatrixItemSchema(BaseSchema):
+    """One employee row in the bulk attendance adjustment matrix."""
+
+    employee_id: int = Field(..., description="Unique employee ID.")
+    employee_code: str = Field(..., description="Employee code.")
+    employee_name: str = Field(..., description="Full employee name.")
+    department_name: str = Field(..., description="Department name.")
+    designation_name: str = Field(..., description="Designation name.")
+    branch_id: int = Field(..., description="Master branch ID.")
+    branch_name: str = Field(..., description="Master branch name.")
+    attendance: dict[str, str] = Field(
+        ...,
+        description="Map of date string (YYYY-MM-DD) to status code (FD, HD, A, WO, LWP, P, H, L, CO).",
+    )
+
+
+class BulkAttendanceAdjustmentMatrixResponseSchema(BaseSchema):
+    """Response envelope for bulk attendance adjustment matrix."""
+
+    dates: list[str] = Field(
+        ..., description="List of date strings (YYYY-MM-DD) included in period."
+    )
+    items: list[BulkAttendanceAdjustmentMatrixItemSchema] = Field(
+        ..., description="Paginated list of employee matrix rows."
+    )
+    pagination: PaginationMeta = Field(..., description="Pagination metadata.")
+
+
+class BulkAttendanceAdjustmentCellUpdateSchema(BaseSchema):
+    """One modified cell in a batch update request."""
+
+    employee_id: int = Field(..., description="Target employee ID.")
+    attendance_date: date = Field(..., description="Attendance date.")
+    adjusted_status: str = Field(
+        ..., description="New adjusted status code (FD, HD, A, WO, LWP, P, H, L, CO)."
+    )
+    original_status: str | None = Field(
+        default=None, description="Original status code before modification."
+    )
+    reason: str | None = Field(
+        default=None, max_length=500, description="Optional justification for audit log."
+    )
+
+    @field_validator("adjusted_status")
+    @classmethod
+    def validate_adjusted_status(cls, value: str) -> str:
+        val = value.strip().upper()
+        allowed = {"FD", "HD", "A", "WO", "LWP", "P", "H", "L", "CO"}
+        if val not in allowed:
+            raise ValueError(f"adjusted_status must be one of {allowed}")
+        return val
+
+
+class BulkAttendanceAdjustmentBatchUpdateSchema(BaseSchema):
+    """Payload for batch saving modified attendance cells."""
+
+    date_from: date | None = Field(default=None, description="Start date of period.")
+    date_to: date | None = Field(default=None, description="End date of period.")
+    updates: list[BulkAttendanceAdjustmentCellUpdateSchema] = Field(
+        ..., min_length=1, description="List of cell updates to apply."
+    )
+
+
+class BulkAttendanceAdjustmentBatchUpdateResponseSchema(BaseSchema):
+    """Response summary for batch updating attendance cells."""
+
+    updated_count: int = Field(..., description="Number of cell adjustments saved.")
+    message: str = Field(..., description="Operation summary message.")
+
+
+class BulkAttendanceAdjustmentResetSchema(BaseSchema):
+    """Payload for resetting bulk attendance adjustments back to default/punches."""
+
+    date_from: date = Field(..., description="Start date for reset.")
+    date_to: date = Field(..., description="End date for reset.")
+    branch_id: int | None = Field(default=None, description="Optional branch ID filter.")
+    employee_ids: list[int] | None = Field(
+        default=None, description="Optional specific employee IDs to reset."
+    )
+
+
+# ===========================================================================
 # Module exports
 # ===========================================================================
 
@@ -535,4 +621,11 @@ __all__ = [
     "AttendanceAdjustmentPenaltyResponseSchema",
     "AttendanceAdjustmentExtraHoursCreateSchema",
     "AttendanceAdjustmentExtraHoursResponseSchema",
+    # Phase 2 Bulk Adjustments
+    "BulkAttendanceAdjustmentMatrixItemSchema",
+    "BulkAttendanceAdjustmentMatrixResponseSchema",
+    "BulkAttendanceAdjustmentCellUpdateSchema",
+    "BulkAttendanceAdjustmentBatchUpdateSchema",
+    "BulkAttendanceAdjustmentBatchUpdateResponseSchema",
+    "BulkAttendanceAdjustmentResetSchema",
 ]

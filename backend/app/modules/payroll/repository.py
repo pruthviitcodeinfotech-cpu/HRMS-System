@@ -21,7 +21,7 @@ from collections.abc import Sequence
 from datetime import date
 from typing import Any
 
-from sqlalchemy import and_, delete, desc, func, insert, select, update
+from sqlalchemy import and_, delete, desc, func, insert, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.employee.models.employee import Employee
@@ -683,8 +683,100 @@ class AttendanceAdjustmentRepository(BaseRepository[AttendanceAdjustment]):
                 conds.append(Employee.dept_id == dept_id)
             conds.append(Employee.is_deleted.is_(False))
 
-        stmt = stmt.where(and_(*conds))
         return int((await self.session.execute(stmt)).scalar_one())
+
+    async def search_matrix_employees(
+        self,
+        org_id: int,
+        *,
+        branch_id: int | None = None,
+        dept_id: int | None = None,
+        search: str | None = None,
+        page: int = 1,
+        page_size: int = 25,
+    ) -> list[Employee]:
+        """Query active employees for attendance matrix grid with branch & department filters."""
+        conds = [
+            Employee.org_id == org_id,
+            Employee.is_deleted.is_(False),
+        ]
+        if branch_id is not None:
+            conds.append(Employee.master_branch_id == branch_id)
+        if dept_id is not None:
+            conds.append(Employee.dept_id == dept_id)
+        if search:
+            q = f"%{search.strip()}%"
+            conds.append(
+                or_(
+                    Employee.employee_name.ilike(q),
+                    Employee.employee_code.ilike(q),
+                )
+            )
+
+        stmt = (
+            select(Employee)
+            .where(and_(*conds))
+            .order_by(Employee.employee_code.asc(), Employee.employee_id.asc())
+        )
+        stmt = apply_pagination(stmt, page=page, page_size=page_size)
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def count_matrix_employees(
+        self,
+        org_id: int,
+        *,
+        branch_id: int | None = None,
+        dept_id: int | None = None,
+        search: str | None = None,
+    ) -> int:
+        """Count active employees matching attendance matrix filters."""
+        conds = [
+            Employee.org_id == org_id,
+            Employee.is_deleted.is_(False),
+        ]
+        if branch_id is not None:
+            conds.append(Employee.master_branch_id == branch_id)
+        if dept_id is not None:
+            conds.append(Employee.dept_id == dept_id)
+        if search:
+            q = f"%{search.strip()}%"
+            conds.append(
+                or_(
+                    Employee.employee_name.ilike(q),
+                    Employee.employee_code.ilike(q),
+                )
+            )
+
+        stmt = select(func.count(Employee.employee_id)).where(and_(*conds))
+        return (await self.session.execute(stmt)).scalar() or 0
+
+    async def bulk_reset_adjustments(
+        self,
+        org_id: int,
+        date_from: date,
+        date_to: date,
+        branch_id: int | None = None,
+        employee_ids: Sequence[int] | None = None,
+    ) -> int:
+        """Delete attendance adjustments matching period range and employee/branch filters."""
+        conds = [
+            AttendanceAdjustment.org_id == org_id,
+            AttendanceAdjustment.attendance_date >= date_from,
+            AttendanceAdjustment.attendance_date <= date_to,
+        ]
+        if employee_ids:
+            conds.append(AttendanceAdjustment.employee_id.in_(employee_ids))
+        elif branch_id is not None:
+            emp_stmt = select(Employee.employee_id).where(
+                Employee.org_id == org_id,
+                Employee.master_branch_id == branch_id,
+                Employee.is_deleted.is_(False),
+            )
+            conds.append(AttendanceAdjustment.employee_id.in_(emp_stmt))
+
+        stmt = delete(AttendanceAdjustment).where(and_(*conds))
+        res = await self.session.execute(stmt)
+        return res.rowcount or 0
 
 
 # ===========================================================================

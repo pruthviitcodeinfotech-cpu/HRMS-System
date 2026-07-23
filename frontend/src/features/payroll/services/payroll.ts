@@ -111,4 +111,129 @@ export const payrollService = {
   deleteAdjustment: async (id: number) => {
     return apiClient.delete<void>(`/payroll/adjustments/${id}`);
   },
+
+  // 7. Bulk Attendance Adjustments (Phase 2)
+  getBulkAttendanceMatrix: async (params: {
+    date_from: string;
+    date_to: string;
+    branch_id?: number;
+    dept_id?: number;
+    search?: string;
+    page?: number;
+    page_size?: number;
+  }) => {
+    const query = new URLSearchParams();
+    query.append("date_from", params.date_from);
+    query.append("date_to", params.date_to);
+    if (params.branch_id) query.append("branch_id", params.branch_id.toString());
+    if (params.dept_id) query.append("dept_id", params.dept_id.toString());
+    if (params.search) query.append("search", params.search);
+    if (params.page) query.append("page", params.page.toString());
+    if (params.page_size) query.append("page_size", params.page_size.toString());
+
+    return apiClient.get<ApiResponse<{ dates: string[]; items: any[]; pagination: any }>>(
+      `/payroll/bulk-attendance-adjustments?${query.toString()}`
+    );
+  },
+
+  batchUpdateBulkAttendanceAdjustments: async (data: {
+    date_from?: string;
+    date_to?: string;
+    updates: {
+      employee_id: number;
+      attendance_date: string;
+      adjusted_status: string;
+      original_status?: string | null;
+      reason?: string | null;
+    }[];
+  }) => {
+    return apiClient.put<ApiResponse<{ updated_count: number; message: string }>>(
+      "/payroll/bulk-attendance-adjustments",
+      data
+    );
+  },
+
+  resetBulkAttendanceAdjustments: async (data: {
+    date_from: string;
+    date_to: string;
+    branch_id?: number;
+    employee_ids?: number[];
+  }) => {
+    return apiClient.post<ApiResponse<{ reset_count: number }>>(
+      "/payroll/bulk-attendance-adjustments/reset",
+      data
+    );
+  },
+
+  // 8. Process Payroll APIs (Phase 3 Integration)
+  getProcessPayrollMatrix: async (params: {
+    date_from: string;
+    date_to: string;
+    payroll_group_id?: number;
+    branch_id?: number;
+    dept_id?: number;
+    search?: string;
+    page?: number;
+    page_size?: number;
+  }) => {
+    const query = new URLSearchParams();
+    query.append("date_from", params.date_from);
+    query.append("date_to", params.date_to);
+    if (params.payroll_group_id) query.append("payroll_group_id", params.payroll_group_id.toString());
+    if (params.branch_id) query.append("branch_id", params.branch_id.toString());
+    if (params.dept_id) query.append("dept_id", params.dept_id.toString());
+    if (params.search) query.append("search", params.search);
+    if (params.page) query.append("page", params.page.toString());
+    if (params.page_size) query.append("page_size", params.page_size.toString());
+
+    return apiClient.get<ApiResponse<{ items: any[]; pagination: any }>>(
+      `/payroll/process?${query.toString()}`
+    );
+  },
+
+  calculateProcessPayroll: async (data: {
+    payroll_group_id: number;
+    cycle_from: string;
+    cycle_to: string;
+    employee_ids?: number[];
+  }) => {
+    return apiClient.post<ApiResponse<any>>("/payroll/process/calculate", data);
+  },
+
+  finalizeProcessPayroll: async (data: {
+    payroll_group_id: number;
+    cycle_from: string;
+    cycle_to: string;
+  }) => {
+    return apiClient.post<ApiResponse<any>>("/payroll/process/finalize", data);
+  },
+
+  getProcessPayrollEmployeeDetail: async (
+    employeeId: number,
+    params: { date_from: string; date_to: string }
+  ) => {
+    const query = new URLSearchParams();
+    query.append("date_from", params.date_from);
+    query.append("date_to", params.date_to);
+    return apiClient.get<ApiResponse<any>>(`/payroll/process/${employeeId}?${query.toString()}`);
+  },
+
+  exportProcessPayroll: async (params: {
+    date_from: string;
+    date_to: string;
+    payroll_group_id?: number;
+    branch_id?: number;
+    dept_id?: number;
+  }) => {
+    const query = new URLSearchParams();
+    query.append("date_from", params.date_from);
+    query.append("date_to", params.date_to);
+    if (params.payroll_group_id) query.append("payroll_group_id", params.payroll_group_id.toString());
+    if (params.branch_id) query.append("branch_id", params.branch_id.toString());
+    if (params.dept_id) query.append("dept_id", params.dept_id.toString());
+
+    return apiClient.get<ArrayBuffer>(`/payroll/process/export?${query.toString()}`, {
+      responseType: "arraybuffer",
+    });
+  },
 };
