@@ -6,6 +6,8 @@ import {
   OrgSettingsUpdateRequest,
   OrgSalarySlipResponse,
   OrgSalarySlipUpdateRequest,
+  PayrollSettingResponse,
+  PayrollSettingUpdateRequest,
 } from "../types";
 
 export const settingsService = {
@@ -38,17 +40,32 @@ export const settingsService = {
     return apiClient.patch<ApiResponse<OrgSalarySlipResponse>>("/settings/salary-slip", data);
   },
 
+  /** GET /payroll/settings — Fetch payroll calculation settings */
+  getPayrollSettings: async (): Promise<ApiResponse<PayrollSettingResponse>> => {
+    return apiClient.get<ApiResponse<PayrollSettingResponse>>("/payroll/settings");
+  },
+
+  /** PUT /payroll/settings — Update payroll calculation settings */
+  updatePayrollSettings: async (
+    data: PayrollSettingUpdateRequest
+  ): Promise<ApiResponse<PayrollSettingResponse>> => {
+    return apiClient.put<ApiResponse<PayrollSettingResponse>>("/payroll/settings", data);
+  },
+
   /** Combined Update method to update settings */
   updateAllSettings: async (payload: {
     orgSettings?: OrgSettingsUpdateRequest;
     salarySlipSettings?: OrgSalarySlipUpdateRequest;
+    payrollSettings?: PayrollSettingUpdateRequest;
   }): Promise<{
     org?: OrgSettingsResponse;
     salarySlip?: OrgSalarySlipResponse;
+    payroll?: PayrollSettingResponse;
   }> => {
     const promises: Promise<any>[] = [];
     let orgRes: ApiResponse<OrgSettingsResponse> | undefined;
     let slipRes: ApiResponse<OrgSalarySlipResponse> | undefined;
+    let payrollRes: ApiResponse<PayrollSettingResponse> | undefined;
 
     if (payload.orgSettings && Object.keys(payload.orgSettings).length > 0) {
       promises.push(
@@ -66,11 +83,20 @@ export const settingsService = {
       );
     }
 
+    if (payload.payrollSettings && Object.keys(payload.payrollSettings).length > 0) {
+      promises.push(
+        settingsService.updatePayrollSettings(payload.payrollSettings).then((res) => {
+          payrollRes = res;
+        })
+      );
+    }
+
     await Promise.all(promises);
 
     return {
       org: orgRes?.data,
       salarySlip: slipRes?.data,
+      payroll: payrollRes?.data,
     };
   },
 };

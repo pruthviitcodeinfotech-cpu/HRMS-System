@@ -17,7 +17,7 @@ import {
   Building2,
 } from "lucide-react";
 import { toast } from "sonner";
-import { useSettings, useUpdateSettings } from "../hooks/use-settings";
+import { useSettings, usePayrollSettings, useUpdateSettings } from "../hooks/use-settings";
 
 export type UIState = "normal" | "loading" | "empty" | "error";
 
@@ -46,22 +46,23 @@ export function SettingsPage() {
   const [deviceSyncTime, setDeviceSyncTime] = useState<string>("4:51 PM");
 
   // Payroll Management Form State
-  const [workingHourType, setWorkingHourType] = useState<string>("Fixed");
-  const [fullDayWorkingHours, setFullDayWorkingHours] = useState<string>("08:00");
-  const [halfDayWorkingHours, setHalfDayWorkingHours] = useState<string>("04:00");
-  const [attendanceMode, setAttendanceMode] = useState<string>("Consider All Punch");
-  const [offDayCompensation, setOffDayCompensation] = useState<string>("Monetary Compensation");
-  const [weekOffMultiplier, setWeekOffMultiplier] = useState<string>("1");
-  const [dailyWageCalculation, setDailyWageCalculation] = useState<string>("Monthly Salary ÷ Calendar Days");
-  const [overtimeType, setOvertimeType] = useState<string>("Fixed Per Hour Pay");
-  const [overtimeMultiplier, setOvertimeMultiplier] = useState<string>("0");
-  const [overtimeBufferPeriod, setOvertimeBufferPeriod] = useState<string>("00:00");
-  const [overtimePeriod, setOvertimePeriod] = useState<string>("15 Min");
+  // Payroll state values use raw backend enum strings as-is (no UI label mapping needed)
+  const [workingHourType, setWorkingHourType] = useState<string>("fixed");
+  const [fullDayWorkingHours, setFullDayWorkingHours] = useState<string>("09:00");
+  const [halfDayWorkingHours, setHalfDayWorkingHours] = useState<string>("04:30");
+  const [attendanceMode, setAttendanceMode] = useState<string>("consider_all_punch");
+  const [offDayCompensation, setOffDayCompensation] = useState<string>("paid");
+  const [weekOffMultiplier, setWeekOffMultiplier] = useState<string>("1.0");
+  const [dailyWageCalculation, setDailyWageCalculation] = useState<string>("calendar_days");
+  const [overtimeType, setOvertimeType] = useState<string>("multiplier");
+  const [overtimeMultiplier, setOvertimeMultiplier] = useState<string>("1.5");
+  const [overtimeBufferPeriod, setOvertimeBufferPeriod] = useState<string>("00:30");
+  const [overtimePeriod, setOvertimePeriod] = useState<string>("daily");
 
   const [fullDayPenalty, setFullDayPenalty] = useState<boolean>(false);
   const [halfDayPenalty, setHalfDayPenalty] = useState<boolean>(false);
   const [lateComingPenalty, setLateComingPenalty] = useState<boolean>(false);
-  const [graceTime, setGraceTime] = useState<string>("00:00");
+  const [graceTime, setGraceTime] = useState<string>("00:15");
 
   // Integration Codes State
   const [syncCode, setSyncCode] = useState<string>("delfawno");
@@ -71,7 +72,7 @@ export function SettingsPage() {
   const [salarySlipCompany, setSalarySlipCompany] = useState<string>("Itcode Infotech");
   const [salarySlipAddress, setSalarySlipAddress] = useState<string>("C1 - 1003, Pragti it park , mota varachha, surat - 394105");
   const [salarySlipContact, setSalarySlipContact] = useState<string>("Contact");
-  const [salarySlipEmail, setSalarySlipEmail] = useState<string>("Website / Email");
+  const [salarySlipEmail, setSalarySlipEmail] = useState<string>("");
   const [autoReleasePayslip, setAutoReleasePayslip] = useState<boolean>(true);
   const [branchWisePayslip, setBranchWisePayslip] = useState<boolean>(false);
 
@@ -139,6 +140,7 @@ export function SettingsPage() {
 
   // React Query Settings Data & Mutation Integration
   const { data: serverSettings, isLoading: isQueryLoading, isError: isQueryError, refetch } = useSettings();
+  const { data: serverPayrollSettings } = usePayrollSettings();
   const updateSettingsMutation = useUpdateSettings();
 
   // Populate state when serverSettings changes from API
@@ -166,12 +168,33 @@ export function SettingsPage() {
         setSalarySlipCompany(serverSettings.salary_slip.company_name || "Itcode Infotech");
         setSalarySlipAddress(serverSettings.salary_slip.company_address || "C1 - 1003, Pragti it park, mota varachha, surat - 394105");
         setSalarySlipContact(serverSettings.salary_slip.company_contact || "Contact");
-        setSalarySlipEmail(serverSettings.salary_slip.company_website_email || "Website / Email");
+        setSalarySlipEmail(serverSettings.salary_slip.company_website_email || "");
         setAutoReleasePayslip(serverSettings.salary_slip.auto_release_payslip ?? true);
         setBranchWisePayslip(serverSettings.salary_slip.branch_wise_payslip ?? false);
       }
     }
   }, [serverSettings]);
+
+  // Populate payroll state from server — values are stored as raw backend strings directly
+  React.useEffect(() => {
+    if (serverPayrollSettings) {
+      setWorkingHourType(serverPayrollSettings.working_hour_type);
+      setFullDayWorkingHours(String(serverPayrollSettings.full_day_working_hours).substring(0, 5));
+      setHalfDayWorkingHours(String(serverPayrollSettings.half_day_working_hours).substring(0, 5));
+      setAttendanceMode(serverPayrollSettings.attendance_mode);
+      setOffDayCompensation(serverPayrollSettings.off_day_compensation);
+      setWeekOffMultiplier(String(serverPayrollSettings.off_day_wage_multiplier));
+      setDailyWageCalculation(serverPayrollSettings.daily_wage_formula);
+      setOvertimeType(serverPayrollSettings.overtime_type);
+      setOvertimeMultiplier(String(serverPayrollSettings.overtime_hourly_multiplier));
+      setOvertimeBufferPeriod(String(serverPayrollSettings.overtime_buffer_period).substring(0, 5));
+      setOvertimePeriod(serverPayrollSettings.overtime_period_interval ?? "daily");
+      setFullDayPenalty(serverPayrollSettings.full_day_penalty_enabled);
+      setHalfDayPenalty(serverPayrollSettings.half_day_penalty_enabled);
+      setLateComingPenalty(serverPayrollSettings.late_coming_penalty_enabled);
+      setGraceTime(String(serverPayrollSettings.grace_time).substring(0, 5));
+    }
+  }, [serverPayrollSettings]);
 
   // Derived effective UI state
   const effectiveState: UIState =
@@ -205,10 +228,6 @@ export function SettingsPage() {
 
   const handleSave = async () => {
     try {
-      const validEmail =
-        salarySlipEmail && salarySlipEmail.includes("@") && salarySlipEmail.includes(".")
-          ? salarySlipEmail.trim()
-          : undefined;
 
       const validPassCode =
         passCode && passCode !== "********" && passCode.trim() !== ""
@@ -222,6 +241,7 @@ export function SettingsPage() {
 
       const formattedTime = formatTimeTo24h(deviceSyncTime);
 
+      // State values are already raw backend enum strings — send directly
       await updateSettingsMutation.mutateAsync({
         orgSettings: {
           advance_shift_enabled: settings.advanceShift,
@@ -235,9 +255,27 @@ export function SettingsPage() {
           company_name: salarySlipCompany || "Itcode Infotech",
           company_address: salarySlipAddress || "Surat",
           company_contact: salarySlipContact || "Contact",
-          ...(validEmail ? { company_website_email: validEmail } : {}),
+          // Send website/email value as-is — field accepts both URLs and email addresses
+          company_website_email: salarySlipEmail.trim() || null,
           auto_release_payslip: autoReleasePayslip,
           branch_wise_payslip: branchWisePayslip,
+        },
+        payrollSettings: {
+          working_hour_type: workingHourType,
+          full_day_working_hours: fullDayWorkingHours.length === 5 ? `${fullDayWorkingHours}:00` : fullDayWorkingHours,
+          half_day_working_hours: halfDayWorkingHours.length === 5 ? `${halfDayWorkingHours}:00` : halfDayWorkingHours,
+          attendance_mode: attendanceMode,
+          off_day_compensation: offDayCompensation,
+          off_day_wage_multiplier: parseFloat(weekOffMultiplier) || 1,
+          daily_wage_formula: dailyWageCalculation,
+          overtime_type: overtimeType,
+          overtime_hourly_multiplier: parseFloat(overtimeMultiplier) || 0,
+          overtime_buffer_period: overtimeBufferPeriod.length === 5 ? `${overtimeBufferPeriod}:00` : overtimeBufferPeriod,
+          overtime_period_interval: overtimePeriod,
+          full_day_penalty_enabled: fullDayPenalty,
+          half_day_penalty_enabled: halfDayPenalty,
+          late_coming_penalty_enabled: lateComingPenalty,
+          grace_time: graceTime.length === 5 ? `${graceTime}:00` : graceTime,
         },
       });
       setIsDirty(false);
@@ -724,14 +762,13 @@ export function SettingsPage() {
                               }}
                               className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer shadow-2xs"
                             >
-                              <option value="Fixed">Fixed</option>
-                              <option value="Shift Based">Shift Based</option>
-                              <option value="Flexible">Flexible</option>
+                              <option value="fixed">Fixed</option>
+                              <option value="shift_wise">Shift Wise</option>
                             </select>
                           </div>
                         </div>
 
-                        {workingHourType === "Fixed" && (
+                        {workingHourType === "fixed" && (
                           <div className="flex flex-col sm:flex-row items-center gap-6 sm:justify-end pt-2">
                             <div className="w-full sm:w-auto space-y-1.5">
                               <label htmlFor="full-day-hours-input" className="text-xs text-slate-500 dark:text-slate-400 font-medium">
@@ -795,9 +832,10 @@ export function SettingsPage() {
                             }}
                             className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer shadow-2xs"
                           >
-                            <option value="Consider All Punch">Consider All Punch</option>
-                            <option value="First In Last Out">First In Last Out</option>
-                            <option value="Single Punch Only">Single Punch Only</option>
+                            <option value="consider_all_punch">Consider All Punch</option>
+                            <option value="first_and_last_punch_only">First &amp; Last Punch Only</option>
+                            <option value="full_day_on_single_punch">Full Day on Single Punch</option>
+                            <option value="default_full_day">Default Full Day</option>
                           </select>
                         </div>
                       </div>
@@ -824,14 +862,14 @@ export function SettingsPage() {
                               }}
                               className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer shadow-2xs"
                             >
-                              <option value="Monetary Compensation">Monetary Compensation</option>
-                              <option value="Compensatory Off">Compensatory Off</option>
-                              <option value="No Compensation">No Compensation</option>
+                              <option value="paid">Paid (Monetary Compensation)</option>
+                              <option value="compensatory_off">Compensatory Off</option>
+                              <option value="unpaid">Unpaid (No Compensation)</option>
                             </select>
                           </div>
                         </div>
 
-                        {offDayCompensation === "Monetary Compensation" && (
+                        {offDayCompensation === "paid" && (
                           <div className="flex flex-col sm:items-end space-y-2 pt-1">
                             <label htmlFor="week-off-multiplier-input" className="text-xs text-slate-500 dark:text-slate-400">
                               Week off working is paid out as <span className="font-bold text-slate-800 dark:text-slate-200">{weekOffMultiplier} x</span> times daily wage*
@@ -871,9 +909,9 @@ export function SettingsPage() {
                             }}
                             className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer shadow-2xs"
                           >
-                            <option value="Monthly Salary ÷ Calendar Days">Monthly Salary ÷ Calendar Days</option>
-                            <option value="Monthly Salary ÷ Working Days">Monthly Salary ÷ Working Days</option>
-                            <option value="Fixed Daily Rate">Fixed Daily Rate</option>
+                            <option value="calendar_days">Monthly Salary ÷ Calendar Days</option>
+                            <option value="working_days">Monthly Salary ÷ Working Days</option>
+                            <option value="present_days">Monthly Salary ÷ Present Days</option>
                           </select>
                         </div>
                       </div>
@@ -900,9 +938,9 @@ export function SettingsPage() {
                               }}
                               className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer shadow-2xs"
                             >
-                              <option value="Fixed Per Hour Pay">Fixed Per Hour Pay</option>
-                              <option value="Multiplier of Basic Pay">Multiplier of Basic Pay</option>
-                              <option value="No Overtime Pay">No Overtime Pay</option>
+                              <option value="fixed_per_hour_pay">Fixed Per Hour Pay</option>
+                              <option value="multiplier">Multiplier Based</option>
+                              <option value="no_overtime">No Overtime</option>
                             </select>
                           </div>
                         </div>
@@ -957,9 +995,9 @@ export function SettingsPage() {
                                 }}
                                 className="w-full sm:w-36 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer shadow-2xs"
                               >
-                                <option value="15 Min">15 Min</option>
-                                <option value="30 Min">30 Min</option>
-                                <option value="60 Min">60 Min</option>
+                                <option value="daily">Daily</option>
+                                <option value="weekly">Weekly</option>
+                                <option value="monthly">Monthly</option>
                               </select>
                             </div>
                           </div>
@@ -1209,11 +1247,12 @@ export function SettingsPage() {
                             id="salary-slip-email"
                             type="text"
                             value={salarySlipEmail}
+                            placeholder="e.g. https://company.com or info@company.com"
                             onChange={(e) => {
                               setSalarySlipEmail(e.target.value);
                               setIsDirty(true);
                             }}
-                            className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-2xs"
+                            className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-2xs placeholder:text-slate-400"
                           />
                         </div>
 

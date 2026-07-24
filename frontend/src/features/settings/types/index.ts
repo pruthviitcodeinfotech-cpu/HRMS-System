@@ -62,3 +62,48 @@ export interface ApiResponse<T> {
   data: T;
   message?: string;
 }
+
+// ---------------------------------------------------------------------------
+// Payroll Settings (from GET/PUT /payroll/settings)
+// ---------------------------------------------------------------------------
+
+export interface PayrollSettingResponse {
+  id: number;
+  org_id: number;
+  working_hour_type: string;
+  full_day_working_hours: string;
+  half_day_working_hours: string;
+  attendance_mode: string;
+  off_day_compensation: string;
+  off_day_wage_multiplier: string | number;
+  daily_wage_formula: string;
+  overtime_type: string;
+  overtime_hourly_multiplier: string | number;
+  overtime_buffer_period: string;
+  overtime_period_interval: string | null;
+  full_day_penalty_enabled: boolean;
+  half_day_penalty_enabled: boolean;
+  late_coming_penalty_enabled: boolean;
+  grace_time: string;
+  updated_by?: number | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface PayrollSettingUpdateRequest {
+  working_hour_type?: string;
+  full_day_working_hours?: string;
+  half_day_working_hours?: string;
+  attendance_mode?: string;
+  off_day_compensation?: string;
+  off_day_wage_multiplier?: number;
+  daily_wage_formula?: string;
+  overtime_type?: string;
+  overtime_hourly_multiplier?: number;
+  overtime_buffer_period?: string;
+  overtime_period_interval?: string | null;
+  full_day_penalty_enabled?: boolean;
+  half_day_penalty_enabled?: boolean;
+  late_coming_penalty_enabled?: boolean;
+  grace_time?: string;
+}

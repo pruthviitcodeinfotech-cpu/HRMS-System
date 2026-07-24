@@ -4,10 +4,12 @@ import {
   ConfigurationViewResponse,
   OrgSettingsUpdateRequest,
   OrgSalarySlipUpdateRequest,
+  PayrollSettingUpdateRequest,
 } from "../types";
 import { toast } from "sonner";
 
 export const SETTINGS_QUERY_KEY = ["settings"];
+export const PAYROLL_SETTINGS_QUERY_KEY = ["payroll-settings"];
 
 /**
  * React Query hook to load combined settings (GET /settings).
@@ -23,9 +25,24 @@ export function useSettings() {
   });
 }
 
+/**
+ * React Query hook to load payroll calculation settings (GET /payroll/settings).
+ */
+export function usePayrollSettings() {
+  return useQuery({
+    queryKey: PAYROLL_SETTINGS_QUERY_KEY,
+    queryFn: async () => {
+      const res = await settingsService.getPayrollSettings();
+      return res.data;
+    },
+    staleTime: 1000 * 60 * 5,
+  });
+}
+
 export interface UpdateSettingsPayload {
   orgSettings?: OrgSettingsUpdateRequest;
   salarySlipSettings?: OrgSalarySlipUpdateRequest;
+  payrollSettings?: PayrollSettingUpdateRequest;
 }
 
 /**
@@ -48,11 +65,13 @@ export function useUpdateSettings() {
     onMutate: async (newPayload: UpdateSettingsPayload) => {
       // Cancel any outgoing refetches (so they don't overwrite optimistic update)
       await queryClient.cancelQueries({ queryKey: SETTINGS_QUERY_KEY });
+      await queryClient.cancelQueries({ queryKey: PAYROLL_SETTINGS_QUERY_KEY });
 
-      // Snapshot the previous value
+      // Snapshot the previous values
       const previousSettings = queryClient.getQueryData<ConfigurationViewResponse>(SETTINGS_QUERY_KEY);
+      const previousPayroll = queryClient.getQueryData<any>(PAYROLL_SETTINGS_QUERY_KEY);
 
-      // Optimistically update the cache with new values
+      // Optimistically update org + salary slip cache
       if (previousSettings) {
         queryClient.setQueryData<ConfigurationViewResponse>(SETTINGS_QUERY_KEY, {
           ...previousSettings,
@@ -81,7 +100,17 @@ export function useUpdateSettings() {
         });
       }
 
-      return { previousSettings };
+      // Optimistically update payroll cache
+      if (previousPayroll && newPayload.payrollSettings) {
+        queryClient.setQueryData(PAYROLL_SETTINGS_QUERY_KEY, {
+          ...previousPayroll,
+          ...Object.fromEntries(
+            Object.entries(newPayload.payrollSettings).filter(([, v]) => v !== undefined)
+          ),
+        });
+      }
+
+      return { previousSettings, previousPayroll };
     },
 
     // If mutation fails, rollback to previous cached settings
@@ -89,12 +118,16 @@ export function useUpdateSettings() {
       if (context?.previousSettings) {
         queryClient.setQueryData(SETTINGS_QUERY_KEY, context.previousSettings);
       }
+      if (context?.previousPayroll) {
+        queryClient.setQueryData(PAYROLL_SETTINGS_QUERY_KEY, context.previousPayroll);
+      }
       toast.error(err?.message || "Failed to update settings. Please check input parameters.");
     },
 
     // Always refetch / invalidate cache after error or success to ensure backend sync
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY });
+      queryClient.invalidateQueries({ queryKey: PAYROLL_SETTINGS_QUERY_KEY });
     },
 
     onSuccess: () => {
