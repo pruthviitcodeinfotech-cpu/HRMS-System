@@ -40,6 +40,7 @@ import {
   SortOrder,
 } from "../types";
 import { useQueryClient } from "@tanstack/react-query";
+import { usePermissions } from "@/features/auth";
 import {
   useActiveEmployeeCount,
   useBranchOptions,
@@ -132,6 +133,11 @@ const renderCellContent = (emp: Employee, colKey: string) => {
 export const EmployeeList = () => {
   const router = useRouter();
   const queryClient = useQueryClient();
+  const { hasPermission } = usePermissions();
+
+  const canCreateEmployee = hasPermission("employee", "create");
+  const canEditEmployee = hasPermission("employee", "edit");
+  const canDeleteEmployee = hasPermission("employee", "delete");
 
   // Search and Filters state (selects hold backend IDs as strings; "" = all)
   const [searchTerm, setSearchTerm] = useState("");
@@ -1149,6 +1155,7 @@ export const EmployeeList = () => {
               </div>
             )}
 
+            {canCreateEmployee && (
             <Button
               variant="primary"
               size="sm"
@@ -1193,6 +1200,7 @@ export const EmployeeList = () => {
               <Plus className="h-4 w-4" />
               Add Employee
             </Button>
+            )}
 
             <Button
               variant="outline"
@@ -1215,6 +1223,7 @@ export const EmployeeList = () => {
             </Button>
 
             {/* Actions dropdown */}
+            {(canEditEmployee || canDeleteEmployee) && (
             <div className="relative" ref={actionsButtonRef}>
               <Button
                 variant="outline"
@@ -1288,6 +1297,7 @@ export const EmployeeList = () => {
                 </div>
               )}
             </div>
+            )}
           </div>
         </div>
       )}
@@ -1481,14 +1491,16 @@ export const EmployeeList = () => {
               <table className="w-full text-left border-collapse text-sm text-foreground">
                 <thead className="bg-[#f0f4f9] dark:bg-slate-900 border-b border-border font-semibold text-xs text-muted-foreground uppercase tracking-wider">
                   <tr>
-                    <th className="px-4 py-3.5 w-12 text-center align-middle">
-                      <input
-                        type="checkbox"
-                        checked={isAllSelected}
-                        onChange={e => handleSelectAll(e.target.checked)}
-                        className="h-4 w-4 rounded border-border text-primary focus:ring-primary cursor-pointer"
-                      />
-                    </th>
+                    {(canEditEmployee || canDeleteEmployee) && (
+                      <th className="px-4 py-3.5 w-12 text-center align-middle">
+                        <input
+                          type="checkbox"
+                          checked={isAllSelected}
+                          onChange={e => handleSelectAll(e.target.checked)}
+                          className="h-4 w-4 rounded border-border text-primary focus:ring-primary cursor-pointer"
+                        />
+                      </th>
+                    )}
                     {columnsList.map((col) => {
                       if (!col.checked) return null;
                       return (
@@ -1514,14 +1526,16 @@ export const EmployeeList = () => {
                         selectedIds.has(emp.id) ? "bg-primary/5 hover:bg-primary/10" : ""
                       }`}
                     >
-                      <td className="px-4 py-3 w-12 text-center align-middle">
-                        <input
-                          type="checkbox"
-                          checked={selectedIds.has(emp.id)}
-                          onChange={e => handleSelectItem(emp.id, e.target.checked)}
-                          className="h-4 w-4 rounded border-border text-primary focus:ring-primary cursor-pointer"
-                        />
-                      </td>
+                      {(canEditEmployee || canDeleteEmployee) && (
+                        <td className="px-4 py-3 w-12 text-center align-middle">
+                          <input
+                            type="checkbox"
+                            checked={selectedIds.has(emp.id)}
+                            onChange={e => handleSelectItem(emp.id, e.target.checked)}
+                            className="h-4 w-4 rounded border-border text-primary focus:ring-primary cursor-pointer"
+                          />
+                        </td>
+                      )}
 
                       {columnsList.map((col) => {
                         if (!col.checked) return null;
@@ -1542,68 +1556,95 @@ export const EmployeeList = () => {
                         if (col.key === "status") {
                           return (
                             <td key={col.key} className="px-4 py-3 align-middle relative whitespace-nowrap">
-                              <button
-                                onClick={e => {
-                                  e.stopPropagation();
-                                  setActiveStatusRowId(activeStatusRowId === emp.id ? null : emp.id);
-                                  setActiveActionRowId(null);
-                                }}
-                                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold transition-all hover:bg-muted focus:outline-none cursor-pointer border border-border/40"
-                              >
-                                <span
-                                  className={`h-1.5 w-1.5 rounded-full ${
-                                    emp.status === "Active"
-                                      ? "bg-emerald-500"
-                                      : emp.status === "Inactive"
-                                      ? "bg-yellow-500"
-                                      : "bg-orange-500"
-                                  }`}
-                                />
-                                <span
-                                  className={
-                                    emp.status === "Active"
-                                      ? "text-emerald-700 dark:text-emerald-400"
-                                      : emp.status === "Inactive"
-                                      ? "text-yellow-700 dark:text-yellow-400"
-                                      : "text-orange-700 dark:text-orange-400"
-                                  }
-                                >
-                                  {emp.status}
+                              {!canEditEmployee ? (
+                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold border border-border/40">
+                                  <span
+                                    className={`h-1.5 w-1.5 rounded-full ${
+                                      emp.status === "Active"
+                                        ? "bg-emerald-500"
+                                        : emp.status === "Inactive"
+                                        ? "bg-yellow-500"
+                                        : "bg-orange-500"
+                                    }`}
+                                  />
+                                  <span
+                                    className={
+                                      emp.status === "Active"
+                                        ? "text-emerald-700 dark:text-emerald-400"
+                                        : emp.status === "Inactive"
+                                        ? "text-yellow-700 dark:text-yellow-400"
+                                        : "text-orange-700 dark:text-orange-400"
+                                    }
+                                  >
+                                    {emp.status}
+                                  </span>
                                 </span>
-                                <ChevronDown className="h-3.5 w-3.5 text-muted-foreground/80" />
-                              </button>
+                              ) : (
+                                <>
+                                  <button
+                                    onClick={e => {
+                                      e.stopPropagation();
+                                      setActiveStatusRowId(activeStatusRowId === emp.id ? null : emp.id);
+                                      setActiveActionRowId(null);
+                                    }}
+                                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold transition-all hover:bg-muted focus:outline-none cursor-pointer border border-border/40"
+                                  >
+                                    <span
+                                      className={`h-1.5 w-1.5 rounded-full ${
+                                        emp.status === "Active"
+                                          ? "bg-emerald-500"
+                                          : emp.status === "Inactive"
+                                          ? "bg-yellow-500"
+                                          : "bg-orange-500"
+                                      }`}
+                                    />
+                                    <span
+                                      className={
+                                        emp.status === "Active"
+                                          ? "text-emerald-700 dark:text-emerald-400"
+                                          : emp.status === "Inactive"
+                                          ? "text-yellow-700 dark:text-yellow-400"
+                                          : "text-orange-700 dark:text-orange-400"
+                                      }
+                                    >
+                                      {emp.status}
+                                    </span>
+                                    <ChevronDown className="h-3.5 w-3.5 text-muted-foreground/80" />
+                                  </button>
 
-                              {/* Status dropdown */}
-                              {activeStatusRowId === emp.id && (
-                                <div
-                                  ref={statusMenuRef}
-                                  className="absolute left-4 top-10 mt-1 w-44 bg-card border border-border rounded-xl shadow-lg p-1.5 z-50 animate-in fade-in duration-100 space-y-0.5"
-                                >
-                                  {UI_STATUSES.map((statusVal) => {
-                                    const isSelected = emp.status === statusVal;
-                                    const textColors: Record<EmployeeUiStatus, string> = {
-                                      Active: "text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/5",
-                                      Inactive: "text-yellow-600 dark:text-yellow-400 hover:bg-yellow-500/5",
-                                      Terminated: "text-orange-600 dark:text-orange-400 hover:bg-orange-500/5",
-                                    };
-                                    return (
-                                      <button
-                                        key={statusVal}
-                                        onClick={() => handleStatusChange(statusVal)}
-                                        className={`w-full text-left px-2.5 py-1.5 text-xs font-bold rounded-lg flex items-center transition-all cursor-pointer ${textColors[statusVal]}`}
-                                      >
-                                        {isSelected ? (
-                                          <span className="flex items-center justify-center h-4 w-4 rounded-full border-2 border-blue-600 dark:border-blue-400 mr-2.5 shrink-0">
-                                            <span className="h-1.5 w-1.5 rounded-full bg-blue-600 dark:bg-blue-400" />
-                                          </span>
-                                        ) : (
-                                          <span className="h-4 w-4 rounded-full border-2 border-slate-200 dark:border-slate-800 mr-2.5 shrink-0" />
-                                        )}
-                                        {statusVal}
-                                      </button>
-                                    );
-                                  })}
-                                </div>
+                                  {/* Status dropdown */}
+                                  {activeStatusRowId === emp.id && (
+                                    <div
+                                      ref={statusMenuRef}
+                                      className="absolute left-4 top-10 mt-1 w-44 bg-card border border-border rounded-xl shadow-lg p-1.5 z-50 animate-in fade-in duration-100 space-y-0.5"
+                                    >
+                                      {UI_STATUSES.map((statusVal) => {
+                                        const isSelected = emp.status === statusVal;
+                                        const textColors: Record<EmployeeUiStatus, string> = {
+                                          Active: "text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/5",
+                                          Inactive: "text-yellow-600 dark:text-yellow-400 hover:bg-yellow-500/5",
+                                          Terminated: "text-orange-600 dark:text-orange-400 hover:bg-orange-500/5",
+                                        };
+                                        return (
+                                          <button
+                                            key={statusVal}
+                                            onClick={() => handleStatusChange(statusVal)}
+                                            className={`w-full text-left px-2.5 py-1.5 text-xs font-bold rounded-lg flex items-center transition-all cursor-pointer ${textColors[statusVal]}`}
+                                          >
+                                            {isSelected ? (
+                                              <span className="flex items-center justify-center h-4 w-4 rounded-full border-2 border-blue-600 dark:border-blue-400 mr-2.5 shrink-0">
+                                                <span className="h-1.5 w-1.5 rounded-full bg-blue-600 dark:bg-blue-400" />
+                                              </span>
+                                            ) : (
+                                              <span className="h-4 w-4 rounded-full border-2 border-slate-200 dark:border-slate-800 mr-2.5 shrink-0" />
+                                            )}
+                                            {statusVal}
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
+                                </>
                               )}
                             </td>
                           );
@@ -1656,21 +1697,25 @@ export const EmployeeList = () => {
                               <Fingerprint className="h-3.5 w-3.5 text-muted-foreground" />
                               Punch In Branch
                             </button>
-                            <div className="border-t border-border my-1" />
-                            <button
-                              onClick={() => handleActionClick("edit", emp)}
-                              className="w-full text-left px-3 py-1.5 text-xs text-foreground hover:bg-muted/70 flex items-center gap-2 cursor-pointer"
-                            >
-                              <Pencil className="h-3.5 w-3.5 text-muted-foreground" />
-                              Edit
-                            </button>
-                            <button
-                              onClick={() => handleActionClick("delete", emp)}
-                              className="w-full text-left px-3 py-1.5 text-xs text-destructive hover:bg-rose-500/10 flex items-center gap-2 cursor-pointer"
-                            >
-                              <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                              Delete
-                            </button>
+                            {(canEditEmployee || canDeleteEmployee) && <div className="border-t border-border my-1" />}
+                            {canEditEmployee && (
+                              <button
+                                onClick={() => handleActionClick("edit", emp)}
+                                className="w-full text-left px-3 py-1.5 text-xs text-foreground hover:bg-muted/70 flex items-center gap-2 cursor-pointer"
+                              >
+                                <Pencil className="h-3.5 w-3.5 text-muted-foreground" />
+                                Edit
+                              </button>
+                            )}
+                            {canDeleteEmployee && (
+                              <button
+                                onClick={() => handleActionClick("delete", emp)}
+                                className="w-full text-left px-3 py-1.5 text-xs text-destructive hover:bg-rose-500/10 flex items-center gap-2 cursor-pointer"
+                              >
+                                <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                                Delete
+                              </button>
+                            )}
                           </div>
                         )}
                       </td>

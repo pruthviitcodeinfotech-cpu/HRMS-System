@@ -5,7 +5,7 @@ import { LoanAdvanceView } from "@/features/settlements/components/loan-advance-
 
 export default function LoanAndAdvancePage() {
   return (
-    <ProtectedRoute requiredPermission={{ feature: "settlements", action: "read" }}>
+    <ProtectedRoute requiredPermission={{ feature: "loan_advance", action: "read" }}>
       <LoanAdvanceView />
     </ProtectedRoute>
   );

@@ -63,16 +63,9 @@ async def resolve_org_id(
     """Resolve the tenant (``org_id``) for unauthenticated requests (e.g. login).
 
     Prefers the value bound by the tenant middleware, falling back to the
-    ``X-Org-ID`` header. Raises ``TENANT_UNRESOLVED`` (400) when neither is
-    present. (The precise tenant-resolution strategy is a contract open question.)
+    ``X-Org-ID`` header, and defaulting to 1 (default organization).
     """
-    org_id = getattr(request.state, "org_id", None) or x_org_id
-    if org_id is None:
-        exc = AppException(
-            "Organization context could not be resolved.", code="TENANT_UNRESOLVED"
-        )
-        exc.status_code = status.HTTP_400_BAD_REQUEST
-        raise exc
+    org_id = getattr(request.state, "org_id", None) or x_org_id or 1
     return int(org_id)
 
 

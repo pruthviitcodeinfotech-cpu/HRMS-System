@@ -402,12 +402,13 @@ export function UserManagementPage() {
                     sortedItems.map((template, idx) => {
                       const isDeleted = template.is_deleted ?? false;
                       const isNearBottom =
-                        idx >= Math.max(0, sortedItems.length - 2) ||
-                        sortedItems.length <= 3;
+                        idx > 1 && idx >= sortedItems.length - 2;
                       return (
                         <tr
                           key={template.id}
-                          className="hover:bg-slate-50/60 dark:hover:bg-slate-800/40 transition-colors"
+                          className={`hover:bg-slate-50/60 dark:hover:bg-slate-800/40 transition-colors ${
+                            activeActionRowId === template.id ? "relative z-30" : ""
+                          }`}
                         >
                           <td className="py-4 px-4 text-xs font-semibold text-slate-800 dark:text-slate-100">
                             {template.name}

@@ -6,7 +6,7 @@ import { Landmark, Coins, ArrowRight } from "lucide-react";
 
 export default function SettlementsPage() {
   return (
-    <ProtectedRoute requiredPermission={{ feature: "settlements", action: "read" }}>
+    <ProtectedRoute requiredPermission={{ feature: "settlement", action: "read" }}>
       <div className="p-6 space-y-6">
         <div>
           <div className="flex items-center gap-2">

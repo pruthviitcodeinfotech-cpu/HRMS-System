@@ -24,6 +24,7 @@ import {
   useDesignationOptions,
   useDebouncedValue,
 } from "../hooks";
+import { usePermissions } from "@/features/auth";
 
 interface Designation {
   id: number;
@@ -40,6 +41,10 @@ interface Designation {
 const EMPLOYEE_STATUS_OPTIONS = ["Active", "Inactive", "Left", "Terminated"];
 
 export function DesignationList() {
+  const { hasPermission } = usePermissions();
+  const canCreate = hasPermission("designation", "create");
+  const canEdit = hasPermission("designation", "edit");
+  const canDelete = hasPermission("designation", "delete");
   // Search & Filtering Popups State
   const [activeActionRowId, setActiveActionRowId] = useState<number | null>(null);
   const [isNameFilterOpen, setIsNameFilterOpen] = useState(false);
@@ -368,9 +373,11 @@ export function DesignationList() {
           >
             Reload Data
           </button>
-          <Button variant="primary" size="sm" onClick={handleAddClick} className="shadow-xs bg-[#0b5cff] hover:bg-[#094ed9] text-white font-medium text-xs rounded-md h-9 px-4">
-            Add New
-          </Button>
+          {canCreate && (
+            <Button variant="primary" size="sm" onClick={handleAddClick} className="shadow-xs bg-[#0b5cff] hover:bg-[#094ed9] text-white font-medium text-xs rounded-md h-9 px-4">
+              Add New
+            </Button>
+          )}
         </div>
       </div>
 
@@ -665,37 +672,45 @@ export function DesignationList() {
                       </span>
                     </td>
                     <td className="px-6 py-5 text-center relative">
-                      <button
-                        onClick={() =>
-                          setActiveActionRowId(activeActionRowId === d.id ? null : d.id)
-                        }
-                        className="p-1.5 border border-slate-200 dark:border-slate-700 rounded-md bg-white dark:bg-slate-800 transition-colors inline-flex items-center justify-center cursor-pointer text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
-                      >
-                        <MoreVertical className="h-4 w-4" />
-                      </button>
+                      {(canEdit || canDelete) && (
+                        <>
+                          <button
+                            onClick={() =>
+                              setActiveActionRowId(activeActionRowId === d.id ? null : d.id)
+                            }
+                            className="p-1.5 border border-slate-200 dark:border-slate-700 rounded-md bg-white dark:bg-slate-800 transition-colors inline-flex items-center justify-center cursor-pointer text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
+                          >
+                            <MoreVertical className="h-4 w-4" />
+                          </button>
 
-                      {/* Action Dropdown Menu */}
-                      {activeActionRowId === d.id && (
-                        <div
-                          ref={actionDropdownRef}
-                          className="absolute right-12 top-12 w-28 bg-card border border-border rounded-lg shadow-xl py-1.5 z-40 animate-in fade-in duration-100 text-left"
-                        >
-                          <button
-                            onClick={() => handleEditClick(d)}
-                            className="w-full flex items-center gap-2 px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-muted/50 transition-colors cursor-pointer text-left border-none bg-transparent"
-                          >
-                            <Edit2 className="h-3.5 w-3.5 text-slate-500" />
-                            Edit
-                          </button>
-                          <button
-                            disabled={isMutationPending}
-                            onClick={() => handleDeleteClick(d.id)}
-                            className="w-full flex items-center gap-2 px-3 py-1.5 text-xs font-semibold text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 disabled:opacity-50 transition-colors cursor-pointer text-left border-none bg-transparent"
-                          >
-                            <Trash2 className="h-3.5 w-3.5 text-red-500" />
-                            Delete
-                          </button>
-                        </div>
+                          {/* Action Dropdown Menu */}
+                          {activeActionRowId === d.id && (
+                            <div
+                              ref={actionDropdownRef}
+                              className="absolute right-12 top-12 w-28 bg-card border border-border rounded-lg shadow-xl py-1.5 z-40 animate-in fade-in duration-100 text-left"
+                            >
+                              {canEdit && (
+                                <button
+                                  onClick={() => handleEditClick(d)}
+                                  className="w-full flex items-center gap-2 px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-muted/50 transition-colors cursor-pointer text-left border-none bg-transparent"
+                                >
+                                  <Edit2 className="h-3.5 w-3.5 text-slate-500" />
+                                  Edit
+                                </button>
+                              )}
+                              {canDelete && (
+                                <button
+                                  disabled={isMutationPending}
+                                  onClick={() => handleDeleteClick(d.id)}
+                                  className="w-full flex items-center gap-2 px-3 py-1.5 text-xs font-semibold text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 disabled:opacity-50 transition-colors cursor-pointer text-left border-none bg-transparent"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5 text-red-500" />
+                                  Delete
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </>
                       )}
                     </td>
                   </tr>

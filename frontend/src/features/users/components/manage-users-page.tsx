@@ -23,6 +23,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
+import { useAuth } from "@/features/auth/hooks";
+
 // React Query Hooks & API Services
 import {
   useUsers,
@@ -55,6 +57,7 @@ const STATUS_OPTIONS = ["All", "Active", "Inactive"];
 
 export function ManageUsersPage() {
   const router = useRouter();
+  const { user: currentUser } = useAuth();
 
   // Search & Filter State
   const [searchQuery, setSearchQuery] = useState("");
@@ -142,8 +145,8 @@ export function ManageUsersPage() {
   const { data: templateData } = useRightsTemplates({});
 
   const rawUsersList = paginatedData?.items || [];
-  const totalRecords = paginatedData?.total_records || rawUsersList.length;
-  const totalPages = paginatedData?.total_pages || Math.ceil(totalRecords / pageSize) || 1;
+  const totalRecords = paginatedData?.pagination?.total_records ?? paginatedData?.total_records ?? rawUsersList.length;
+  const totalPages = paginatedData?.pagination?.total_pages ?? paginatedData?.total_pages ?? (Math.ceil(totalRecords / pageSize) || 1);
 
   // React Query Mutations for User Actions
   const createUserMutation = useCreateUser();
@@ -266,20 +269,44 @@ export function ManageUsersPage() {
         data: {
           name: data.name,
           email: data.email,
+          mobile_country_code: data.mobile_country_code || "+91",
           mobile_number: data.mobile_number,
           is_super_admin: data.is_super_admin,
         },
       });
+
+      // Update / Assign Rights Template if selected
+      if (data.template_id) {
+        await assignRoleMutation.mutateAsync({
+          userId: data.id,
+          templateId: data.template_id,
+        });
+      } else {
+        try {
+          await removeRoleMutation.mutateAsync(data.id);
+        } catch {
+          // Ignore if no role was assigned previously
+        }
+      }
     } else {
       // Create User (POST /api/v1/users)
-      await createUserMutation.mutateAsync({
+      const res = await createUserMutation.mutateAsync({
         name: data.name,
         email: data.email,
+        mobile_country_code: data.mobile_country_code || "+91",
         mobile_number: data.mobile_number,
         password: data.password || "Password@123",
         is_super_admin: data.is_super_admin,
         employee_id: data.employee_id || undefined,
       });
+
+      // If a Rights Template was selected in the form, assign it immediately
+      if (data.template_id && res?.data?.id) {
+        await assignRoleMutation.mutateAsync({
+          userId: res.data.id,
+          templateId: data.template_id,
+        });
+      }
     }
     setIsFormModalOpen(false);
   };
@@ -545,8 +572,8 @@ export function ManageUsersPage() {
 
       {/* NORMAL LIVE TABLE VIEW */}
       {!isLoading && !isError && filteredAndSortedUsers.length > 0 && (
-        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg shadow-2xs flex flex-col justify-between min-h-[420px] relative">
-          <div className="w-full overflow-x-auto max-h-[650px] overflow-y-auto">
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg shadow-2xs flex flex-col justify-between min-h-[450px] relative">
+          <div className="w-full overflow-x-auto pb-48">
             <table className="w-full text-left border-collapse">
               {/* Sticky Header */}
               <thead className="sticky top-0 z-10 bg-[#eef6ff] dark:bg-slate-800 shadow-2xs">
@@ -612,20 +639,21 @@ export function ManageUsersPage() {
               </thead>
 
               {/* Dynamic Table Body */}
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800 pb-16">
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800 pb-48">
                 {filteredAndSortedUsers.map((user, idx) => {
                   const phoneText = user.mobile_country_code
                     ? `${user.mobile_country_code}${user.mobile_number}`
                     : user.mobile_number || "-";
 
                   const isNearBottom =
-                    idx >= Math.max(0, filteredAndSortedUsers.length - 2) ||
-                    filteredAndSortedUsers.length <= 3;
+                    idx > 1 && idx >= filteredAndSortedUsers.length - 2;
 
                   return (
                     <tr
                       key={user.id}
-                      className="hover:bg-slate-50/80 dark:hover:bg-slate-800/50 transition-colors"
+                      className={`hover:bg-slate-50/80 dark:hover:bg-slate-800/50 transition-colors ${
+                        activeActionRowId === user.id ? "relative z-30" : ""
+                      }`}
                     >
                       {/* Name */}
                       <td className="py-4 px-4 text-xs font-normal text-slate-800 dark:text-slate-100">
@@ -686,62 +714,71 @@ export function ManageUsersPage() {
                               <span>View User</span>
                             </button>
 
-                            {/* 2. Edit User */}
-                            <button
-                              onClick={() => handleOpenEditModal(user)}
-                              className="w-full flex items-center space-x-2 px-3.5 py-2 text-xs text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-                            >
-                              <Edit2 className="h-3.5 w-3.5 text-slate-400" />
-                              <span>Edit User</span>
-                            </button>
-
-                            {/* 3. Assign Template */}
-                            <button
-                              onClick={() => handleOpenAssignTemplateDialog(user)}
-                              className="w-full flex items-center space-x-2 px-3.5 py-2 text-xs text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-                            >
-                              <ShieldCheck className="h-3.5 w-3.5 text-blue-500" />
-                              <span>Assign Template</span>
-                            </button>
-
-                            {/* 4. Remove Template */}
-                            <button
-                              onClick={() => handleOpenRemoveTemplateDialog(user)}
-                              className="w-full flex items-center space-x-2 px-3.5 py-2 text-xs text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-                            >
-                              <X className="h-3.5 w-3.5 text-amber-500" />
-                              <span>Remove Template</span>
-                            </button>
-
-                            <div className="border-t border-slate-100 dark:border-slate-800 my-1" />
-
-                            {/* 5. Activate / Deactivate */}
-                            {!user.is_active ? (
-                              <button
-                                onClick={() => handleOpenToggleStatusDialog(user, "activate")}
-                                className="w-full flex items-center space-x-2 px-3.5 py-2 text-xs text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 transition-colors cursor-pointer"
-                              >
-                                <UserCheck className="h-3.5 w-3.5" />
-                                <span>Activate</span>
-                              </button>
+                            {/* Super Admin Protection Check */}
+                            {user.is_super_admin && !currentUser?.isSuperAdmin ? (
+                              <div className="px-3.5 py-2 text-[11px] text-amber-600 dark:text-amber-400 font-medium bg-amber-50 dark:bg-amber-950/30 border-t border-b border-amber-100 dark:border-amber-900/40 my-1">
+                                Super Admin Account (Protected)
+                              </div>
                             ) : (
-                              <button
-                                onClick={() => handleOpenToggleStatusDialog(user, "deactivate")}
-                                className="w-full flex items-center space-x-2 px-3.5 py-2 text-xs text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-colors cursor-pointer"
-                              >
-                                <UserX className="h-3.5 w-3.5" />
-                                <span>Deactivate</span>
-                              </button>
-                            )}
+                              <>
+                                {/* 2. Edit User */}
+                                <button
+                                  onClick={() => handleOpenEditModal(user)}
+                                  className="w-full flex items-center space-x-2 px-3.5 py-2 text-xs text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                                >
+                                  <Edit2 className="h-3.5 w-3.5 text-slate-400" />
+                                  <span>Edit User</span>
+                                </button>
 
-                            {/* 6. Delete */}
-                            <button
-                              onClick={() => handleOpenDeleteDialog(user)}
-                              className="w-full flex items-center space-x-2 px-3.5 py-2 text-xs text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors cursor-pointer"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                              <span>Delete</span>
-                            </button>
+                                {/* 3. Assign Template */}
+                                <button
+                                  onClick={() => handleOpenAssignTemplateDialog(user)}
+                                  className="w-full flex items-center space-x-2 px-3.5 py-2 text-xs text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                                >
+                                  <ShieldCheck className="h-3.5 w-3.5 text-blue-500" />
+                                  <span>Assign Template</span>
+                                </button>
+
+                                {/* 4. Remove Template */}
+                                <button
+                                  onClick={() => handleOpenRemoveTemplateDialog(user)}
+                                  className="w-full flex items-center space-x-2 px-3.5 py-2 text-xs text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                                >
+                                  <X className="h-3.5 w-3.5 text-amber-500" />
+                                  <span>Remove Template</span>
+                                </button>
+
+                                <div className="border-t border-slate-100 dark:border-slate-800 my-1" />
+
+                                {/* 5. Activate / Deactivate */}
+                                {!user.is_active ? (
+                                  <button
+                                    onClick={() => handleOpenToggleStatusDialog(user, "activate")}
+                                    className="w-full flex items-center space-x-2 px-3.5 py-2 text-xs text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 transition-colors cursor-pointer"
+                                  >
+                                    <UserCheck className="h-3.5 w-3.5" />
+                                    <span>Activate</span>
+                                  </button>
+                                ) : (
+                                  <button
+                                    onClick={() => handleOpenToggleStatusDialog(user, "deactivate")}
+                                    className="w-full flex items-center space-x-2 px-3.5 py-2 text-xs text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-colors cursor-pointer"
+                                  >
+                                    <UserX className="h-3.5 w-3.5" />
+                                    <span>Deactivate</span>
+                                  </button>
+                                )}
+
+                                {/* 6. Delete */}
+                                <button
+                                  onClick={() => handleOpenDeleteDialog(user)}
+                                  className="w-full flex items-center space-x-2 px-3.5 py-2 text-xs text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors cursor-pointer"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                  <span>Delete User</span>
+                                </button>
+                              </>
+                            )}
                           </div>
                         )}
                       </td>

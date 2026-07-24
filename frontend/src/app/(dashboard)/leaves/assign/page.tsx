@@ -151,7 +151,7 @@ export default function LeaveAssignPage() {
   };
 
   return (
-    <ProtectedRoute requiredPermission={{ feature: "leave_request", action: "read" }}>
+    <ProtectedRoute requiredPermission={{ feature: "leave_type", action: "read" }}>
       <div className="space-y-6 p-6 max-w-[1400px] mx-auto">
         {/* Top Header Bar */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-slate-200 dark:border-slate-800">

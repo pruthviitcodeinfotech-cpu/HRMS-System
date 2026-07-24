@@ -26,10 +26,16 @@ export interface ApiResponse<T> {
 
 export interface PaginatedData<T> {
   items: T[];
-  page: number;
-  page_size: number;
-  total_records: number;
-  total_pages: number;
+  page?: number;
+  page_size?: number;
+  total_records?: number;
+  total_pages?: number;
+  pagination?: {
+    page: number;
+    page_size: number;
+    total_records: number;
+    total_pages: number;
+  };
 }
 
 export const rightsTemplatesService = {

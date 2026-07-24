@@ -230,8 +230,13 @@ async def deactivate_user(
 async def delete_user(
     user_id: int, service: ServiceDep, current_user: CurrentUserDep, org_id: OrgIdDep
 ) -> Response:
-    """Soft-delete a user (cannot delete self)."""
-    await service.delete_user(org_id=org_id, actor_id=current_user.user_id, user_id=user_id)
+    """Soft-delete a user (cannot delete self, non-super-admin cannot delete super-admin)."""
+    await service.delete_user(
+        org_id=org_id,
+        actor_id=current_user.user_id,
+        actor_is_super_admin=current_user.is_super_admin,
+        user_id=user_id,
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -623,7 +628,11 @@ async def assign_role(
 ) -> dict[str, Any]:
     """Assign or replace the user's single rights template."""
     result = await service.assign_role(
-        org_id=org_id, actor_id=current_user.user_id, user_id=user_id, data=payload
+        org_id=org_id,
+        actor_id=current_user.user_id,
+        actor_is_super_admin=current_user.is_super_admin,
+        user_id=user_id,
+        data=payload,
     )
     return _ok(result, "Role assigned.")
 
@@ -634,9 +643,13 @@ async def assign_role(
     summary="Remove User Role",
     dependencies=[Depends(require_permission(_ACCESS, A.EDIT))],
 )
-async def remove_role(user_id: int, service: ServiceDep, org_id: OrgIdDep) -> Response:
+async def remove_role(
+    user_id: int, service: ServiceDep, current_user: CurrentUserDep, org_id: OrgIdDep
+) -> Response:
     """Remove the user's template assignment."""
-    await service.remove_role(org_id=org_id, user_id=user_id)
+    await service.remove_role(
+        org_id=org_id, actor_is_super_admin=current_user.is_super_admin, user_id=user_id
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

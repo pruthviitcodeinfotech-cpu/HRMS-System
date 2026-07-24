@@ -29,8 +29,14 @@ import {
   useDebouncedValue,
 } from "../hooks";
 import { DepartmentSchema } from "../types";
+import { usePermissions } from "@/features/auth";
 
 export function DepartmentList() {
+  const { hasPermission } = usePermissions();
+  const canCreate = hasPermission("department", "create");
+  const canEdit = hasPermission("department", "edit");
+  const canDelete = hasPermission("department", "delete");
+
   // Search & Filtering State
   const [searchQuery, setSearchQuery] = useState("");
   const debouncedSearch = useDebouncedValue(searchQuery, 400);
@@ -263,10 +269,12 @@ export function DepartmentList() {
           <span>Departments</span>
           <span className="text-primary font-bold">({totalRecords})</span>
         </h1>
-        <Button variant="primary" size="sm" onClick={handleAddClick} className="gap-1.5 shadow-xs">
-          <Plus className="h-4 w-4" />
-          Add New
-        </Button>
+        {canCreate && (
+          <Button variant="primary" size="sm" onClick={handleAddClick} className="gap-1.5 shadow-xs">
+            <Plus className="h-4 w-4" />
+            Add New
+          </Button>
+        )}
       </div>
 
       {/* Main card */}
@@ -531,39 +539,49 @@ export function DepartmentList() {
                     </td>
                     <td className="px-6 py-4.5 text-xs text-muted-foreground">{d.employee_count}</td>
                     <td className="px-6 py-4.5 text-right relative">
-                      <button
-                        onClick={() => setActiveActionRowId(activeActionRowId === d.dept_id ? null : d.dept_id)}
-                        className="p-1.5 hover:bg-muted border border-border/60 rounded-md transition-colors inline-flex items-center justify-center cursor-pointer text-muted-foreground hover:text-foreground"
-                      >
-                        <MoreVertical className="h-3.5 w-3.5" />
-                      </button>
+                      {(canEdit || canDelete) && (
+                        <>
+                          <button
+                            onClick={() => setActiveActionRowId(activeActionRowId === d.dept_id ? null : d.dept_id)}
+                            className="p-1.5 hover:bg-muted border border-border/60 rounded-md transition-colors inline-flex items-center justify-center cursor-pointer text-muted-foreground hover:text-foreground"
+                          >
+                            <MoreVertical className="h-3.5 w-3.5" />
+                          </button>
 
-                      {/* Dropdown Menu */}
-                      {activeActionRowId === d.dept_id && (
-                        <div ref={actionDropdownRef} className="absolute right-6 top-12 w-32 bg-card border border-border rounded-lg shadow-xl py-1.5 z-50 animate-in fade-in duration-100">
-                          <button
-                            onClick={() => handleEditClick(d)}
-                            className="w-full flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted/50 transition-colors cursor-pointer text-left"
-                          >
-                            <Edit2 className="h-3.5 w-3.5 text-muted-foreground" />
-                            Edit
-                          </button>
-                          <button
-                            onClick={() => handleToggleActive(d)}
-                            className="w-full flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted/50 transition-colors cursor-pointer text-left"
-                          >
-                            <Power className="h-3.5 w-3.5 text-muted-foreground" />
-                            {d.is_active ? "Deactivate" : "Activate"}
-                          </button>
-                          <button
-                            disabled={isMutationPending}
-                            onClick={() => handleDeleteClick(d.dept_id)}
-                            className="w-full flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-destructive hover:bg-destructive/10 disabled:opacity-50 transition-colors cursor-pointer text-left"
-                          >
-                            <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                            Delete
-                          </button>
-                        </div>
+                          {/* Dropdown Menu */}
+                          {activeActionRowId === d.dept_id && (
+                            <div ref={actionDropdownRef} className="absolute right-6 top-12 w-32 bg-card border border-border rounded-lg shadow-xl py-1.5 z-50 animate-in fade-in duration-100">
+                              {canEdit && (
+                                <button
+                                  onClick={() => handleEditClick(d)}
+                                  className="w-full flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted/50 transition-colors cursor-pointer text-left"
+                                >
+                                  <Edit2 className="h-3.5 w-3.5 text-muted-foreground" />
+                                  Edit
+                                </button>
+                              )}
+                              {canEdit && (
+                                <button
+                                  onClick={() => handleToggleActive(d)}
+                                  className="w-full flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted/50 transition-colors cursor-pointer text-left"
+                                >
+                                  <Power className="h-3.5 w-3.5 text-muted-foreground" />
+                                  {d.is_active ? "Deactivate" : "Activate"}
+                                </button>
+                              )}
+                              {canDelete && (
+                                <button
+                                  disabled={isMutationPending}
+                                  onClick={() => handleDeleteClick(d.dept_id)}
+                                  className="w-full flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-destructive hover:bg-destructive/10 disabled:opacity-50 transition-colors cursor-pointer text-left"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                                  Delete
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </>
                       )}
                     </td>
                   </tr>

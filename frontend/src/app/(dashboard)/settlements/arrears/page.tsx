@@ -5,7 +5,7 @@ import { ArrearsView } from "@/features/settlements/components/arrears-view";
 
 export default function ArrearsPage() {
   return (
-    <ProtectedRoute requiredPermission={{ feature: "settlements", action: "read" }}>
+    <ProtectedRoute requiredPermission={{ feature: "arrears", action: "read" }}>
       <ArrearsView />
     </ProtectedRoute>
   );

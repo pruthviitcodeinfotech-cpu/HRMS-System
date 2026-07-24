@@ -33,6 +33,7 @@ import {
 } from "../hooks";
 import { BranchSchema } from "../types";
 import { isAxiosError } from "axios";
+import { usePermissions } from "@/features/auth";
 
 interface ApiErrorResponse {
   error?: {
@@ -68,6 +69,11 @@ const formatDate = (isoString: string): string => {
 
 export function BranchList() {
   const router = useRouter();
+  const { hasPermission } = usePermissions();
+  const canCreate = hasPermission("branch", "create");
+  const canEdit = hasPermission("branch", "edit");
+  const canDelete = hasPermission("branch", "delete");
+
   const [searchQuery, setSearchQuery] = useState("");
   const debouncedSearch = useDebouncedValue(searchQuery, 400);
 
@@ -397,15 +403,17 @@ export function BranchList() {
             </Button>
 
             {/* Direct Add Button for full capability UI */}
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={handleAddClick}
-              className="gap-1.5 text-xs shadow-xs"
-            >
-              <Plus className="h-3.5 w-3.5" />
-              Add Branch
-            </Button>
+            {canCreate && (
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={handleAddClick}
+                className="gap-1.5 text-xs shadow-xs"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                Add Branch
+              </Button>
+            )}
           </div>
         </div>
 
@@ -547,47 +555,55 @@ export function BranchList() {
                       {formatDate(branch.created_at)}
                     </td>
                     <td className="px-6 py-4 text-right relative">
-                      <div className="flex justify-end items-center gap-1">
-                        <button
-                          onClick={() =>
-                            setActiveMenuId(prev => (prev === branch.branch_id ? null : branch.branch_id))
-                          }
-                          className="p-1.5 hover:bg-muted rounded-md text-muted-foreground hover:text-foreground cursor-pointer focus:outline-none"
-                        >
-                          <MoreVertical className="h-4 w-4" />
-                        </button>
-
-                        {/* Actions drop menu */}
-                        {activeMenuId === branch.branch_id && (
-                          <div
-                            ref={actionMenuRef}
-                            className="absolute right-6 top-10 w-32 bg-card border border-border rounded-lg shadow-lg py-1.5 z-50 animate-in fade-in slide-in-from-top-1 duration-100"
+                      {(canEdit || canDelete) && (
+                        <div className="flex justify-end items-center gap-1">
+                          <button
+                            onClick={() =>
+                              setActiveMenuId(prev => (prev === branch.branch_id ? null : branch.branch_id))
+                            }
+                            className="p-1.5 hover:bg-muted rounded-md text-muted-foreground hover:text-foreground cursor-pointer focus:outline-none"
                           >
-                            <button
-                              onClick={() => handleEditClick(branch)}
-                              className="w-full text-left px-3 py-1.5 text-xs text-foreground hover:bg-muted flex items-center gap-2 cursor-pointer"
+                            <MoreVertical className="h-4 w-4" />
+                          </button>
+
+                          {/* Actions drop menu */}
+                          {activeMenuId === branch.branch_id && (
+                            <div
+                              ref={actionMenuRef}
+                              className="absolute right-6 top-10 w-32 bg-card border border-border rounded-lg shadow-lg py-1.5 z-50 animate-in fade-in slide-in-from-top-1 duration-100"
                             >
-                              <Edit2 className="h-3 w-3 text-muted-foreground" />
-                              Edit
-                            </button>
-                            <button
-                              onClick={() => handleToggleActive(branch)}
-                              className="w-full text-left px-3 py-1.5 text-xs text-foreground hover:bg-muted flex items-center gap-2 cursor-pointer"
-                            >
-                              <Power className="h-3 w-3 text-muted-foreground" />
-                              {branch.is_active ? "Deactivate" : "Activate"}
-                            </button>
-                            <button
-                              disabled={isMutationPending}
-                              onClick={() => initiateDelete(String(branch.branch_id))}
-                              className="w-full text-left px-3 py-1.5 text-xs text-red-600 hover:bg-red-50 dark:hover:bg-red-950/20 flex items-center gap-2 cursor-pointer"
-                            >
-                              <Trash2 className="h-3 w-3 text-red-500" />
-                              Delete
-                            </button>
-                          </div>
-                        )}
-                      </div>
+                              {canEdit && (
+                                <button
+                                  onClick={() => handleEditClick(branch)}
+                                  className="w-full text-left px-3 py-1.5 text-xs text-foreground hover:bg-muted flex items-center gap-2 cursor-pointer"
+                                >
+                                  <Edit2 className="h-3 w-3 text-muted-foreground" />
+                                  Edit
+                                </button>
+                              )}
+                              {canEdit && (
+                                <button
+                                  onClick={() => handleToggleActive(branch)}
+                                  className="w-full text-left px-3 py-1.5 text-xs text-foreground hover:bg-muted flex items-center gap-2 cursor-pointer"
+                                >
+                                  <Power className="h-3 w-3 text-muted-foreground" />
+                                  {branch.is_active ? "Deactivate" : "Activate"}
+                                </button>
+                              )}
+                              {canDelete && (
+                                <button
+                                  disabled={isMutationPending}
+                                  onClick={() => initiateDelete(String(branch.branch_id))}
+                                  className="w-full text-left px-3 py-1.5 text-xs text-red-600 hover:bg-red-50 dark:hover:bg-red-950/20 flex items-center gap-2 cursor-pointer"
+                                >
+                                  <Trash2 className="h-3 w-3 text-red-500" />
+                                  Delete
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </td>
                   </tr>
                 ))

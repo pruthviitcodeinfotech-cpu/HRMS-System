@@ -206,6 +206,10 @@ class RBACService(BaseService):
     ) -> UserSchema:
         """Update mutable identity fields (uniqueness + super-admin re-checked)."""
         user = await self._get_active_user(org_id, user_id)
+        if user.is_super_admin and not actor_is_super_admin:
+            raise AuthorizationException(
+                "Only a super admin may modify a super-admin account.", code="AUTH_FORBIDDEN"
+            )
         updates = data.model_dump(exclude_unset=True)
 
         # Gate any *change* to the flag, not just grants. Checking only the truthy case
@@ -335,15 +339,30 @@ class RBACService(BaseService):
             )
         return self._user_schema(user)
 
-    async def delete_user(self, *, org_id: int, actor_id: int, user_id: int) -> None:
-        """Soft-delete a user (``deleted_at = now``); cannot delete self."""
+    async def delete_user(
+        self, *, org_id: int, actor_id: int, actor_is_super_admin: bool = False, user_id: int
+    ) -> None:
+        """Soft-delete a user (``deleted_at = now``); cannot delete self, non-super-admin cannot delete super-admin."""
         if user_id == actor_id:
             raise ConflictException(
                 "You cannot delete your own account.", code="CANNOT_MODIFY_SELF"
             )
         user = await self._get_active_user(org_id, user_id)
+        if user.is_super_admin and not actor_is_super_admin:
+            raise AuthorizationException(
+                "Only a super admin may delete a super-admin account.", code="AUTH_FORBIDDEN"
+            )
+        now_ts = int(utcnow().timestamp())
         async with self.transaction():
-            await self.users.update(user, {"deleted_at": utcnow()})
+            await self.users.update(
+                user,
+                {
+                    "deleted_at": utcnow(),
+                    "email": f"{user.email}__deleted_{user.id}_{now_ts}",
+                    "mobile_number": f"d{user.id}_{user.mobile_number}"[:20],
+                    "employee_id": None,
+                },
+            )
             await self._audit(
                 org_id=org_id,
                 actor_id=actor_id,
@@ -700,10 +719,14 @@ class RBACService(BaseService):
         )
 
     async def assign_role(
-        self, *, org_id: int, actor_id: int, user_id: int, data: AssignRoleRequest
+        self, *, org_id: int, actor_id: int, actor_is_super_admin: bool = False, user_id: int, data: AssignRoleRequest
     ) -> UserRoleSchema:
         """Assign or replace the user's single rights template."""
-        await self._get_active_user(org_id, user_id)
+        user = await self._get_active_user(org_id, user_id)
+        if user.is_super_admin and not actor_is_super_admin:
+            raise AuthorizationException(
+                "Only a super admin may modify template assignments for a super-admin account.", code="AUTH_FORBIDDEN"
+            )
         role = await self._get_active_role(org_id, data.template_id)
         async with self.transaction():
             await self.assignments.delete_for_user(user_id)
@@ -721,9 +744,13 @@ class RBACService(BaseService):
             )
         return await self.get_user_role(org_id=org_id, user_id=user_id)
 
-    async def remove_role(self, *, org_id: int, user_id: int) -> None:
+    async def remove_role(self, *, org_id: int, actor_is_super_admin: bool = False, user_id: int) -> None:
         """Remove the user's template assignment."""
-        await self._get_active_user(org_id, user_id)
+        user = await self._get_active_user(org_id, user_id)
+        if user.is_super_admin and not actor_is_super_admin:
+            raise AuthorizationException(
+                "Only a super admin may modify template assignments for a super-admin account.", code="AUTH_FORBIDDEN"
+            )
         async with self.transaction():
             removed = await self.assignments.delete_for_user(user_id)
             if removed:
@@ -1167,8 +1194,8 @@ class RBACService(BaseService):
         """Fetch assigned roles for a list of user IDs in a single batch query (no N+1)."""
         if not user_ids:
             return {}
-        from app.modules.rbac.models.membership import UserTemplateAssignment
-        from app.modules.rbac.models.rights import RightsTemplate
+        from sqlalchemy import select
+        from app.modules.rbac.models.rights import UserTemplateAssignment, RightsTemplate
 
         stmt = (
             select(UserTemplateAssignment.user_id, RightsTemplate.id, RightsTemplate.name)

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -61,13 +61,14 @@ export const NavigationMenu = ({ sidebarOpen }: NavigationMenuProps) => {
       hasChevron: true,
       isNew: false,
       permission: { feature: "employee", action: "read" },
+      features: ["employee", "department", "designation", "branch", "attendance_punch"],
       items: [
-        { href: "/employees", label: "Employees" },
-        { href: "/employees/departments", label: "Departments" },
-        { href: "/employees/designations", label: "Designations" },
-        { href: "/employees/attendance-permission", label: "Attendance Permission" },
-        { href: "/employees/manage-branch", label: "Manage Branch" },
-      ] as const,
+        { href: "/employees", label: "Employees", permission: { feature: "employee", action: "read" } },
+        { href: "/employees/departments", label: "Departments", permission: { feature: "department", action: "read" } },
+        { href: "/employees/designations", label: "Designations", permission: { feature: "designation", action: "read" } },
+        { href: "/employees/attendance-permission", label: "Attendance Permission", permission: { feature: "attendance_punch", action: "read" } },
+        { href: "/employees/manage-branch", label: "Manage Branch", permission: { feature: "branch", action: "read" } },
+      ],
     },
     {
       href: "/shifts",
@@ -76,12 +77,13 @@ export const NavigationMenu = ({ sidebarOpen }: NavigationMenuProps) => {
       hasChevron: true,
       isNew: false,
       permission: { feature: "shift", action: "read" },
+      features: ["shift", "shift_assignment", "weekoff", "roster"],
       items: [
-        { href: "/shifts", label: "Shifts" },
-        { href: "/shifts/assignments", label: "Shift Assignment" },
-        { href: "/shifts/week-off", label: "Week Off" },
-        { href: "/shifts/roster", label: "Roster" },
-      ] as const,
+        { href: "/shifts", label: "Shifts", permission: { feature: "shift", action: "read" } },
+        { href: "/shifts/assignments", label: "Shift Assignment", permission: { feature: "shift_assignment", action: "read" } },
+        { href: "/shifts/week-off", label: "Week Off", permission: { feature: "weekoff", action: "read" } },
+        { href: "/shifts/roster", label: "Roster", permission: { feature: "roster", action: "read" } },
+      ],
     },
     {
       href: "/leaves",
@@ -90,13 +92,14 @@ export const NavigationMenu = ({ sidebarOpen }: NavigationMenuProps) => {
       hasChevron: true,
       isNew: false,
       permission: { feature: "leave_request", action: "read" },
+      features: ["leave_type", "leave_config", "leave_balance", "leave_request", "holiday"],
       items: [
-        { href: "/leaves/create", label: "Leave Create" },
-        { href: "/leaves/assign", label: "Leave Assign" },
-        { href: "/leaves/balance", label: "Leave Balance" },
-        { href: "/leaves/holidays/create", label: "Holiday Create" },
-        { href: "/leaves/holidays/assign", label: "Holiday Assign" },
-      ] as const,
+        { href: "/leaves/create", label: "Leave Create", permission: { feature: "leave_request", action: "create" } },
+        { href: "/leaves/assign", label: "Leave Assign", permission: { feature: "leave_type", action: "read" } },
+        { href: "/leaves/balance", label: "Leave Balance", permission: { feature: "leave_balance", action: "read" } },
+        { href: "/leaves/holidays/create", label: "Holiday Create", permission: { feature: "holiday", action: "create" } },
+        { href: "/leaves/holidays/assign", label: "Holiday Assign", permission: { feature: "holiday", action: "edit" } },
+      ],
     },
     {
       href: "/approvals",
@@ -113,13 +116,14 @@ export const NavigationMenu = ({ sidebarOpen }: NavigationMenuProps) => {
       hasChevron: true,
       isNew: true,
       permission: { feature: "payroll_processing", action: "read" },
+      features: ["payroll_config", "payroll_group", "payroll_cycle", "payroll_processing", "payroll_record", "payroll_adjustment"],
       items: [
-        { href: "/payroll/bulk-attendance-adjustments", label: "Bulk Attendance Adjustments" },
-        { href: "/payroll/process-payroll", label: "Process Payroll", isNew: true },
-        { href: "/payroll/payroll-group", label: "Payroll Group" },
-        { href: "/payroll/assign-payroll-group", label: "Assign Payroll Group" },
-        { href: "/payroll/finalized-payroll-details", label: "Finalized Payroll Details" },
-      ] as const,
+        { href: "/payroll/bulk-attendance-adjustments", label: "Bulk Attendance Adjustments", permission: { feature: "payroll_adjustment", action: "read" } },
+        { href: "/payroll/process-payroll", label: "Process Payroll", isNew: true, permission: { feature: "payroll_processing", action: "read" } },
+        { href: "/payroll/payroll-group", label: "Payroll Group", permission: { feature: "payroll_group", action: "read" } },
+        { href: "/payroll/assign-payroll-group", label: "Assign Payroll Group", permission: { feature: "payroll_group", action: "edit" } },
+        { href: "/payroll/finalized-payroll-details", label: "Finalized Payroll Details", permission: { feature: "payroll_record", action: "read" } },
+      ],
     },
     {
       href: "/settlements",
@@ -128,10 +132,11 @@ export const NavigationMenu = ({ sidebarOpen }: NavigationMenuProps) => {
       hasChevron: true,
       isNew: true,
       permission: { feature: "settlement", action: "read" },
+      features: ["settlement", "loan_advance", "arrears"],
       items: [
-        { href: "/settlements/loan-advance", label: "Loan & Advance", isNew: true },
-        { href: "/settlements/arrears", label: "Arrears", isNew: true },
-      ] as const,
+        { href: "/settlements/loan-advance", label: "Loan & Advance", isNew: true, permission: { feature: "loan_advance", action: "read" } },
+        { href: "/settlements/arrears", label: "Arrears", isNew: true, permission: { feature: "arrears", action: "read" } },
+      ],
     },
     {
       href: "/reports",
@@ -140,16 +145,17 @@ export const NavigationMenu = ({ sidebarOpen }: NavigationMenuProps) => {
       hasChevron: true,
       isNew: false,
       permission: { feature: "reports", action: "read" },
+      features: ["reports", "attendance"],
       items: [
-        { href: "/reports/attendance-master", label: "Attendance Master" },
-        { href: "/reports/shift-wise", label: "Shift Wise Report" },
-        { href: "/reports/daily-punch", label: "Daily Punch Report" },
-        { href: "/reports/working-hours", label: "Working Hours Report" },
-        { href: "/reports/muster", label: "Muster Report" },
-        { href: "/reports/branch-wise-punch", label: "Branch Wise Punch Report" },
-        { href: "/reports/leave-taken", label: "Leave Taken Report" },
-        { href: "/reports/employee-day-wise-master", label: "Employee Day Wise Master" },
-      ] as const,
+        { href: "/reports/attendance-master", label: "Attendance Master", permission: { feature: "reports", action: "read" } },
+        { href: "/reports/shift-wise", label: "Shift Wise Report", permission: { feature: "reports", action: "read" } },
+        { href: "/reports/daily-punch", label: "Daily Punch Report", permission: { feature: "reports", action: "read" } },
+        { href: "/reports/working-hours", label: "Working Hours Report", permission: { feature: "reports", action: "read" } },
+        { href: "/reports/muster", label: "Muster Report", permission: { feature: "reports", action: "read" } },
+        { href: "/reports/branch-wise-punch", label: "Branch Wise Punch Report", permission: { feature: "reports", action: "read" } },
+        { href: "/reports/leave-taken", label: "Leave Taken Report", permission: { feature: "reports", action: "read" } },
+        { href: "/reports/employee-day-wise-master", label: "Employee Day Wise Master", permission: { feature: "reports", action: "read" } },
+      ],
     },
     {
       href: "/dynamic-reports",
@@ -166,10 +172,11 @@ export const NavigationMenu = ({ sidebarOpen }: NavigationMenuProps) => {
       hasChevron: true,
       isNew: false,
       permission: { feature: "user_management", action: "read" },
+      features: ["user_management", "role_management", "access_management"],
       items: [
-        { href: "/allTemplates", label: "Rights Templates" },
-        { href: "/users", label: "Manage Users" },
-      ] as const,
+        { href: "/allTemplates", label: "Rights Templates", permission: { feature: "role_management", action: "read" } },
+        { href: "/users", label: "Manage Users", permission: { feature: "user_management", action: "read" } },
+      ],
     },
     {
       href: "/activity-logs",
@@ -187,13 +194,13 @@ export const NavigationMenu = ({ sidebarOpen }: NavigationMenuProps) => {
       isNew: false,
       permission: { feature: "settings", action: "read" },
     },
-  ] as const;
+  ];
 
   // Auto-expand hierarchy when path matches any of the children
   useEffect(() => {
     navItems.forEach((item) => {
-      if ("items" in item) {
-        const hasActiveChild = item.items.some((child) => pathname === child.href);
+      if ("items" in item && Array.isArray(item.items)) {
+        const hasActiveChild = item.items.some((child: any) => pathname === child.href);
         if (hasActiveChild) {
           setExpandedItems((prev) => ({
             ...prev,
@@ -204,23 +211,54 @@ export const NavigationMenu = ({ sidebarOpen }: NavigationMenuProps) => {
     });
   }, [pathname]);
 
-  const filteredItems = navItems.filter((item) => {
-    try {
-      return hasPermission(item.permission.feature, item.permission.action);
-    } catch {
-      return true;
-    }
-  });
+  const filteredItems = useMemo(() => {
+    return navItems
+      .map((item) => {
+        try {
+          const hasParentPerm =
+            "features" in item && Array.isArray((item as any).features)
+              ? (item as any).features.some((f: string) => hasPermission(f, "read"))
+              : hasPermission(item.permission.feature, item.permission.action as any);
+
+          if (!hasParentPerm) {
+            return null;
+          }
+
+          if ("items" in item && Array.isArray((item as any).items)) {
+            const visibleSubItems = (item as any).items.filter((subItem: any) => {
+              if (subItem.permission) {
+                return hasPermission(subItem.permission.feature, subItem.permission.action);
+              }
+              return true;
+            });
+
+            if (visibleSubItems.length === 0) {
+              return null;
+            }
+
+            return {
+              ...item,
+              items: visibleSubItems,
+            };
+          }
+
+          return item;
+        } catch {
+          return item;
+        }
+      })
+      .filter((item): item is NonNullable<typeof item> => item !== null);
+  }, [hasPermission]);
 
   return (
     <nav className="p-2 space-y-1 mt-1">
-      {filteredItems.map((item) => {
+      {filteredItems.map((item: any) => {
         const Icon = item.icon;
-        const hasChildren = "items" in item;
+        const hasChildren = "items" in item && Array.isArray(item.items);
 
         // Parent is active if current path starts with parent href OR matches any child href
         const isParentActive = hasChildren
-          ? pathname.startsWith(item.href) || item.items.some((child) => pathname === child.href)
+          ? pathname.startsWith(item.href) || item.items.some((child: any) => pathname === child.href)
           : pathname.startsWith(item.href) || (item.href === "/dashboard" && pathname === "/");
 
         const isExpanded = expandedItems[item.label] ?? false;
@@ -301,7 +339,7 @@ export const NavigationMenu = ({ sidebarOpen }: NavigationMenuProps) => {
             {/* Collapsible Hierarchy Thread Sub-Links */}
             {hasChildren && isExpanded && sidebarOpen && (
               <div className="pl-4 ml-4.5 border-l border-slate-200 dark:border-slate-800 flex flex-col space-y-1 py-1">
-                {item.items.map((subItem) => {
+                {item.items.map((subItem: any) => {
                   const isSubActive = pathname === subItem.href;
                   const isSubNew = "isNew" in subItem && subItem.isNew;
                   return (
