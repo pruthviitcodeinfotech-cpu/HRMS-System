@@ -90,8 +90,14 @@ export const useApproveApproval = () => {
       return response.data;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["dashboard", "approvals"] });
-      queryClient.invalidateQueries({ queryKey: ["dashboard", "kpis"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      queryClient.invalidateQueries({ queryKey: ["approvals"] });
+      queryClient.invalidateQueries({ queryKey: ["approval-requests"] });
+    },
+    onError: () => {
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      queryClient.invalidateQueries({ queryKey: ["approvals"] });
+      queryClient.invalidateQueries({ queryKey: ["approval-requests"] });
     },
   });
 };
@@ -104,8 +110,14 @@ export const useRejectApproval = () => {
       return response.data;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["dashboard", "approvals"] });
-      queryClient.invalidateQueries({ queryKey: ["dashboard", "kpis"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      queryClient.invalidateQueries({ queryKey: ["approvals"] });
+      queryClient.invalidateQueries({ queryKey: ["approval-requests"] });
+    },
+    onError: () => {
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      queryClient.invalidateQueries({ queryKey: ["approvals"] });
+      queryClient.invalidateQueries({ queryKey: ["approval-requests"] });
     },
   });
 };

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { ProtectedRoute } from "@/features/auth";
 import {
   Users,
@@ -27,14 +28,13 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
-import { ApprovalRequest } from "@/features/approvals";
+import { usePendingApprovals } from "@/features/approvals";
 import {
   useDashboardKPIs,
   useAttendanceDays,
   useShiftSummary,
   useDepartmentAttendance,
   useDevicesList,
-  useApprovalsDashboard,
   useApproveApproval,
   useRejectApproval,
   usePendingBiometrics,
@@ -207,8 +207,6 @@ export default function DashboardPage() {
   const [viewDate, setViewDate] = useState<Date>(new Date(2026, 6, 15)); // July 15, 2026
   const calendarRef = useRef<HTMLDivElement>(null);
 
-  const [localPendingApprovals] = useState<ApprovalRequest[]>([]);
-
   // Close calendar popover on click outside
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -283,10 +281,11 @@ export default function DashboardPage() {
     page: 1,
     page_size: 50,
   });
-  const { data: approvalsData, isLoading: isApprovalsLoading, error: approvalsError } = useApprovalsDashboard();
+  const { data: realPendingApprovalsData, isLoading: isApprovalsLoading, error: approvalsError } = usePendingApprovals({ page: 1, page_size: 5 });
   const { data: pendingBioData } = usePendingBiometrics({ page: 1, page_size: 100 });
 
-  // Mutations
+  // Query Client & Mutations
+  const queryClient = useQueryClient();
   const approveMutation = useApproveApproval();
   const rejectMutation = useRejectApproval();
 
@@ -319,7 +318,13 @@ export default function DashboardPage() {
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : `Failed to ${action} request.`;
-      toast.error(msg);
+      if (msg.includes("already been decided")) {
+        toast.info(`Request #${id} has already been decided. Refreshing list...`);
+      } else {
+        toast.error(msg);
+      }
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      queryClient.invalidateQueries({ queryKey: ["approvals"] });
     }
   };
 
@@ -553,16 +558,17 @@ export default function DashboardPage() {
   };
 
   const pendingApprovals = useMemo(() => {
-    if (approvalsData?.recent && approvalsData.recent.length > 0) {
-      return approvalsData.recent;
+    const items = realPendingApprovalsData?.items || [];
+    if (items.length > 0) {
+      return items.map((item: any) => ({
+        id: item.id,
+        requester_name: item.employee_name || item.requester_name || `Employee #${item.employee_id || item.id}`,
+        request_type: item.request_type || item.sub_module || "Approval Request",
+        submitted_at: item.created_at || item.submitted_at || item.log_date || item.start_date || "",
+      }));
     }
-    return localPendingApprovals.map((req) => ({
-      id: req.id,
-      requester_name: `${req.employeeCode} - ${req.employeeName}`,
-      request_type: `${req.type} (${req.subtype})`,
-      submitted_at: req.submittedDate,
-    }));
-  }, [approvalsData, localPendingApprovals]);
+    return [];
+  }, [realPendingApprovalsData]);
 
   return (
     <ProtectedRoute requiredPermission={{ feature: "dashboard", action: "read" }}>

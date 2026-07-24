@@ -2,6 +2,7 @@
 
 from app.core.cache.redis import (
     cache_delete,
+    cache_delete_pattern,
     cache_get_json,
     cache_set_json,
     close_redis,
@@ -14,4 +15,5 @@ __all__ = [
     "cache_get_json",
     "cache_set_json",
     "cache_delete",
+    "cache_delete_pattern",
 ]

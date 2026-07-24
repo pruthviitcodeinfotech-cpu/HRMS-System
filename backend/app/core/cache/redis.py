@@ -89,6 +89,19 @@ async def cache_delete(*keys: str) -> None:
         _logger.error(_CACHE_UNAVAILABLE, operation="delete", keys=list(keys), error=str(exc))
 
 
+async def cache_delete_pattern(pattern: str) -> None:
+    """Delete all cache keys matching glob pattern (best-effort)."""
+    if not pattern:
+        return
+    try:
+        client = get_redis()
+        keys = await client.keys(pattern)
+        if keys:
+            await client.delete(*keys)
+    except Exception as exc:  # noqa: BLE001
+        _logger.error(_CACHE_UNAVAILABLE, operation="delete_pattern", pattern=pattern, error=str(exc))
+
+
 # ---------------------------------------------------------------------------
 # Counter / flag primitives (backing store for the rate limiter & lockout)
 # ---------------------------------------------------------------------------

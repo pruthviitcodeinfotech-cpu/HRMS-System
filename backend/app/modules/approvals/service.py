@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.cache import cache_delete_pattern
 from app.core.exceptions.base import AppException, ConflictException, NotFoundException
 from app.modules.approvals.constants import ApprovalStatus, RequestType
 from app.modules.approvals.exceptions import (
@@ -447,6 +448,7 @@ class ApprovalService(BaseService):
                 employee_id=approval.employee_id,
             )
 
+        await cache_delete_pattern(f"dashboard:{org_id}:*")
         return approval
 
     async def reject_request(
@@ -567,6 +569,7 @@ class ApprovalService(BaseService):
                 employee_id=approval.employee_id,
             )
 
+        await cache_delete_pattern(f"dashboard:{org_id}:*")
         return approval
 
     async def bulk_approve(
