@@ -252,6 +252,12 @@ async def update_salary_slip_settings(
         company_website_email=payload.company_website_email,
         auto_release_payslip=payload.auto_release_payslip,
         branch_wise_payslip=payload.branch_wise_payslip,
+        show_pf=payload.show_pf,
+        show_esic=payload.show_esic,
+        show_leave_balance=payload.show_leave_balance,
+        show_bank_details=payload.show_bank_details,
+        show_pan=payload.show_pan,
+        show_uan=payload.show_uan,
     )
     return _ok(OrgSalarySlipResponse.model_validate(slip), "Salary slip settings updated.")
 

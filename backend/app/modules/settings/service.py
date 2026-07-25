@@ -252,6 +252,12 @@ class SettingsService(BaseService):
         company_website_email: str | None = None,
         auto_release_payslip: bool | None = None,
         branch_wise_payslip: bool | None = None,
+        show_pf: bool | None = None,
+        show_esic: bool | None = None,
+        show_leave_balance: bool | None = None,
+        show_bank_details: bool | None = None,
+        show_pan: bool | None = None,
+        show_uan: bool | None = None,
     ) -> OrgSalarySlipSettings:
         """Patch (upsert) the org_salary_slip_settings row.
 
@@ -306,6 +312,18 @@ class SettingsService(BaseService):
             update_data["auto_release_payslip"] = auto_release_payslip
         if branch_wise_payslip is not None:
             update_data["branch_wise_payslip"] = branch_wise_payslip
+        if show_pf is not None:
+            update_data["show_pf"] = show_pf
+        if show_esic is not None:
+            update_data["show_esic"] = show_esic
+        if show_leave_balance is not None:
+            update_data["show_leave_balance"] = show_leave_balance
+        if show_bank_details is not None:
+            update_data["show_bank_details"] = show_bank_details
+        if show_pan is not None:
+            update_data["show_pan"] = show_pan
+        if show_uan is not None:
+            update_data["show_uan"] = show_uan
 
         async with self.transaction():
             if existing is None:

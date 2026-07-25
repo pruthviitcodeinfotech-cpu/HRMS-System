@@ -95,6 +95,9 @@ export function useUpdateSettings() {
                 company_website_email: newPayload.salarySlipSettings?.company_website_email ?? previousSettings.salary_slip.company_website_email,
                 auto_release_payslip: newPayload.salarySlipSettings?.auto_release_payslip ?? previousSettings.salary_slip.auto_release_payslip,
                 branch_wise_payslip: newPayload.salarySlipSettings?.branch_wise_payslip ?? previousSettings.salary_slip.branch_wise_payslip,
+                show_pf: newPayload.salarySlipSettings?.show_pf ?? previousSettings.salary_slip.show_pf,
+                show_esic: newPayload.salarySlipSettings?.show_esic ?? previousSettings.salary_slip.show_esic,
+                show_leave_balance: newPayload.salarySlipSettings?.show_leave_balance ?? previousSettings.salary_slip.show_leave_balance,
               }
             : null,
         });

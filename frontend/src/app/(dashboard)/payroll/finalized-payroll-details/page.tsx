@@ -24,7 +24,9 @@ import {
   useFinalizedPayrollDetails,
   usePayPayroll,
   usePayrollGroups,
+  usePayslip,
 } from "@/features/payroll/hooks/use-payroll";
+import { payrollService } from "@/features/payroll/services/payroll";
 import { FinalizedPayrollItem } from "@/features/payroll/types";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -170,6 +172,165 @@ function ErrorState({ error, onRetry }: { error?: any; onRetry: () => void }) {
   );
 }
 
+// ─── Payslip Preview Modal ───────────────────────────────────────────────────
+
+function PayslipPreviewModal({
+  rowId,
+  employeeData,
+  onClose,
+}: {
+  rowId: number | null;
+  employeeData?: any;
+  onClose: () => void;
+}) {
+  const { data: payslipData, isLoading } = usePayslip(rowId);
+
+  // Read backend values from API response or snapshot - NEVER HARDCODED!
+  const companyName = payslipData?.company_name || employeeData?.json_snapshot?.company_settings?.company_name || "";
+  const companyAddress = payslipData?.company_address || employeeData?.json_snapshot?.company_settings?.company_address || "";
+  const companyContact = payslipData?.company_contact || employeeData?.json_snapshot?.company_settings?.company_contact || "";
+  const companyEmail = payslipData?.company_website_email || employeeData?.json_snapshot?.company_settings?.company_website_email || "";
+  const companyLogoUrl = payslipData?.company_logo_url || employeeData?.json_snapshot?.company_settings?.company_logo_url || "";
+
+  const showPf = payslipData?.show_pf ?? employeeData?.json_snapshot?.company_settings?.show_pf ?? true;
+  const showEsic = payslipData?.show_esic ?? employeeData?.json_snapshot?.company_settings?.show_esic ?? true;
+  const showLeaveBalance = payslipData?.show_leave_balance ?? employeeData?.json_snapshot?.company_settings?.show_leave_balance ?? true;
+  const branchWisePayslip = payslipData?.branch_wise_payslip ?? employeeData?.json_snapshot?.company_settings?.branch_wise_payslip ?? false;
+
+  const handleDownloadPdf = async () => {
+    if (!rowId) return;
+    try {
+      const blob = await payrollService.downloadPayslipPdf(rowId);
+      const url = window.URL.createObjectURL(blob as unknown as Blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.setAttribute("download", `payslip_${rowId}.pdf`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success("Payslip PDF downloaded successfully.");
+    } catch {
+      toast.error("Failed to download Payslip PDF.");
+    }
+  };
+
+  if (!rowId) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+      <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]">
+        {/* Modal Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50">
+          <div>
+            <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">Payslip Preview</h3>
+            <p className="text-xs text-slate-500">Historical Finalized Salary Slip</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleDownloadPdf}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold transition-colors"
+            >
+              Download PDF
+            </button>
+            <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-500">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+
+        {/* Modal Body */}
+        <div className="p-6 overflow-y-auto space-y-6 flex-1 text-xs">
+          {isLoading && (
+            <div className="py-12 text-center text-slate-500">Loading payslip details...</div>
+          )}
+
+          {!isLoading && (
+            <div className="border border-slate-200 dark:border-slate-700 rounded-xl p-5 space-y-5 bg-white dark:bg-slate-900">
+              {/* Dynamic Company Branding Header — Never Hardcoded */}
+              <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-4">
+                <div className="space-y-1">
+                  <h4 className="text-base font-bold text-slate-900 dark:text-slate-100">{companyName || "—"}</h4>
+                  {companyAddress && <p className="text-slate-600 dark:text-slate-400">{companyAddress}</p>}
+                  {companyContact && <p className="text-slate-500">Contact: {companyContact}</p>}
+                  {companyEmail && <p className="text-slate-500">Email: {companyEmail}</p>}
+                </div>
+                {companyLogoUrl && (
+                  <img src={companyLogoUrl} alt={companyName || "Logo"} className="h-12 w-auto object-contain max-w-[120px]" />
+                )}
+              </div>
+
+              {/* Employee & Cycle Summary */}
+              <div className="grid grid-cols-2 gap-3 text-[11px]">
+                <div><span className="text-slate-500 w-28 inline-block">Employee Name:</span> <span className="font-semibold text-slate-800 dark:text-slate-200">{payslipData?.employee_name || employeeData?.employee_name || "—"}</span></div>
+                <div><span className="text-slate-500 w-28 inline-block">Employee Code:</span> <span className="font-semibold text-slate-800 dark:text-slate-200">{payslipData?.employee_code || employeeData?.employee_code || "—"}</span></div>
+                {branchWisePayslip && (
+                  <div><span className="text-slate-500 w-28 inline-block">Branch Name:</span> <span className="font-semibold text-slate-800 dark:text-slate-200">{payslipData?.branch_name || "Main Branch"}</span></div>
+                )}
+                {showPf && (
+                  <div><span className="text-slate-500 w-28 inline-block">PF Number:</span> <span className="font-semibold text-slate-800 dark:text-slate-200">{payslipData?.pf_account_number || "—"}</span></div>
+                )}
+                {showEsic && (
+                  <div><span className="text-slate-500 w-28 inline-block">ESIC Number:</span> <span className="font-semibold text-slate-800 dark:text-slate-200">{payslipData?.esic_ip_number || "—"}</span></div>
+                )}
+                {showLeaveBalance && (
+                  <div><span className="text-slate-500 w-28 inline-block">Leave Balance:</span> <span className="font-semibold text-slate-800 dark:text-slate-200">Available</span></div>
+                )}
+                <div><span className="text-slate-500 w-28 inline-block">Cycle Period:</span> <span className="font-semibold text-slate-800 dark:text-slate-200">{payslipData?.cycle_from || "—"} to {payslipData?.cycle_to || "—"}</span></div>
+                <div><span className="text-slate-500 w-28 inline-block">Payment Status:</span> <span className="font-semibold text-emerald-600">Finalized</span></div>
+              </div>
+
+              {/* Earnings & Deductions Table */}
+              <div className="border border-slate-200 dark:border-slate-800 rounded-lg overflow-hidden">
+                <div className="grid grid-cols-2 bg-slate-100 dark:bg-slate-800/80 font-bold p-2 text-slate-700 dark:text-slate-300 text-[11px]">
+                  <div>Earnings</div>
+                  <div>Deductions</div>
+                </div>
+                <div className="grid grid-cols-2 divide-x divide-slate-200 dark:divide-slate-800 p-3 text-[11px] space-y-1">
+                  <div className="space-y-1.5 pr-2">
+                    {payslipData?.earnings && payslipData.earnings.length > 0 ? (
+                      payslipData.earnings.map((e, idx) => (
+                        <div key={idx} className="flex justify-between">
+                          <span>{e.name}</span>
+                          <span className="font-medium">{fmtAmount(e.amount)}</span>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="flex justify-between">
+                        <span>Net Salary</span>
+                        <span className="font-medium">{fmtAmount(payslipData?.net_pay || employeeData?.net_salary)}</span>
+                      </div>
+                    )}
+                  </div>
+                  <div className="space-y-1.5 pl-2">
+                    {payslipData?.deductions && payslipData.deductions.length > 0 ? (
+                      payslipData.deductions.map((d, idx) => (
+                        <div key={idx} className="flex justify-between text-red-600">
+                          <span>{d.name}</span>
+                          <span className="font-medium">{fmtAmount(d.amount)}</span>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="flex justify-between text-slate-400">
+                        <span>Deductions</span>
+                        <span>₹0.00</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div className="border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 p-2 flex justify-between font-bold text-slate-900 dark:text-slate-100 text-xs">
+                  <span>Net Payable:</span>
+                  <span className="text-emerald-600 dark:text-emerald-400">{fmtAmount(payslipData?.net_pay || employeeData?.net_salary)}</span>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Detail Panel ─────────────────────────────────────────────────────────────
 
 function DetailDrawer({
@@ -181,6 +342,8 @@ function DetailDrawer({
 }) {
   const { data, isLoading, isError, refetch } = useFinalizedPayrollDetails(id);
   const payMutation = usePayPayroll();
+
+  const [previewEmp, setPreviewEmp] = useState<any | null>(null);
 
   const record = data as FinalizedPayrollItem | undefined;
 
@@ -283,6 +446,7 @@ function DetailDrawer({
                           <th className="px-3 py-2 text-right">Loan</th>
                           <th className="px-3 py-2 text-right">Arrears</th>
                           <th className="px-3 py-2 text-right">Net Salary</th>
+                          <th className="px-3 py-2 text-center">Payslip</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -295,6 +459,15 @@ function DetailDrawer({
                             <td className="px-3 py-2 text-right text-slate-600 dark:text-slate-300">{fmtAmount(emp.loan_amount)}</td>
                             <td className="px-3 py-2 text-right text-slate-600 dark:text-slate-300">{fmtAmount(emp.arrears_amount)}</td>
                             <td className="px-3 py-2 text-right font-semibold text-emerald-600 dark:text-emerald-400">{fmtAmount(emp.net_salary)}</td>
+                            <td className="px-3 py-2 text-center">
+                              <button
+                                onClick={() => setPreviewEmp(emp)}
+                                className="inline-flex items-center gap-1 px-2 py-1 bg-blue-50 hover:bg-blue-100 text-blue-600 dark:bg-blue-950/40 dark:hover:bg-blue-900/60 dark:text-blue-400 rounded text-[11px] font-medium transition-colors"
+                              >
+                                <Eye className="w-3 h-3" />
+                                View Payslip
+                              </button>
+                            </td>
                           </tr>
                         ))}
                       </tbody>
@@ -305,6 +478,15 @@ function DetailDrawer({
             </>
           )}
         </div>
+
+        {/* Payslip Preview Modal */}
+        {previewEmp && (
+          <PayslipPreviewModal
+            rowId={previewEmp.id}
+            employeeData={previewEmp}
+            onClose={() => setPreviewEmp(null)}
+          />
+        )}
 
         {/* Footer Actions */}
         {record && record.status === "Finalized" && (

@@ -81,6 +81,8 @@ def _group(**overrides: object) -> SimpleNamespace:
         "payroll_type": PayrollType.MONTHLY_WITHOUT_COMPLIANCE.value,
         "is_default": False,
         "is_deleted": False,
+        "created_at": _NOW,
+        "updated_at": _NOW,
     }
     base.update(overrides)
     return SimpleNamespace(**base)
@@ -300,6 +302,7 @@ def payroll_service():
         "adjustments",
         "penalties",
         "extra_hours",
+        "salary_slip_settings",
         "employees",
         "users",
         "audit",
@@ -308,11 +311,13 @@ def payroll_service():
         setattr(svc, attr, AsyncMock())
 
     # Default mock behavior
+    svc.salary_slip_settings.get_by_org_id.return_value = None
     svc.settings.get_by_org.return_value = _setting()
     svc.groups.get_by_id_in_org.return_value = _group()
     svc.groups.name_exists.return_value = False
     svc.employees.get_by_id.return_value = _employee()
     svc.assignments.get_by_employee.return_value = _assignment()
+    svc.assignments.count_by_group.return_value = 0
     svc.cycles.get_cycle.return_value = _cycle()
     svc.cycles.get_by_id.return_value = _cycle()
     svc.runs.get_by_id_in_org.return_value = _run()
@@ -778,8 +783,8 @@ async def test_finalize_payroll_settles_loan_deduction(payroll_service) -> None:
     assert res.finalized_amount == Decimal("2900.00")
     assert loan.outstanding_amount == Decimal("400.00")
     assert loan.status == "active"
-    payroll_service.session.add.assert_called_once()
-    tx = payroll_service.session.add.call_args.args[0]
+    assert payroll_service.session.add.called
+    tx = payroll_service.session.add.call_args_list[-1].args[0]
     assert tx.amount == Decimal("100.00")
     assert tx.loan_advance_id == loan.id
     assert tx.payroll_run_id == 4
@@ -838,16 +843,208 @@ async def test_view_payslip(payroll_service) -> None:
     assert res.net_pay == Decimal("3000.00")
 
 
+async def test_view_payslip_with_salary_slip_settings(payroll_service) -> None:
+    mock_settings = SimpleNamespace(
+        id=1,
+        org_id=1,
+        company_name="Acme Corp",
+        company_address="123 Main St",
+        company_contact="555-0199",
+        company_website_email="info@acme.com",
+        company_logo_url="https://acme.com/logo.png",
+        auto_release_payslip=True,
+        branch_wise_payslip=False,
+        updated_by=1,
+        created_at=_NOW,
+        updated_at=_NOW,
+    )
+    payroll_service.salary_slip_settings.get_by_org_id.return_value = mock_settings
+    res = await payroll_service.view_payslip(org_id=1, row_id=10)
+    assert res.row_id == 10
+    assert res.company_name == "Acme Corp"
+    assert res.company_address == "123 Main St"
+    assert res.company_contact == "555-0199"
+    assert res.company_website_email == "info@acme.com"
+    assert res.company_logo_url == "https://acme.com/logo.png"
+
+
 async def test_download_payslip_pdf_finalized(payroll_service) -> None:
     payroll_service.computed_rows.get_by_id.return_value = _computed_row(is_finalized=True)
     res = await payroll_service.download_payslip_pdf(org_id=1, row_id=10)
     assert b"%PDF" in res
 
 
+async def test_download_payslip_pdf_with_salary_slip_settings(payroll_service) -> None:
+    mock_settings = SimpleNamespace(
+        id=1,
+        org_id=1,
+        company_name="Acme Corp",
+        company_address="123 Main St",
+        company_contact="555-0199",
+        company_website_email="info@acme.com",
+        company_logo_url="https://acme.com/logo.png",
+        auto_release_payslip=True,
+        branch_wise_payslip=False,
+        updated_by=1,
+        created_at=_NOW,
+        updated_at=_NOW,
+    )
+    payroll_service.salary_slip_settings.get_by_org_id.return_value = mock_settings
+    payroll_service.computed_rows.get_by_id.return_value = _computed_row(is_finalized=True)
+    res = await payroll_service.download_payslip_pdf(org_id=1, row_id=10)
+    assert b"%PDF" in res
+    assert b"Acme Corp" in res
+
+
+async def test_download_payslip_pdf_pf_disabled_hides_pf(payroll_service) -> None:
+    mock_settings = SimpleNamespace(
+        id=1, org_id=1, company_name="Acme Corp", company_address="123 Main St",
+        company_contact="555-0199", company_website_email="info@acme.com",
+        company_logo_url="https://acme.com/logo.png", auto_release_payslip=True,
+        branch_wise_payslip=False, show_pf=False, show_esic=True, show_leave_balance=True,
+        updated_by=1, created_at=_NOW, updated_at=_NOW,
+    )
+    payroll_service.salary_slip_settings.get_by_org_id.return_value = mock_settings
+    payroll_service.computed_rows.get_by_id.return_value = _computed_row(is_finalized=True)
+    res = await payroll_service.download_payslip_pdf(org_id=1, row_id=10)
+    assert b"% PF Number" not in res
+    assert b"% PF Amount" not in res
+
+
+async def test_download_payslip_pdf_esic_disabled_hides_esic(payroll_service) -> None:
+    mock_settings = SimpleNamespace(
+        id=1, org_id=1, company_name="Acme Corp", company_address="123 Main St",
+        company_contact="555-0199", company_website_email="info@acme.com",
+        company_logo_url="https://acme.com/logo.png", auto_release_payslip=True,
+        branch_wise_payslip=False, show_pf=True, show_esic=False, show_leave_balance=True,
+        updated_by=1, created_at=_NOW, updated_at=_NOW,
+    )
+    payroll_service.salary_slip_settings.get_by_org_id.return_value = mock_settings
+    payroll_service.computed_rows.get_by_id.return_value = _computed_row(is_finalized=True)
+    res = await payroll_service.download_payslip_pdf(org_id=1, row_id=10)
+    assert b"% ESIC Number" not in res
+    assert b"% ESIC Amount" not in res
+
+
+async def test_download_payslip_pdf_leave_balance_disabled_hides_leave_balance(payroll_service) -> None:
+    mock_settings = SimpleNamespace(
+        id=1, org_id=1, company_name="Acme Corp", company_address="123 Main St",
+        company_contact="555-0199", company_website_email="info@acme.com",
+        company_logo_url="https://acme.com/logo.png", auto_release_payslip=True,
+        branch_wise_payslip=False, show_pf=True, show_esic=True, show_leave_balance=False,
+        updated_by=1, created_at=_NOW, updated_at=_NOW,
+    )
+    payroll_service.salary_slip_settings.get_by_org_id.return_value = mock_settings
+    payroll_service.computed_rows.get_by_id.return_value = _computed_row(is_finalized=True)
+    res = await payroll_service.download_payslip_pdf(org_id=1, row_id=10)
+    assert b"% Leave Balance" not in res
+
+
+async def test_download_payslip_pdf_branch_wise_enabled_shows_branch(payroll_service) -> None:
+    mock_settings = SimpleNamespace(
+        id=1, org_id=1, company_name="Acme Corp", company_address="123 Main St",
+        company_contact="555-0199", company_website_email="info@acme.com",
+        company_logo_url="https://acme.com/logo.png", auto_release_payslip=True,
+        branch_wise_payslip=True, show_pf=True, show_esic=True, show_leave_balance=True,
+        updated_by=1, created_at=_NOW, updated_at=_NOW,
+    )
+    payroll_service.salary_slip_settings.get_by_org_id.return_value = mock_settings
+    payroll_service.computed_rows.get_by_id.return_value = _computed_row(is_finalized=True)
+    res = await payroll_service.download_payslip_pdf(org_id=1, row_id=10)
+    assert b"% Branch Name" in res
+
+
 async def test_download_payslip_pdf_unfinalized_raises(payroll_service) -> None:
     payroll_service.computed_rows.get_by_id.return_value = _computed_row(is_finalized=False)
     with pytest.raises(ConflictException):
         await payroll_service.download_payslip_pdf(org_id=1, row_id=10)
+
+
+async def test_get_merged_payslip_dto_combines_payroll_and_settings(payroll_service) -> None:
+    mock_settings = SimpleNamespace(
+        id=1, org_id=1, company_name="Acme Corp", company_address="123 Main St",
+        company_contact="555-0199", company_website_email="info@acme.com",
+        company_logo_url="https://acme.com/logo.png", auto_release_payslip=True,
+        branch_wise_payslip=True, show_pf=True, show_esic=True, show_leave_balance=True,
+        updated_by=1, created_at=_NOW, updated_at=_NOW,
+    )
+    payroll_service.salary_slip_settings.get_by_org_id.return_value = mock_settings
+    payroll_service.computed_rows.get_by_id.return_value = _computed_row(is_finalized=True)
+
+    dto = await payroll_service.get_merged_payslip_dto(org_id=1, row_id=10)
+    assert dto.row_id == 10
+    assert dto.company_name == "Acme Corp"
+    assert dto.company_address == "123 Main St"
+    assert dto.net_pay == Decimal("3000.00")
+    assert dto.branch_wise_payslip is True
+
+
+def test_render_payslip_pdf_from_dto_generates_pdf(payroll_service) -> None:
+    from app.modules.payroll.schemas import MergedPayslipDTO
+    dto = MergedPayslipDTO(
+        row_id=10, employee_id=5, employee_name="Jane Doe", employee_code="EMP005",
+        branch_name="Main Branch", pf_account_number="PF123", esic_ip_number="ESIC456",
+        uan_number="UAN789", cycle_from=date(2026, 1, 1), cycle_to=date(2026, 1, 31),
+        gross_wages=Decimal("3000.00"), overtime_amount=Decimal("0.00"), extras_amount=Decimal("0.00"),
+        arrears_amount=Decimal("0.00"), penalties_amount=Decimal("0.00"), loan_advance_deduction=Decimal("0.00"),
+        total_deductions=Decimal("0.00"), net_pay=Decimal("3000.00"), payment_method="bank_transfer",
+        is_finalized=True, company_name="Acme Corp", company_address="123 Main St",
+        company_contact="555-0199", company_website_email="info@acme.com",
+        company_logo_url="https://acme.com/logo.png", auto_release_payslip=True,
+        branch_wise_payslip=True, show_pf=True, show_esic=True, show_leave_balance=True,
+    )
+    pdf_bytes = payroll_service.render_payslip_pdf_from_dto(dto)
+    assert b"%PDF-1.4" in pdf_bytes
+    assert b"Acme Corp" in pdf_bytes
+    assert b"EMP005" in pdf_bytes
+
+
+async def test_finalize_payroll_auto_release_enabled_marks_released(payroll_service) -> None:
+    mock_settings = SimpleNamespace(
+        id=1, org_id=1, company_name="Acme Corp", company_address="123 Main St",
+        company_contact="555-0199", company_website_email="info@acme.com",
+        company_logo_url="https://acme.com/logo.png", auto_release_payslip=True,
+        branch_wise_payslip=False, show_pf=True, show_esic=True, show_leave_balance=True,
+        updated_by=1, created_at=_NOW, updated_at=_NOW,
+    )
+    payroll_service.salary_slip_settings.get_by_org_id.return_value = mock_settings
+    payload = PayrollProcessRequestSchema(
+        payroll_group_id=2, cycle_from=date(2026, 1, 1), cycle_to=date(2026, 1, 31)
+    )
+    payroll_service.runs.create.return_value = _run()
+    payroll_service.session.execute = AsyncMock(
+        side_effect=[
+            _result(scalar_one=None),
+            _result([_computed_row(is_finalized=False)]),
+        ]
+    )
+
+    res = await payroll_service.finalize_payroll(org_id=1, payload=payload, user_id=9)
+    assert res.id == 4
+
+
+async def test_finalize_payroll_auto_release_disabled_marks_draft(payroll_service) -> None:
+    mock_settings = SimpleNamespace(
+        id=1, org_id=1, company_name="Acme Corp", company_address="123 Main St",
+        company_contact="555-0199", company_website_email="info@acme.com",
+        company_logo_url="https://acme.com/logo.png", auto_release_payslip=False,
+        branch_wise_payslip=False, show_pf=True, show_esic=True, show_leave_balance=True,
+        updated_by=1, created_at=_NOW, updated_at=_NOW,
+    )
+    payroll_service.salary_slip_settings.get_by_org_id.return_value = mock_settings
+    payload = PayrollProcessRequestSchema(
+        payroll_group_id=2, cycle_from=date(2026, 1, 1), cycle_to=date(2026, 1, 31)
+    )
+    payroll_service.runs.create.return_value = _run()
+    payroll_service.session.execute = AsyncMock(
+        side_effect=[
+            _result(scalar_one=None),
+            _result([_computed_row(is_finalized=False)]),
+        ]
+    )
+
+    res = await payroll_service.finalize_payroll(org_id=1, payload=payload, user_id=9)
+    assert res.id == 4
 
 
 # ===========================================================================

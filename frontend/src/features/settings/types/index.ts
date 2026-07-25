@@ -31,6 +31,12 @@ export interface OrgSalarySlipResponse {
   company_website_email?: string | null;
   auto_release_payslip: boolean;
   branch_wise_payslip: boolean;
+  show_pf?: boolean;
+  show_esic?: boolean;
+  show_leave_balance?: boolean;
+  show_bank_details?: boolean;
+  show_pan?: boolean;
+  show_uan?: boolean;
   updated_by?: number | null;
   created_at?: string;
   updated_at?: string;
@@ -44,6 +50,12 @@ export interface OrgSalarySlipUpdateRequest {
   company_website_email?: string | null;
   auto_release_payslip?: boolean;
   branch_wise_payslip?: boolean;
+  show_pf?: boolean;
+  show_esic?: boolean;
+  show_leave_balance?: boolean;
+  show_bank_details?: boolean;
+  show_pan?: boolean;
+  show_uan?: boolean;
 }
 
 export interface ModulePointerSchema {

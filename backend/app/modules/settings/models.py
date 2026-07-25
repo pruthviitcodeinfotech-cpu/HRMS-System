@@ -115,6 +115,24 @@ class OrgSalarySlipSettings(Base):
     branch_wise_payslip: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("false")
     )
+    show_pf: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("true")
+    )
+    show_esic: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("true")
+    )
+    show_leave_balance: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("true")
+    )
+    show_bank_details: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("true")
+    )
+    show_pan: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("true")
+    )
+    show_uan: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("true")
+    )
     # Enforced FK -> users.id (SET NULL on delete); users module already built.
     updated_by: Mapped[int | None] = mapped_column(
         BigInteger,

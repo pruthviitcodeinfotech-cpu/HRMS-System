@@ -102,6 +102,16 @@ export interface LoanAdvanceUpdatePayload {
   comment?: string;
 }
 
+export interface LoanAdvanceTransactionCreatePayload {
+  transaction_date: string;
+  transaction_type: TransactionType;
+  amount: number;
+  installment_amount?: number;
+  type_label: LoanAdvanceType;
+  comment?: string;
+}
+
+
 // ============================================================================
 // Arrears Module Interfaces
 // ============================================================================

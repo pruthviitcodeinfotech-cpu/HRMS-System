@@ -91,6 +91,12 @@ class OrgSalarySlipResponse(BaseSchema):
     branch_wise_payslip: bool = Field(
         ..., description="Whether payslip releases are managed per branch."
     )
+    show_pf: bool = Field(default=True, description="Display PF toggle.")
+    show_esic: bool = Field(default=True, description="Display ESIC toggle.")
+    show_leave_balance: bool = Field(default=True, description="Display leave balance toggle.")
+    show_bank_details: bool = Field(default=True, description="Display bank details toggle.")
+    show_pan: bool = Field(default=True, description="Display PAN toggle.")
+    show_uan: bool = Field(default=True, description="Display UAN toggle.")
     updated_by: int | None = Field(
         None, description="ID of the user who last updated this configuration."
     )
@@ -120,6 +126,12 @@ class OrgSalarySlipUpdateRequest(BaseSchema):
     branch_wise_payslip: bool | None = Field(
         default=None, description="Whether to generate branch-isolated payslips."
     )
+    show_pf: bool | None = Field(default=None, description="Display PF breakdown.")
+    show_esic: bool | None = Field(default=None, description="Display ESIC breakdown.")
+    show_leave_balance: bool | None = Field(default=None, description="Display leave balance.")
+    show_bank_details: bool | None = Field(default=None, description="Display bank details.")
+    show_pan: bool | None = Field(default=None, description="Display PAN.")
+    show_uan: bool | None = Field(default=None, description="Display UAN.")
 
     @field_validator("company_website_email")
     @classmethod

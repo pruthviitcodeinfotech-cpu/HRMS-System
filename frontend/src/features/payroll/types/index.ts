@@ -224,3 +224,34 @@ export interface FinalizedPayrollPayPayload {
   payment_method?: string;
   remarks?: string;
 }
+
+export interface PayslipResponse {
+  row_id: number;
+  employee_id: number;
+  employee_name?: string | null;
+  employee_code?: string | null;
+  branch_name?: string | null;
+  pf_account_number?: string | null;
+  esic_ip_number?: string | null;
+  uan_number?: string | null;
+  cycle_from: string;
+  cycle_to: string;
+  earnings: Array<{ name: string; amount: number }>;
+  deductions: Array<{ name: string; amount: number }>;
+  net_pay: number;
+  payment_method?: string | null;
+  is_finalized: boolean;
+  company_logo_url?: string | null;
+  company_name?: string | null;
+  company_address?: string | null;
+  company_contact?: string | null;
+  company_website_email?: string | null;
+  auto_release_payslip?: boolean;
+  branch_wise_payslip?: boolean;
+  show_pf?: boolean;
+  show_esic?: boolean;
+  show_leave_balance?: boolean;
+  show_bank_details?: boolean;
+  show_pan?: boolean;
+  show_uan?: boolean;
+}

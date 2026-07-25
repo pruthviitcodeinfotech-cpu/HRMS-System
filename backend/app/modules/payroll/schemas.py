@@ -21,6 +21,7 @@ from app.modules.payroll.constants import (
     PayrollType,
     WorkingHourType,
 )
+from app.modules.settings.schemas import OrgSalarySlipResponse
 from app.shared.base.schema import BaseSchema
 from app.shared.schemas.pagination import PaginatedResponse, PaginationMeta
 
@@ -408,6 +409,60 @@ class PayslipResponseSchema(BaseSchema):
     net_pay: Decimal = Field(..., description="Earning total minus deduction total.")
     payment_method: str | None = Field(default=None, description="Determined payment method.")
     is_finalized: bool = Field(..., description="True if row is finalized/locked.")
+    company_settings: OrgSalarySlipResponse | None = Field(default=None, description="Organization salary slip settings DTO.")
+    company_logo_url: str | None = Field(default=None, description="Company logo URL.")
+    company_name: str | None = Field(default=None, description="Legal company name.")
+    company_address: str | None = Field(default=None, description="Company address.")
+    company_contact: str | None = Field(default=None, description="Company contact information.")
+    company_website_email: str | None = Field(default=None, description="Company website or support email.")
+    auto_release_payslip: bool = Field(default=True, description="Auto release payslip toggle.")
+    branch_wise_payslip: bool = Field(default=False, description="Branch wise payslip toggle.")
+    show_pf: bool = Field(default=True, description="Display PF breakdown on payslip.")
+    show_esic: bool = Field(default=True, description="Display ESIC breakdown on payslip.")
+    show_leave_balance: bool = Field(default=True, description="Display leave balance on payslip.")
+    show_bank_details: bool = Field(default=True, description="Display bank details on payslip.")
+    show_pan: bool = Field(default=True, description="Display PAN on payslip.")
+    show_uan: bool = Field(default=True, description="Display UAN on payslip.")
+
+
+class MergedPayslipDTO(BaseSchema):
+    """Merged DTO combining computed payroll record data and org salary slip settings for PDF generation."""
+
+    row_id: int = Field(..., description="Associated computed row ID.")
+    employee_id: int = Field(..., description="Subject employee ID.")
+    employee_name: str | None = Field(default=None, description="Subject employee name.")
+    employee_code: str | None = Field(default=None, description="Subject employee code.")
+    branch_name: str | None = Field(default=None, description="Master branch name.")
+    pf_account_number: str | None = Field(default=None, description="PF account number.")
+    esic_ip_number: str | None = Field(default=None, description="ESIC IP number.")
+    uan_number: str | None = Field(default=None, description="UAN number.")
+    cycle_from: date = Field(..., description="Payslip cycle start date.")
+    cycle_to: date = Field(..., description="Payslip cycle end date.")
+    gross_wages: Decimal = Field(..., description="Gross wages.")
+    overtime_amount: Decimal = Field(..., description="Overtime amount.")
+    extras_amount: Decimal = Field(..., description="Extras amount.")
+    arrears_amount: Decimal = Field(..., description="Arrears amount.")
+    penalties_amount: Decimal = Field(..., description="Penalties amount.")
+    loan_advance_deduction: Decimal = Field(..., description="Loan advance deduction.")
+    total_deductions: Decimal = Field(..., description="Total deductions.")
+    net_pay: Decimal = Field(..., description="Net pay.")
+    payment_method: str | None = Field(default=None, description="Payment method.")
+    is_finalized: bool = Field(..., description="Finalized status.")
+
+    # Salary Slip Settings
+    company_name: str | None = Field(default=None, description="Legal company name.")
+    company_address: str | None = Field(default=None, description="Company address.")
+    company_contact: str | None = Field(default=None, description="Company contact information.")
+    company_website_email: str | None = Field(default=None, description="Company website or support email.")
+    company_logo_url: str | None = Field(default=None, description="Company logo URL.")
+    auto_release_payslip: bool = Field(default=True, description="Auto release payslip toggle.")
+    branch_wise_payslip: bool = Field(default=False, description="Branch wise payslip toggle.")
+    show_pf: bool = Field(default=True, description="Display PF breakdown toggle.")
+    show_esic: bool = Field(default=True, description="Display ESIC breakdown toggle.")
+    show_leave_balance: bool = Field(default=True, description="Display leave balance toggle.")
+    show_bank_details: bool = Field(default=True, description="Display bank details toggle.")
+    show_pan: bool = Field(default=True, description="Display PAN toggle.")
+    show_uan: bool = Field(default=True, description="Display UAN toggle.")
 
 
 # ===========================================================================

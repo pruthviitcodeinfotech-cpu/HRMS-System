@@ -320,3 +320,14 @@ export const usePayPayroll = () => {
     },
   });
 };
+
+export const usePayslip = (rowId: number | null) => {
+  return useQuery({
+    queryKey: [...payrollKeys.all, "payslip", rowId],
+    queryFn: async () => {
+      const res = await payrollService.getPayslip(rowId!);
+      return res.data;
+    },
+    enabled: Boolean(rowId),
+  });
+};

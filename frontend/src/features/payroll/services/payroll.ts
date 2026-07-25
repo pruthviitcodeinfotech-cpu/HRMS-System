@@ -303,4 +303,15 @@ export const payrollService = {
       responseType: "arraybuffer",
     });
   },
+
+  // 9. Payslip View & Download
+  getPayslip: async (rowId: number) => {
+    return apiClient.get<ApiResponse<import("../types").PayslipResponse>>(`/payroll/records/${rowId}/payslip`);
+  },
+
+  downloadPayslipPdf: async (rowId: number) => {
+    return apiClient.get<Blob>(`/payroll/records/${rowId}/payslip/download`, {
+      responseType: "blob",
+    });
+  },
 };

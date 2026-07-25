@@ -171,6 +171,9 @@ export function SettingsPage() {
         setSalarySlipEmail(serverSettings.salary_slip.company_website_email || "");
         setAutoReleasePayslip(serverSettings.salary_slip.auto_release_payslip ?? true);
         setBranchWisePayslip(serverSettings.salary_slip.branch_wise_payslip ?? false);
+        if (serverSettings.salary_slip.show_pf !== undefined) setShowPf(serverSettings.salary_slip.show_pf);
+        if (serverSettings.salary_slip.show_esic !== undefined) setShowEsic(serverSettings.salary_slip.show_esic);
+        if (serverSettings.salary_slip.show_leave_balance !== undefined) setShowLeaveBalance(serverSettings.salary_slip.show_leave_balance);
       }
     }
   }, [serverSettings]);
@@ -259,6 +262,9 @@ export function SettingsPage() {
           company_website_email: salarySlipEmail.trim() || null,
           auto_release_payslip: autoReleasePayslip,
           branch_wise_payslip: branchWisePayslip,
+          show_pf: showPf,
+          show_esic: showEsic,
+          show_leave_balance: showLeaveBalance,
         },
         payrollSettings: {
           working_hour_type: workingHourType,
@@ -1419,7 +1425,7 @@ export function SettingsPage() {
                               <div className="flex"><span className="w-28 text-slate-500">Designation</span><span>:</span></div>
                               <div className="flex"><span className="w-28 text-slate-500">IFSC Code</span><span>:</span></div>
                               <div className="flex"><span className="w-28 text-slate-500">Department</span><span>:</span></div>
-                              <div className="flex"><span className="w-28 text-slate-500">Branch Name</span><span>:</span></div>
+                              {branchWisePayslip && <div className="flex"><span className="w-28 text-slate-500">Branch Name</span><span>:</span></div>}
                               <div className="flex"><span className="w-28 text-slate-500">UAN Number</span><span>: -</span></div>
                               {showPf && <div className="flex"><span className="w-28 text-slate-500">PF Number</span><span>: -</span></div>}
                               <div className="flex"><span className="w-28 text-slate-500">Work Location</span><span>: -</span></div>

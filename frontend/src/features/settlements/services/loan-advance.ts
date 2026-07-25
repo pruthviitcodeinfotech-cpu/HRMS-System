@@ -7,7 +7,9 @@ import {
   LoanAdvanceListResponse,
   LoanAdvanceLogsParams,
   LoanAdvanceSchema,
+  LoanAdvanceTransactionCreatePayload,
   LoanAdvanceTransactionListResponse,
+  LoanAdvanceTransactionSchema,
   LoanAdvanceUpdatePayload,
 } from "../types";
 
@@ -67,4 +69,15 @@ export const loanAdvanceService = {
     const query = buildQueryString(params as Record<string, unknown>);
     return apiClient.get<ApiResponse<LoanAdvanceTransactionListResponse>>(`${BASE_URL}/logs${query}`);
   },
+
+  addTransaction: async (
+    id: number,
+    payload: LoanAdvanceTransactionCreatePayload
+  ): Promise<ApiResponse<LoanAdvanceTransactionSchema>> => {
+    return apiClient.post<ApiResponse<LoanAdvanceTransactionSchema>>(
+      `/loans-advances/${id}/transactions`,
+      payload
+    );
+  },
 };
+
