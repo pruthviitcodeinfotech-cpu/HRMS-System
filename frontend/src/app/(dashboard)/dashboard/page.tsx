@@ -25,10 +25,12 @@ import {
   CheckCircle2,
   Filter,
   Briefcase,
+  ShieldAlert,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import { usePendingApprovals } from "@/features/approvals";
+import { usePermissions } from "@/features/auth";
 import {
   useDashboardKPIs,
   useAttendanceDays,
@@ -190,15 +192,22 @@ const WidgetSkeleton = ({ title }: { title: string }) => (
   </div>
 );
 
-const ErrorWidget = ({ title, error }: { title: string; error: { message?: string } | null }) => (
-  <div className="bg-card text-card-foreground rounded-xl border border-border shadow-xs overflow-hidden p-6 text-center text-rose-500 dark:text-rose-400">
-    <AlertTriangle className="h-8 w-8 mx-auto mb-2" />
-    <h4 className="font-bold text-xs">{title} failed to load</h4>
-    <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-1">
-      {error?.message || "Please check your credentials/network and try again."}
-    </p>
-  </div>
-);
+const ErrorWidget = ({ title, error }: { title: string; error: { message?: string } | null }) => {
+  const isPermissionError = error?.message?.toLowerCase().includes("permission");
+  return (
+    <div className="bg-card text-card-foreground rounded-xl border border-border shadow-xs overflow-hidden p-6 text-center text-slate-500 dark:text-slate-400 flex flex-col items-center justify-center min-h-[160px]">
+      {isPermissionError ? (
+        <ShieldAlert className="h-8 w-8 text-amber-500 mb-2 mx-auto" />
+      ) : (
+        <AlertTriangle className="h-8 w-8 text-rose-500 mb-2 mx-auto" />
+      )}
+      <h4 className="font-bold text-xs">{title} {isPermissionError ? "Access Restricted" : "failed to load"}</h4>
+      <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-1">
+        {error?.message || "Please check your credentials/network and try again."}
+      </p>
+    </div>
+  );
+};
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -281,7 +290,13 @@ export default function DashboardPage() {
     page: 1,
     page_size: 50,
   });
-  const { data: realPendingApprovalsData, isLoading: isApprovalsLoading, error: approvalsError } = usePendingApprovals({ page: 1, page_size: 5 });
+  const { hasPermission } = usePermissions();
+  const canReadApprovals = hasPermission("approval", "read");
+
+  const { data: realPendingApprovalsData, isLoading: isApprovalsLoading, error: approvalsError } = usePendingApprovals(
+    { page: 1, page_size: 5 },
+    { enabled: canReadApprovals }
+  );
   const { data: pendingBioData } = usePendingBiometrics({ page: 1, page_size: 100 });
 
   // Query Client & Mutations
@@ -1506,7 +1521,15 @@ export default function DashboardPage() {
           )}
 
           {/* Widget 4: Pending Approvals */}
-          {isApprovalsLoading ? (
+          {!canReadApprovals ? (
+            <div className="bg-card text-card-foreground rounded-xl border border-border shadow-xs overflow-hidden p-6 text-center text-slate-500 dark:text-slate-400 flex flex-col items-center justify-center min-h-[220px]">
+              <ShieldAlert className="h-8 w-8 text-amber-500 mb-2 mx-auto" />
+              <h4 className="font-bold text-xs text-slate-800 dark:text-slate-200">Pending Approvals Access Restricted</h4>
+              <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-1 max-w-xs">
+                You do not have permission to view pending approvals (missing &apos;approval:read&apos; permission).
+              </p>
+            </div>
+          ) : isApprovalsLoading ? (
             <WidgetSkeleton title="Pending Approvals" />
           ) : approvalsError ? (
             <ErrorWidget title="Pending Approvals" error={approvalsError} />

@@ -12,6 +12,17 @@ from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+
+def _parse_date(val: Any) -> date:
+    if not val:
+        return date.today()
+    if isinstance(val, str):
+        return date.fromisoformat(val)
+    if isinstance(val, datetime):
+        return val.date()
+    return val
 
 from app.core.constants.enums import SortOrder
 from app.modules.audit.constants import ActionType
@@ -47,7 +58,12 @@ from app.modules.settlements.repository import (
 from app.modules.settlements.schemas import (
     ArrearsSearchQuery,
     ArrearsTransactionSearchQuery,
+    EditInstallmentResponse,
+    EmployeeArrearsListResponse,
+    EmployeeArrearsSchema,
     LoanAdvanceSearchQuery,
+    LoanAdvanceTransactionListResponse,
+    LoanAdvanceTransactionSchema,
     LoanAdvanceTransactionSearchQuery,
     SettlementHistoryQuery,
     SettlementStatementQuery,
@@ -155,7 +171,7 @@ class SettlementService(BaseService):
                     "monthly_installment": installment,
                     "total_debit": Decimal("0.00"),
                     "outstanding_amount": principal,
-                    "transaction_date": data["transaction_date"],
+                    "transaction_date": _parse_date(data.get("transaction_date")),
                     "status": "active",
                     "comment": data.get("comment"),
                     "created_by": user_id,
@@ -237,6 +253,14 @@ class SettlementService(BaseService):
             installment = Decimal(str(data["monthly_installment"]))
             if installment <= 0:
                 raise InvalidTransactionException("Monthly installment must be positive.")
+            if loan.status == "closed":
+                raise LoanAdvanceClosedException("Cannot edit installment for a closed loan.")
+            if loan.outstanding_amount <= 0:
+                raise InvalidTransactionException("Loan already completed. Cannot edit installment.")
+            if installment > loan.outstanding_amount:
+                raise InvalidTransactionException(
+                    f"Monthly installment cannot exceed outstanding amount ({loan.outstanding_amount})."
+                )
             if installment > loan.principal_amount:
                 raise InvalidTransactionException(
                     "Monthly installment cannot exceed principal amount."
@@ -257,6 +281,89 @@ class SettlementService(BaseService):
                 employee_id=loan.employee_id,
             )
             return updated
+
+    async def update_installment(
+        self,
+        org_id: int,
+        loan_advance_id: int,
+        installment_amount: Decimal,
+        user_id: int,
+        comment: str | None = None,
+    ) -> EditInstallmentResponse:
+        """Update the monthly installment amount for an active loan/advance and create transaction log."""
+        loan = await self.get_loan_advance(org_id, loan_advance_id)
+
+        # 1. Validate loan status is Active
+        if loan.status != "active":
+            raise LoanAdvanceClosedException("Cannot edit installment for a closed or inactive loan.")
+
+        # 2. Validate Outstanding Amount > 0
+        if loan.outstanding_amount <= 0:
+            raise InvalidTransactionException("Loan already completed. Outstanding amount is zero.")
+
+        # 3. Validate New installment > 0
+        if installment_amount <= 0:
+            raise InvalidTransactionException("New installment amount must be greater than zero.")
+
+        # 4. Validate New installment <= Outstanding Amount
+        if installment_amount > loan.outstanding_amount:
+            raise InvalidTransactionException(
+                f"New installment amount ({installment_amount}) cannot exceed remaining outstanding balance ({loan.outstanding_amount})."
+            )
+
+        old_installment = loan.monthly_installment
+
+        updates: dict[str, Any] = {
+            "monthly_installment": installment_amount,
+            "updated_by": user_id,
+            "updated_at": datetime.now(),
+        }
+
+        async with self.transaction():
+            updated = await self.loans_advances.update(loan, updates)
+
+            # Create Transaction Entry for INSTALLMENT_UPDATED
+            remarks_text = f"Installment updated from {old_installment} to {installment_amount}."
+            if comment:
+                remarks_text += f" Remarks: {comment}"
+
+            await self.loan_transactions.create(
+                {
+                    "org_id": org_id,
+                    "loan_advance_id": loan_advance_id,
+                    "employee_id": loan.employee_id,
+                    "transaction_date": date.today(),
+                    "transaction_type": "debit",
+                    "amount": Decimal("0.00"),
+                    "installment_amount": installment_amount,
+                    "type_label": getattr(loan.type, "value", loan.type),
+                    "comment": remarks_text,
+                    "source": "manual",
+                    "created_by": user_id,
+                }
+            )
+
+            await self.audit.record(
+                org_id=org_id,
+                module="settlements",
+                sub_module="loan_installment",
+                action_type=ActionType.UPDATE,
+                title="Update Loan Installment",
+                description=(
+                    f"Updated monthly installment for loan '{loan.name}' ({loan.id}) "
+                    f"from {old_installment} to {installment_amount}."
+                ),
+                performed_by_user_id=user_id,
+                performed_by_name=f"User {user_id}",
+                employee_id=loan.employee_id,
+            )
+            return EditInstallmentResponse(
+                loan_id=updated.id,
+                old_installment=old_installment,
+                new_installment=installment_amount,
+                outstanding_amount=updated.outstanding_amount,
+                status=str(updated.status).upper(),
+            )
 
     async def close_loan_advance(
         self, org_id: int, loan_advance_id: int, user_id: int
@@ -332,7 +439,7 @@ class SettlementService(BaseService):
             # Update header totals
             if tx_type == "debit":
                 if amount > loan.outstanding_amount:
-                    raise InvalidTransactionException("Repayment exceeds outstanding exposure.")
+                    raise InvalidTransactionException("Debit amount exceeds current outstanding amount.")
                 loan.outstanding_amount -= amount
                 loan.total_debit = (loan.total_debit or Decimal("0.00")) + amount
                 if loan.outstanding_amount == 0:
@@ -358,7 +465,7 @@ class SettlementService(BaseService):
                     "org_id": org_id,
                     "loan_advance_id": loan_advance_id,
                     "employee_id": loan.employee_id,
-                    "transaction_date": data["transaction_date"],
+                    "transaction_date": _parse_date(data.get("transaction_date")),
                     "transaction_type": tx_type,
                     "amount": amount,
                     "installment_amount": inst_amount,
@@ -420,18 +527,39 @@ class SettlementService(BaseService):
             date_from=query.date_from,
             date_to=query.date_to,
         )
-        return self.paginate(items, page=query.page, page_size=query.page_size, total_records=total)
+        schema_items = [LoanAdvanceTransactionSchema.model_validate(tx) for tx in items]
+        return self.paginate(schema_items, page=query.page, page_size=query.page_size, total_records=total)
 
     async def list_all_loan_transactions(
         self,
         org_id: int,
         query: LoanAdvanceTransactionSearchQuery,
         employee_id: int | None = None,
-    ) -> PaginatedResponse[LoanAdvanceTransaction]:
-        """List and paginate org-wide ledger transactions for loans/advances."""
+        loan_id: int | None = None,
+    ) -> LoanAdvanceTransactionListResponse:
+        """List and paginate ledger transactions for loans/advances with summary totals."""
+        total_amt = Decimal("0.00")
+        outstanding_amt = Decimal("0.00")
+
+        if loan_id:
+            try:
+                loan = await self.get_loan_advance(org_id, loan_id)
+                total_amt = loan.principal_amount or Decimal("0.00")
+                outstanding_amt = loan.outstanding_amount or Decimal("0.00")
+                if not employee_id:
+                    employee_id = loan.employee_id
+            except Exception:
+                pass
+        elif employee_id:
+            loans = await self.loans_advances.get_all_by_employee_id(org_id, employee_id)
+            for ln in loans:
+                total_amt += ln.principal_amount or Decimal("0.00")
+                outstanding_amt += ln.outstanding_amount or Decimal("0.00")
+
         items = await self.loan_transactions.search_all_transactions(
             org_id,
             employee_id=employee_id,
+            loan_advance_id=loan_id,
             transaction_type=(
                 getattr(query.transaction_type, "value", query.transaction_type)
                 if query.transaction_type
@@ -440,6 +568,7 @@ class SettlementService(BaseService):
             source=getattr(query.source, "value", query.source) if query.source else None,
             date_from=query.date_from,
             date_to=query.date_to,
+            branch_id=query.branch_id,
             sort_by=query.sort_by,
             sort_order=query.sort_order or SortOrder.DESC,
             page=query.page,
@@ -448,6 +577,7 @@ class SettlementService(BaseService):
         total = await self.loan_transactions.search_all_transactions_count(
             org_id,
             employee_id=employee_id,
+            loan_advance_id=loan_id,
             transaction_type=(
                 getattr(query.transaction_type, "value", query.transaction_type)
                 if query.transaction_type
@@ -456,8 +586,30 @@ class SettlementService(BaseService):
             source=getattr(query.source, "value", query.source) if query.source else None,
             date_from=query.date_from,
             date_to=query.date_to,
+            branch_id=query.branch_id,
         )
-        return self.paginate(items, page=query.page, page_size=query.page_size, total_records=total)
+        emp_ids = {tx.employee_id for tx in items if tx.employee_id}
+        emp_map = {}
+        if emp_ids:
+            stmt_emp = select(Employee).where(
+                Employee.org_id == org_id, Employee.employee_id.in_(emp_ids)
+            )
+            emps = (await self.session.execute(stmt_emp)).scalars().all()
+            emp_map = {e.employee_id: e.employee_name for e in emps}
+
+        schema_items = []
+        for tx in items:
+            s = LoanAdvanceTransactionSchema.model_validate(tx)
+            s.employee_name = emp_map.get(tx.employee_id, f"Employee #{tx.employee_id}")
+            schema_items.append(s)
+
+        paginated = self.paginate(schema_items, page=query.page, page_size=query.page_size, total_records=total)
+        return LoanAdvanceTransactionListResponse(
+            items=paginated.items,
+            pagination=paginated.pagination,
+            total_amount=total_amt,
+            outstanding_amount=outstanding_amt,
+        )
 
     # =========================================================================
     # 3. Arrears (Headers)
@@ -480,14 +632,15 @@ class SettlementService(BaseService):
 
     async def list_employee_arrears(
         self, org_id: int, query: ArrearsSearchQuery
-    ) -> PaginatedResponse[EmployeeArrears]:
-        """List and paginate organization arrears registry headers."""
+    ) -> EmployeeArrearsListResponse:
+        """List and paginate organization arrears registry headers, enriched with employee details."""
         items = await self.arrears.search(
             org_id,
             employee_id=query.employee_id,
             min_outstanding=query.min_outstanding,
             branch_id=query.branch_id,
             dept_id=query.dept_id,
+            search=query.search,
             sort_by=query.sort_by,
             sort_order=query.sort_order or SortOrder.DESC,
             page=query.page,
@@ -499,8 +652,45 @@ class SettlementService(BaseService):
             min_outstanding=query.min_outstanding,
             branch_id=query.branch_id,
             dept_id=query.dept_id,
+            search=query.search,
         )
-        return self.paginate(items, page=query.page, page_size=query.page_size, total_records=total)
+
+        # Enrich with Employee data
+        emp_ids = {item.employee_id for item in items}
+        emp_map: dict[int, Employee] = {}
+        if emp_ids:
+            stmt_emp = (
+                select(Employee)
+                .where(Employee.org_id == org_id, Employee.employee_id.in_(emp_ids))
+                .options(
+                    selectinload(Employee.master_branch),
+                    selectinload(Employee.department),
+                    selectinload(Employee.designation),
+                )
+            )
+            emps = (await self.session.execute(stmt_emp)).scalars().all()
+            emp_map = {e.employee_id: e for e in emps}
+
+        schema_items: list[EmployeeArrearsSchema] = []
+        for arrear in items:
+            s = EmployeeArrearsSchema.model_validate(arrear)
+            emp = emp_map.get(arrear.employee_id)
+            if emp:
+                s.employee_code = emp.employee_code
+                s.employee_name = emp.employee_name
+                s.branch_name = emp.master_branch.branch_name if emp.master_branch else None
+                s.department_name = emp.department.dept_name if emp.department else None
+                s.designation_name = emp.designation.designation_name if emp.designation else None
+            else:
+                s.employee_code = f"EMP-{arrear.employee_id}"
+                s.employee_name = f"Employee #{arrear.employee_id}"
+            schema_items.append(s)
+
+        paginated = self.paginate(schema_items, page=query.page, page_size=query.page_size, total_records=total)
+        return EmployeeArrearsListResponse(
+            items=paginated.items,
+            pagination=paginated.pagination,
+        )
 
     async def create_arrears(
         self, org_id: int, data: dict[str, Any], user_id: int
@@ -539,7 +729,7 @@ class SettlementService(BaseService):
                     "org_id": org_id,
                     "employee_arrears_id": arrears.id,
                     "employee_id": employee_id,
-                    "transaction_date": data.get("transaction_date") or date.today(),
+                    "transaction_date": _parse_date(data.get("transaction_date")),
                     "transaction_type": "credit",
                     "amount": amount,
                     "outstanding_before": outstanding_before,
@@ -644,7 +834,7 @@ class SettlementService(BaseService):
                     "org_id": org_id,
                     "employee_arrears_id": arrears.id,
                     "employee_id": arrears.employee_id,
-                    "transaction_date": data.get("transaction_date") or date.today(),
+                    "transaction_date": _parse_date(data.get("transaction_date")),
                     "transaction_type": "debit",
                     "amount": amount,
                     "outstanding_before": outstanding_before,
@@ -676,7 +866,7 @@ class SettlementService(BaseService):
         """Retrieve org-wide arrears activity/transaction logs."""
         items = await self.arrears_transactions.search_all_transactions(
             org_id,
-            employee_id=getattr(query, "employee_id", None),
+            employee_id=query.employee_id,
             transaction_type=(
                 getattr(query.transaction_type, "value", query.transaction_type)
                 if query.transaction_type
@@ -685,6 +875,7 @@ class SettlementService(BaseService):
             source=getattr(query.source, "value", query.source) if query.source else None,
             date_from=query.date_from,
             date_to=query.date_to,
+            search=query.search,
             sort_by=query.sort_by,
             sort_order=query.sort_order or SortOrder.DESC,
             page=query.page,
@@ -692,7 +883,7 @@ class SettlementService(BaseService):
         )
         total = await self.arrears_transactions.search_all_transactions_count(
             org_id,
-            employee_id=getattr(query, "employee_id", None),
+            employee_id=query.employee_id,
             transaction_type=(
                 getattr(query.transaction_type, "value", query.transaction_type)
                 if query.transaction_type
@@ -701,6 +892,7 @@ class SettlementService(BaseService):
             source=getattr(query.source, "value", query.source) if query.source else None,
             date_from=query.date_from,
             date_to=query.date_to,
+            search=query.search,
         )
         return self.paginate(items, page=query.page, page_size=query.page_size, total_records=total)
 
@@ -757,7 +949,7 @@ class SettlementService(BaseService):
                     "org_id": org_id,
                     "employee_arrears_id": arrears.id,
                     "employee_id": employee_id,
-                    "transaction_date": data["transaction_date"],
+                    "transaction_date": _parse_date(data.get("transaction_date")),
                     "transaction_type": tx_type,
                     "amount": amount,
                     "outstanding_before": outstanding_before,

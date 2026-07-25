@@ -6,10 +6,16 @@ export type TransactionSource = "payroll" | "manual" | "system";
 export interface LoanAdvanceTransactionSchema {
   id: number;
   loan_advance_id: number;
+  employee_id?: number;
+  employee_code?: string;
+  employee_name?: string;
+  type_label?: string;
   transaction_date: string;
-  transaction_type: TransactionType;
+  transaction_type: TransactionType | string;
   amount: number;
-  source: TransactionSource;
+  installment_amount?: number | null;
+  comment?: string | null;
+  source: TransactionSource | string;
   payroll_run_id?: number | null;
   remarks?: string | null;
   created_at: string;
@@ -58,6 +64,8 @@ export interface LoanAdvanceListResponse {
 export interface LoanAdvanceTransactionListResponse {
   items: LoanAdvanceTransactionSchema[];
   pagination: PaginationMeta;
+  total_amount?: number;
+  outstanding_amount?: number;
 }
 
 export interface LoanAdvanceListParams {
@@ -77,8 +85,10 @@ export interface LoanAdvanceLogsParams {
   page?: number;
   page_size?: number;
   employee_id?: number;
-  transaction_type?: TransactionType;
-  source?: TransactionSource;
+  loan_id?: number;
+  branch_id?: number;
+  transaction_type?: TransactionType | string;
+  source?: TransactionSource | string;
   date_from?: string;
   date_to?: string;
   sort_by?: string;

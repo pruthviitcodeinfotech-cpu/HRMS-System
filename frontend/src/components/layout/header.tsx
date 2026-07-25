@@ -110,7 +110,7 @@ export const Header = () => {
             </div>
             <div className="hidden sm:block">
               <p className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                {user ? user.email.split("@")[0] : "Balkrushn koladiya"}
+                {user ? user.email.split("@")[0] : "User"}
               </p>
               <p className="text-[9px] text-slate-400 dark:text-slate-500 capitalize font-medium leading-none mt-0.5">
                 {user?.roles[0] || "Admin"}
@@ -123,7 +123,7 @@ export const Header = () => {
             <div className="absolute right-0 mt-2 w-56 rounded-xl border border-border bg-card text-card-foreground shadow-lg py-1.5 z-50 animate-in fade-in slide-in-from-top-2 duration-150 origin-top-right">
               <div className="px-4 py-2 border-b border-border">
                 <p className="text-xs font-semibold text-slate-800 dark:text-slate-200 truncate">
-                  {user ? user.email.split("@")[0] : "Balkrushn koladiya"}
+                  {user ? user.email.split("@")[0] : "User"}
                 </p>
                 <p className="text-[10px] text-slate-400 dark:text-slate-500 truncate mt-0.5">
                   {user?.email || "admin@itcode.com"}

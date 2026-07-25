@@ -20,18 +20,22 @@ export const useApprovalsList = (params: ApprovalQueryParams = {}) => {
   });
 };
 
-export const usePendingApprovals = (params?: {
-  branch_id?: number;
-  dept_id?: number;
-  page?: number;
-  page_size?: number;
-}) => {
+export const usePendingApprovals = (
+  params?: {
+    branch_id?: number;
+    dept_id?: number;
+    page?: number;
+    page_size?: number;
+  },
+  options?: { enabled?: boolean }
+) => {
   return useQuery({
     queryKey: ["approvals", "pending", params || {}],
     queryFn: async () => {
       const response = await approvalService.getPendingApprovals(params);
       return response.data;
     },
+    ...options,
   });
 };
 

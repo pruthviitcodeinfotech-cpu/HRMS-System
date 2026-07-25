@@ -105,6 +105,39 @@ class LoanAdvanceUpdateRequest(BaseSchema):
         return values
 
 
+class UpdateInstallmentRequest(BaseSchema):
+    """Payload for updating installment amount of a loan."""
+
+    installment_amount: Decimal | None = Field(
+        default=None, gt=0, description="New monthly installment amount (must be > 0)."
+    )
+    new_installment: Decimal | None = Field(
+        default=None, gt=0, description="New monthly installment amount (must be > 0)."
+    )
+    comment: str | None = Field(default=None, description="Optional remarks for installment update.")
+    remarks: str | None = Field(default=None, description="Optional remarks for installment update.")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _remap_aliases(cls, values: Any) -> Any:
+        if isinstance(values, dict):
+            if "new_installment" in values and "installment_amount" not in values:
+                values["installment_amount"] = values["new_installment"]
+            if "remarks" in values and "comment" not in values:
+                values["comment"] = values["remarks"]
+        return values
+
+
+class EditInstallmentResponse(BaseSchema):
+    """Response payload for updating loan installment."""
+
+    loan_id: int = Field(..., description="Target loan ID.")
+    old_installment: Decimal = Field(..., description="Previous monthly installment amount.")
+    new_installment: Decimal = Field(..., description="Updated monthly installment amount.")
+    outstanding_amount: Decimal = Field(..., description="Current remaining outstanding amount.")
+    status: str = Field(..., description="Status of the loan (e.g., ACTIVE).")
+
+
 class LoanAdvanceSearchQuery(PaginationRequest):
     """Query parameters for searching / filtering registered loans and advances."""
 
@@ -193,6 +226,7 @@ class LoanAdvanceTransactionSearchQuery(PaginationRequest):
         default=None,
         description="End range of transaction date.",
     )
+    branch_id: int | None = Field(default=None, description="Filter by branch ID.")
     sort_by: str | None = Field(
         default=None,
         description="Field to sort by (e.g. transaction_date).",
@@ -226,6 +260,7 @@ class ArrearsSearchQuery(PaginationRequest):
     )
     branch_id: int | None = Field(default=None, description="Filter by branch ID.")
     dept_id: int | None = Field(default=None, description="Filter by department ID.")
+    search: str | None = Field(default=None, description="Free-text search by employee name or code.")
     sort_by: str | None = Field(
         default=None,
         description="Field to sort by (e.g. outstanding_arrears).",
@@ -259,6 +294,10 @@ class ArrearsTransactionCreateRequest(BaseSchema):
 class ArrearsTransactionSearchQuery(PaginationRequest):
     """Query parameters for filtering arrears ledger transactions."""
 
+    employee_id: int | None = Field(
+        default=None,
+        description="Filter by employee ID.",
+    )
     transaction_type: TransactionType | None = Field(
         default=None,
         description="Filter by transaction type.",
@@ -275,6 +314,7 @@ class ArrearsTransactionSearchQuery(PaginationRequest):
         default=None,
         description="End range of transaction date.",
     )
+    search: str | None = Field(default=None, description="Free-text search by employee name or code.")
     sort_by: str | None = Field(
         default=None,
         description="Field to sort by (e.g. transaction_date).",
@@ -392,6 +432,7 @@ class LoanAdvanceTransactionSchema(BaseSchema):
         description="Associated loan/advance registry ID.",
     )
     employee_id: int = Field(..., description="Employee ID.")
+    employee_name: str | None = Field(default=None, description="Employee full name.")
     transaction_date: datetime.date = Field(..., description="Transaction date.")
     transaction_type: TransactionType = Field(
         ...,
@@ -431,6 +472,11 @@ class EmployeeArrearsSchema(BaseSchema):
     id: int = Field(..., description="Unique arrears registry ID.")
     org_id: int = Field(..., description="Organization/Tenant ID.")
     employee_id: int = Field(..., description="Employee ID.")
+    employee_code: str | None = Field(default=None, description="Employee code.")
+    employee_name: str | None = Field(default=None, description="Employee full name.")
+    department_name: str | None = Field(default=None, description="Department name.")
+    designation_name: str | None = Field(default=None, description="Designation name.")
+    branch_name: str | None = Field(default=None, description="Branch name.")
     arrears_created: Decimal = Field(
         ...,
         description="Total arrears created (credited).",
@@ -642,6 +688,9 @@ class LoanAdvanceListResponse(PaginatedResponse[LoanAdvanceSchema]):
 class LoanAdvanceTransactionListResponse(PaginatedResponse[LoanAdvanceTransactionSchema]):
     """Paginated response containing a list of loan/advance transactions."""
 
+    total_amount: Decimal = Field(default=Decimal("0.00"), description="Total loan principal amount.")
+    outstanding_amount: Decimal = Field(default=Decimal("0.00"), description="Total outstanding exposure.")
+
 
 class EmployeeArrearsListResponse(PaginatedResponse[EmployeeArrearsSchema]):
     """Paginated response containing a list of employee arrears headers."""
@@ -659,6 +708,7 @@ __all__ = [
     # Requests / Queries
     "LoanAdvanceCreateRequest",
     "LoanAdvanceUpdateRequest",
+    "UpdateInstallmentRequest",
     "LoanAdvanceSearchQuery",
     "LoanAdvanceTransactionCreateRequest",
     "LoanAdvanceTransactionSearchQuery",
@@ -670,6 +720,7 @@ __all__ = [
     "SettlementSummaryQuery",
     # Responses / DTOs
     "LoanAdvanceSchema",
+    "EditInstallmentResponse",
     "LoanAdvanceTransactionSchema",
     "LoanAdvanceDetailsSchema",
     "EmployeeArrearsSchema",

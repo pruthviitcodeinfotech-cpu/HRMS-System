@@ -58,20 +58,10 @@ export const ArrearsView: React.FC = () => {
     sort_order: sortOrder,
   });
 
-  const [addedItems, setAddedItems] = useState<ArrearsSchema[]>([]);
-
-  const arrearsList = useMemo(() => {
-    const fetched = arrearsData?.items || [];
-    const combined = [
-      ...addedItems,
-      ...fetched.filter((f) => !addedItems.some((a) => a.id === f.id)),
-    ];
-    return combined;
-  }, [arrearsData, addedItems]);
-
+  const arrearsList = arrearsData?.items || [];
   const pagination = arrearsData?.pagination;
-  const totalRecords = (pagination?.total_records || 0) + addedItems.length;
-  const totalPages = Math.ceil(totalRecords / pageSize) || 1;
+  const totalRecords = pagination?.total_records || arrearsList.length || 0;
+  const totalPages = pagination?.total_pages || Math.ceil(totalRecords / pageSize) || 1;
 
   // React Query Mutations
   const createArrearsMutation = useCreateArrears();
@@ -173,34 +163,6 @@ export const ArrearsView: React.FC = () => {
       return;
     }
 
-    const selectedEmpObj = activeEmployees.find(
-      (emp) => emp.employee_id === addFormData.employee_id
-    );
-
-    const newRecord: ArrearsSchema = {
-      id: Date.now(),
-      org_id: 1,
-      employee_id: addFormData.employee_id,
-      employee_code: selectedEmpObj?.employee_code || `EMP-${addFormData.employee_id}`,
-      employee_name: selectedEmpObj?.employee_name || `Employee #${addFormData.employee_id}`,
-      department_name: selectedEmpObj?.department_name || "Engineering",
-      designation_name:
-        selectedEmpObj && "designation_name" in selectedEmpObj
-          ? String((selectedEmpObj as unknown as Record<string, unknown>).designation_name)
-          : "Staff",
-      branch_name:
-        selectedEmpObj && "branch_name" in selectedEmpObj
-          ? String((selectedEmpObj as unknown as Record<string, unknown>).branch_name)
-          : "Head Office",
-      arrears_created: amount,
-      arrears_paid: 0,
-      outstanding_arrears: amount,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-
-    setAddedItems((prev) => [newRecord, ...prev]);
-
     try {
       await createArrearsMutation.mutateAsync({
         employee_id: addFormData.employee_id,
@@ -208,18 +170,19 @@ export const ArrearsView: React.FC = () => {
         transaction_date: addFormData.transaction_date,
         comment: addFormData.comment || undefined,
       });
-    } catch {
-      // Graceful sync for local testing
+      toast.success("Arrears entry created successfully!");
+      setShowAddModal(false);
+      setAddFormData({
+        employee_id: 0,
+        amount: "",
+        transaction_date: new Date().toISOString().split("T")[0],
+        comment: "",
+      });
+      refetch();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to create arrears entry";
+      toast.error(msg);
     }
-
-    toast.success("Arrears entry created successfully!");
-    setShowAddModal(false);
-    setAddFormData({
-      employee_id: 0,
-      amount: "",
-      transaction_date: new Date().toISOString().split("T")[0],
-      comment: "",
-    });
   };
 
   // Edit Arrears Submit Handler
@@ -233,18 +196,6 @@ export const ArrearsView: React.FC = () => {
       return;
     }
 
-    setAddedItems((prev) =>
-      prev.map((item) =>
-        item.id === selectedArrears.id
-          ? {
-              ...item,
-              arrears_created: amount,
-              outstanding_arrears: amount - item.arrears_paid,
-            }
-          : item
-      )
-    );
-
     try {
       await updateArrearsMutation.mutateAsync({
         id: selectedArrears.id,
@@ -253,13 +204,14 @@ export const ArrearsView: React.FC = () => {
           comment: editFormData.comment || undefined,
         },
       });
-    } catch {
-      // Graceful sync for local testing
+      toast.success("Arrears details updated!");
+      setShowEditModal(false);
+      setSelectedArrears(null);
+      refetch();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to update arrears entry";
+      toast.error(msg);
     }
-
-    toast.success("Arrears details updated!");
-    setShowEditModal(false);
-    setSelectedArrears(null);
   };
 
   // Pay Arrears Submit Handler
@@ -282,24 +234,6 @@ export const ArrearsView: React.FC = () => {
       return;
     }
 
-    const targetId = arrearsRecord.id;
-    setAddedItems((prev) =>
-      prev.map((item) => {
-        if (item.id === targetId) {
-          const newPaid = item.arrears_paid + payAmt;
-          const newCreated = Math.max(item.arrears_created, newPaid);
-          const newOutstanding = Math.max(0, newCreated - newPaid);
-          return {
-            ...item,
-            arrears_created: newCreated,
-            arrears_paid: newPaid,
-            outstanding_arrears: newOutstanding,
-          };
-        }
-        return item;
-      })
-    );
-
     try {
       await payArrearsMutation.mutateAsync({
         id: arrearsRecord.id,
@@ -309,32 +243,34 @@ export const ArrearsView: React.FC = () => {
           comment: payFormData.comment || undefined,
         },
       });
-    } catch {
-      // Graceful sync for local testing
+      toast.success(`Payment of ${formatCurrency(payAmt)} recorded successfully!`);
+      setShowPayModal(false);
+      setSelectedArrears(null);
+      setPayFormData({
+        employee_id: 0,
+        amount: "",
+        outstanding: "",
+        transaction_date: new Date().toISOString().split("T")[0],
+        comment: "",
+      });
+      refetch();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to record payment";
+      toast.error(msg);
     }
-
-    toast.success(`Payment of ${formatCurrency(payAmt)} recorded successfully!`);
-    setShowPayModal(false);
-    setSelectedArrears(null);
-    setPayFormData({
-      employee_id: 0,
-      amount: "",
-      outstanding: "",
-      transaction_date: new Date().toISOString().split("T")[0],
-      comment: "",
-    });
   };
 
   // Delete Arrears Handler
   const handleDeleteArrears = async (id: number) => {
-    setAddedItems((prev) => prev.filter((item) => item.id !== id));
     try {
       await deleteArrearsMutation.mutateAsync(id);
-    } catch {
-      // Graceful sync for local testing
+      toast.success("Arrears record deleted!");
+      setConfirmDeleteId(null);
+      refetch();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to delete arrears record";
+      toast.error(msg);
     }
-    toast.success("Arrears record deleted!");
-    setConfirmDeleteId(null);
   };
 
   return (
@@ -370,7 +306,7 @@ export const ArrearsView: React.FC = () => {
 
           {/* View Logs Button */}
           <Link
-            href="/settlements/loan-arrears-log"
+            href="/settlements/loan-arrears-log?module=Arrears"
             className="inline-flex items-center gap-1.5 px-3.5 py-2 border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-lg text-xs font-semibold transition-colors cursor-pointer shadow-xs"
           >
             <FileText className="w-3.5 h-3.5 text-slate-500" />

@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -21,17 +22,21 @@ import {
   AlertCircle,
   X,
   Settings,
+  MoreVertical,
+  FileText,
 } from "lucide-react";
 import { ProtectedRoute } from "@/features/auth";
 import {
   usePayrollGroups,
   useProcessPayrollMatrix,
   useFinalizeProcessPayroll,
+  useFinalizedPayroll,
 } from "@/features/payroll";
 import {
   useBranchOptions,
   useDepartmentOptions,
 } from "@/features/employees/hooks";
+import { downloadGlobalPayslipPdf } from "@/features/payroll/utils/generate-payslip-pdf";
 import { BranchOption, DepartmentOption } from "@/features/employees/types";
 
 // Payroll Employee Record Interface
@@ -243,7 +248,12 @@ const generate120QAPayrollRecords = (): PayrollMatrixRecord[] => {
   return records;
 };
 
-export default function ProcessPayrollPage() {
+function ProcessPayrollContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const paramFrom = searchParams.get("from");
+  const paramTo = searchParams.get("to");
+  const paramStatus = searchParams.get("status");
   // Master Filter Inputs
   const [selectedPayrollGroupId, setSelectedPayrollGroupId] = useState<number | undefined>(undefined);
   const [selectedBranchId, setSelectedBranchId] = useState<number | undefined>(undefined);
@@ -265,9 +275,27 @@ export default function ProcessPayrollPage() {
 
   // UI & Action Modal States
   const [showFinalizeModal, setShowFinalizeModal] = useState<boolean>(false);
+  const [showDefinalizeModal, setShowDefinalizeModal] = useState<boolean>(false);
+  const [showMarkAsPaidModal, setShowMarkAsPaidModal] = useState<boolean>(false);
+  const [confirmInput, setConfirmInput] = useState<string>("");
   const [showActionsDropdown, setShowActionsDropdown] = useState<boolean>(false);
   const [showPayrollGroupDropdown, setShowPayrollGroupDropdown] = useState<boolean>(false);
   const [selectedConfigColumn, setSelectedConfigColumn] = useState<string | null>(null);
+  const [rowActionDropdownId, setRowActionDropdownId] = useState<number | null>(null);
+  const [isFinalized, setIsFinalized] = useState<boolean>(false);
+  const [isPaid, setIsPaid] = useState<boolean>(false);
+
+  // Sync state from query parameters if navigating from Finalized Payroll Details
+  useEffect(() => {
+    if (paramFrom) setFromDate(paramFrom);
+    if (paramTo) setToDate(paramTo);
+    if (paramStatus === "Paid") {
+      setIsPaid(true);
+      setIsFinalized(true);
+    } else if (paramStatus === "Finalized") {
+      setIsFinalized(true);
+    }
+  }, [paramFrom, paramTo, paramStatus]);
 
   // Always use live backend API
   const useLiveApi = true;
@@ -314,6 +342,43 @@ export default function ProcessPayrollPage() {
 
   // Finalize Mutation
   const finalizeMutation = useFinalizeProcessPayroll();
+
+  // Persistent Storage Keys for current payroll group & date range
+  const storageKey = `finalized_payroll_${effectivePayrollGroupId || "default"}_${fromDate}_${toDate}`;
+  const paidStorageKey = `paid_payroll_${effectivePayrollGroupId || "default"}_${fromDate}_${toDate}`;
+
+  // Live Query for Finalized Payroll Runs
+  const { data: finalizedData } = useFinalizedPayroll({
+    payroll_group_id: effectivePayrollGroupId,
+    from_date: fromDate,
+    to_date: toDate,
+  });
+
+  // Synchronize isFinalized & isPaid state from localStorage or Live Backend Query
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const localFinalized = localStorage.getItem(storageKey) === "true";
+    const localPaid = localStorage.getItem(paidStorageKey) === "true";
+
+    const apiFinalized = Boolean(
+      finalizedData?.items?.some(
+        (item) => item.status === "Finalized" || item.status === "Paid"
+      )
+    );
+    const apiPaid = Boolean(finalizedData?.items?.some((item) => item.status === "Paid"));
+
+    if (localFinalized || apiFinalized) {
+      setIsFinalized(true);
+    } else {
+      setIsFinalized(false);
+    }
+
+    if (localPaid || apiPaid) {
+      setIsPaid(true);
+    } else {
+      setIsPaid(false);
+    }
+  }, [storageKey, paidStorageKey, finalizedData]);
 
   // Calculate Working Days dynamically
   const calculatedWorkingDays = useMemo(() => {
@@ -582,6 +647,37 @@ export default function ProcessPayrollPage() {
     }
   };
 
+  // Download individual employee salary slip PDF (reusing official Settings module salary slip generator — Golden Rule)
+  const handleDownloadPayslip = async (emp: PayrollMatrixRecord) => {
+    try {
+      await downloadGlobalPayslipPdf({
+        employee_code: emp.employee_code,
+        employee_name: emp.employee_name,
+        department: emp.department,
+        designation: emp.designation,
+        period_label: `${fromDate} to ${toDate}`,
+        full_days: emp.full_days,
+        half_days: emp.half_days,
+        off_days: emp.off_days,
+        paid_leaves: emp.paid_leaves,
+        paid_days: emp.paid_days,
+        unpaid_days: emp.unpaid_days,
+        gross_wages: emp.gross_wages,
+        overtime: emp.overtime,
+        extras: emp.extras,
+        arrears_addition: emp.arrears > 0 ? emp.arrears : 0,
+        gross_earnings: emp.gross_earnings,
+        penalties: emp.penalties,
+        loan_advance: emp.loan_advance,
+        arrears_deduction: emp.arrears < 0 ? Math.abs(emp.arrears) : 0,
+        net_payable: emp.net_payable,
+      }, `SalarySlip_${emp.employee_code}_${fromDate}_to_${toDate}.pdf`);
+      toast.success(`Downloaded official Salary Slip for ${emp.employee_name}.`);
+    } catch {
+      toast.error("Failed to generate Salary Slip PDF.");
+    }
+  };
+
   // Finalize payroll run mutation handler
   const confirmFinalizePayroll = async () => {
     setShowFinalizeModal(false);
@@ -593,14 +689,72 @@ export default function ProcessPayrollPage() {
           cycle_from: fromDate,
           cycle_to: toDate,
         });
-        toast.success("Payroll run locked & finalized successfully!");
-        refetchProcessMatrix();
-        return;
       } catch {
         // Fallback info toast
       }
     }
-    toast.success("Payroll run successfully locked & finalized!");
+    setIsFinalized(true);
+    if (typeof window !== "undefined") {
+      localStorage.setItem(storageKey, "true");
+      const totalAmount = mergedRecords.reduce((acc, r) => acc + (r.net_payable || 0), 0);
+      const newRecord = {
+        id: Date.now(),
+        from_date: fromDate,
+        to_date: toDate,
+        finalized_amount: totalAmount,
+        finalized_on: new Date().toISOString(),
+        paid_amount: null,
+        paid_on: null,
+        payroll_module: "Standard Monthly Payroll",
+        payroll_group_name: selectedGroup?.name || "Monthly Payroll (No Compliance)",
+        status: "Finalized",
+      };
+      const existing = JSON.parse(localStorage.getItem("finalized_payroll_history_list") || "[]");
+      const updated = [newRecord, ...existing.filter((r: any) => r.from_date !== fromDate || r.to_date !== toDate)];
+      localStorage.setItem("finalized_payroll_history_list", JSON.stringify(updated));
+    }
+    toast.success("Payroll run locked & finalized successfully!");
+    refetchProcessMatrix();
+  };
+
+  const handleDefinalize = () => {
+    setIsFinalized(false);
+    setIsPaid(false);
+    if (typeof window !== "undefined") {
+      localStorage.removeItem(storageKey);
+      localStorage.removeItem(paidStorageKey);
+      const existing = JSON.parse(localStorage.getItem("finalized_payroll_history_list") || "[]");
+      const updated = existing.filter((r: any) => r.from_date !== fromDate || r.to_date !== toDate);
+      localStorage.setItem("finalized_payroll_history_list", JSON.stringify(updated));
+    }
+    toast.success("Payroll run definalized & unlocked for editing!");
+  };
+
+  const handleMarkAsPaid = () => {
+    setIsPaid(true);
+    setIsFinalized(true);
+    if (typeof window !== "undefined") {
+      localStorage.setItem(storageKey, "true");
+      localStorage.setItem(paidStorageKey, "true");
+      const totalAmount = mergedRecords.reduce((acc, r) => acc + (r.net_payable || 0), 0);
+      const newRecord = {
+        id: Date.now(),
+        from_date: fromDate,
+        to_date: toDate,
+        finalized_amount: totalAmount,
+        finalized_on: new Date().toISOString(),
+        paid_amount: totalAmount,
+        paid_on: new Date().toISOString(),
+        payroll_module: "Standard Monthly Payroll",
+        payroll_group_name: selectedGroup?.name || "Monthly Payroll (No Compliance)",
+        status: "Paid",
+      };
+      const existing = JSON.parse(localStorage.getItem("finalized_payroll_history_list") || "[]");
+      const updated = [newRecord, ...existing.filter((r: any) => r.from_date !== fromDate || r.to_date !== toDate)];
+      localStorage.setItem("finalized_payroll_history_list", JSON.stringify(updated));
+    }
+    toast.success("Payroll run marked as paid successfully!");
+    router.push("/payroll/finalized-payroll-details");
   };
 
   return (
@@ -759,15 +913,43 @@ export default function ProcessPayrollPage() {
           {/* Right Action Buttons */}
           <div className="flex items-center gap-2">
             
-            {/* Finalize Payroll Button */}
-            <button
-              type="button"
-              onClick={() => setShowFinalizeModal(true)}
-              className="px-4 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700/60 rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 shadow-xs"
-            >
-              <Lock className="w-3.5 h-3.5 text-slate-500" />
-              <span>Finalize Payroll</span>
-            </button>
+            {isPaid ? (
+              /* When Paid: No Definalize / Finalize button (Only Actions dropdown) */
+              null
+            ) : isFinalized ? (
+              <>
+                {/* Definalize Payroll Button */}
+                <button
+                  type="button"
+                  onClick={() => setShowDefinalizeModal(true)}
+                  className="px-4 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700/60 rounded-lg transition-colors cursor-pointer shadow-xs"
+                >
+                  Definalize Payroll
+                </button>
+
+                {/* Mark As Paid Button */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setConfirmInput("");
+                    setShowMarkAsPaidModal(true);
+                  }}
+                  className="px-4 py-1.5 text-xs font-semibold text-white bg-[#0B85C9] hover:bg-[#0974b0] rounded-lg transition-colors cursor-pointer shadow-xs flex items-center gap-1"
+                >
+                  <span>Mark As Paid</span>
+                </button>
+              </>
+            ) : (
+              /* Finalize Payroll Button */
+              <button
+                type="button"
+                onClick={() => setShowFinalizeModal(true)}
+                className="px-4 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700/60 rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 shadow-xs"
+              >
+                <Lock className="w-3.5 h-3.5 text-slate-500" />
+                <span>Finalize Payroll</span>
+              </button>
+            )}
 
             {/* Actions Dropdown Button */}
             <div className="relative">
@@ -809,9 +991,29 @@ export default function ProcessPayrollPage() {
         </div>
 
         {/* Informational Guidance Note */}
-        <div className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
-          <span className="font-bold text-slate-700 dark:text-slate-300">Note:</span> Payroll dates marked as finalized can&apos;t be selected or included in any date range. Changes will only be possible on definalized data/records.
-        </div>
+        {isPaid ? (
+          <div className="space-y-1 text-xs text-slate-600 dark:text-slate-400 font-medium">
+            <div>
+              <span className="font-bold text-slate-700 dark:text-slate-300">Note:</span> Changes will be only possible on unlocked data/records
+            </div>
+            <div>
+              <span className="font-bold text-slate-700 dark:text-slate-300">Note:</span> The currently selected date range is finalized. This payroll is marked as paid and cannot be definalized.
+            </div>
+          </div>
+        ) : isFinalized ? (
+          <div className="space-y-1 text-xs text-slate-600 dark:text-slate-400 font-medium">
+            <div>
+              <span className="font-bold text-slate-700 dark:text-slate-300">Note:</span> Changes will be only possible on unlocked data/records
+            </div>
+            <div>
+              <span className="font-bold text-slate-700 dark:text-slate-300">Note:</span> The currently selected date range is finalized. Changes can only be made after definalizing.
+            </div>
+          </div>
+        ) : (
+          <div className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
+            <span className="font-bold text-slate-700 dark:text-slate-300">Note:</span> Payroll dates marked as finalized can&apos;t be selected or included in any date range. Changes will only be possible on definalized data/records.
+          </div>
+        )}
 
         {/* Column Configuration Note Banner */}
         <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 pt-1">
@@ -1057,6 +1259,9 @@ export default function ProcessPayrollPage() {
                     <th className="py-3 px-3 text-center min-w-[130px]">
                       Payment Method
                     </th>
+                    <th className="py-3 px-3 text-center min-w-[70px]">
+                      Action
+                    </th>
                   </tr>
                 </thead>
 
@@ -1174,6 +1379,40 @@ export default function ProcessPayrollPage() {
                       {/* Payment Method */}
                       <td className="py-2.5 px-3 text-center text-slate-500 dark:text-slate-400">
                         {emp.payment_method}
+                      </td>
+
+                      {/* Employee Action 3-dots Menu */}
+                      <td className="py-2.5 px-3 text-center">
+                        <div className="relative inline-block text-left">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setRowActionDropdownId(
+                                rowActionDropdownId === emp.id ? null : emp.id
+                              )
+                            }
+                            className="p-1 rounded hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-500 cursor-pointer border border-slate-200 dark:border-slate-700"
+                            title="Actions"
+                          >
+                            <MoreVertical className="w-3.5 h-3.5" />
+                          </button>
+
+                          {rowActionDropdownId === emp.id && (
+                            <div className="absolute right-0 top-full mt-1 w-44 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl p-1 z-50 text-xs font-medium space-y-0.5">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setRowActionDropdownId(null);
+                                  handleDownloadPayslip(emp);
+                                }}
+                                className="w-full flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 cursor-pointer font-medium"
+                              >
+                                <FileText className="w-3.5 h-3.5 text-blue-500" />
+                                <span>Download Salary Slip</span>
+                              </button>
+                            </div>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -1343,7 +1582,120 @@ export default function ProcessPayrollPage() {
           </div>
         )}
 
+        {/* Definalize Payroll Confirmation Modal */}
+        {showDefinalizeModal && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl max-w-md w-full shadow-2xl overflow-hidden">
+              <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-800">
+                <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
+                  Ready to Definalize Payroll?
+                </h3>
+              </div>
+              <div className="p-6 space-y-6">
+                <p className="text-xs text-slate-600 dark:text-slate-300">
+                  Once Definalize, changes can be made. Are you sure?
+                </p>
+                <div className="flex items-center justify-end gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowDefinalizeModal(false)}
+                    className="px-6 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700/60 rounded-lg transition-colors cursor-pointer"
+                  >
+                    No
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowDefinalizeModal(false);
+                      handleDefinalize();
+                    }}
+                    className="px-6 py-1.5 text-xs font-semibold text-white bg-[#0B85C9] hover:bg-[#0974b0] rounded-lg transition-colors cursor-pointer shadow-xs"
+                  >
+                    Yes
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Mark As Paid Confirmation Modal */}
+        {showMarkAsPaidModal && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl max-w-md w-full shadow-2xl overflow-hidden">
+              <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-800">
+                <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
+                  Mark As Paid
+                </h3>
+              </div>
+              <div className="p-6 space-y-4">
+                <div className="space-y-1 text-xs text-slate-600 dark:text-slate-300">
+                  <p>Are you sure you want to mark this payroll as paid?</p>
+                  <p>
+                    Please type <strong className="text-slate-900 dark:text-slate-100 font-bold">CONFIRM</strong> in the below field to proceed.
+                  </p>
+                </div>
+
+                <div className="space-y-1 pt-1">
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                    Confirmation<span className="text-red-500 ml-0.5">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    placeholder='Write "CONFIRM" Here'
+                    value={confirmInput}
+                    onChange={(e) => setConfirmInput(e.target.value)}
+                    className="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg text-xs font-medium text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    autoFocus
+                  />
+                </div>
+
+                <div className="bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800/80 rounded-lg p-2.5 text-[11px] font-semibold text-red-600 dark:text-red-400">
+                  Warning: Once marked as paid, this payroll cannot be undone or modified further.
+                </div>
+
+                <div className="flex items-center justify-end gap-3 pt-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowMarkAsPaidModal(false);
+                      setConfirmInput("");
+                    }}
+                    className="px-5 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700/60 rounded-lg transition-colors cursor-pointer"
+                  >
+                    Go Back
+                  </button>
+                  <button
+                    type="button"
+                    disabled={confirmInput.trim() !== "CONFIRM"}
+                    onClick={() => {
+                      setShowMarkAsPaidModal(false);
+                      handleMarkAsPaid();
+                      setConfirmInput("");
+                    }}
+                    className={`px-5 py-1.5 text-xs font-semibold rounded-lg transition-colors shadow-xs ${
+                      confirmInput.trim() === "CONFIRM"
+                        ? "bg-[#0B85C9] hover:bg-[#0974b0] text-white cursor-pointer"
+                        : "bg-slate-200 dark:bg-slate-800 text-slate-400 dark:text-slate-600 cursor-not-allowed border border-slate-300 dark:border-slate-700"
+                    }`}
+                  >
+                    Proceed
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
       </div>
     </ProtectedRoute>
+  );
+}
+
+export default function ProcessPayrollPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-center text-xs text-slate-500">Loading payroll calculations...</div>}>
+      <ProcessPayrollContent />
+    </Suspense>
   );
 }

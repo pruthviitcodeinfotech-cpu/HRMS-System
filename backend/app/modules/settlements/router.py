@@ -11,6 +11,8 @@ import datetime
 from decimal import Decimal
 from typing import Annotated, Any
 
+from pydantic import Field
+
 from fastapi import APIRouter, Depends, Query, status
 from fastapi.responses import Response, StreamingResponse
 
@@ -45,6 +47,7 @@ from app.modules.settlements.schemas import (
     LoanAdvanceCreateRequest,
     LoanAdvanceDetailsSchema,
     LoanAdvanceListResponse,
+    EditInstallmentResponse,
     LoanAdvanceSchema,
     LoanAdvanceSearchQuery,
     LoanAdvanceTransactionCreateRequest,
@@ -52,6 +55,7 @@ from app.modules.settlements.schemas import (
     LoanAdvanceTransactionSchema,
     LoanAdvanceTransactionSearchQuery,
     LoanAdvanceUpdateRequest,
+    UpdateInstallmentRequest,
     SettlementHistoryQuery,
     SettlementHistoryResponse,
     SettlementStatementQuery,
@@ -59,7 +63,16 @@ from app.modules.settlements.schemas import (
     SettlementSummaryQuery,
     SettlementSummarySchema,
 )
+from app.shared.base.schema import BaseSchema
 from app.shared.schemas.response import SuccessResponse, success_response
+
+class DirectLoanTransactionRequest(BaseSchema):
+    loan_id: int = Field(..., description="ID of the loan/advance.")
+    transaction_type: str = Field(default="DEBIT", description="Transaction type (DEBIT/CREDIT).")
+    amount: Decimal = Field(..., gt=0, description="Amount to debit.")
+    comment: str | None = Field(default=None, description="Optional comment.")
+    transaction_date: datetime.date = Field(default_factory=datetime.date.today, description="Date of transaction.")
+
 
 router = APIRouter(tags=["Settlement Management"])
 
@@ -210,6 +223,42 @@ async def update_loan_advance(
     return _ok(result, "Loan/Advance updated successfully.")
 
 
+@router.patch(
+    "/loans/{id}/installment",
+    response_model=SuccessResponse[EditInstallmentResponse],
+    summary="Update Loan Installment Amount",
+    description="Update monthly installment deduction amount for an active loan and log transaction history.",
+    dependencies=[Depends(require_permission(_LOAN_ADVANCE, A.EDIT))],
+)
+@router.patch(
+    "/loans-advances/{id}/installment",
+    response_model=SuccessResponse[EditInstallmentResponse],
+    include_in_schema=False,
+)
+async def update_loan_installment(
+    id: int,
+    payload: UpdateInstallmentRequest,
+    service: SettlementServiceDep,
+    current_user: CurrentUserDep,
+    org_id: OrgIdDep,
+) -> dict[str, Any]:
+    """Update monthly installment amount for an active loan."""
+    target_amount = payload.new_installment if payload.new_installment is not None else payload.installment_amount
+    if target_amount is None:
+        raise InvalidTransactionException("new_installment or installment_amount is required.")
+
+    target_remarks = payload.remarks or payload.comment
+
+    result = await service.update_installment(
+        org_id=org_id,
+        loan_advance_id=id,
+        installment_amount=target_amount,
+        user_id=current_user.user_id,
+        comment=target_remarks,
+    )
+    return _ok(result, "Installment updated successfully.")
+
+
 @router.post(
     "/loans-advances/{id}/close",
     response_model=SuccessResponse[LoanAdvanceSchema],
@@ -330,12 +379,14 @@ async def list_loan_advance_logs(
     org_id: OrgIdDep,
     pagination: Annotated[PaginationParams, Depends(pagination_params)],
     employee_id: Annotated[int | None, Query(description="Filter by employee ID.")] = None,
+    loan_id: Annotated[int | None, Query(description="Filter by loan ID.")] = None,
     transaction_type: Annotated[
         TransactionType | None, Query(description="Filter by transaction type.")
     ] = None,
     source: Annotated[TransactionSource | None, Query(description="Filter by source.")] = None,
     date_from: Annotated[datetime.date | None, Query(description="Start date.")] = None,
     date_to: Annotated[datetime.date | None, Query(description="End date.")] = None,
+    branch_id: Annotated[int | None, Query(description="Filter by branch ID.")] = None,
     sort_by: Annotated[str | None, Query(description="Sort field.")] = None,
     sort_order: Annotated[str | None, Query(description="Sort order.")] = None,
 ) -> dict[str, Any]:
@@ -347,11 +398,44 @@ async def list_loan_advance_logs(
         source=source,
         date_from=date_from,
         date_to=date_to,
+        branch_id=branch_id,
         sort_by=sort_by,
         sort_order=sort_order,
     )
     result = await service.list_all_loan_transactions(
-        org_id=org_id, query=query, employee_id=employee_id
+        org_id=org_id, query=query, employee_id=employee_id, loan_id=loan_id
+    )
+    return _ok(result)
+
+
+@router.get(
+    "/loan-transactions",
+    response_model=SuccessResponse[LoanAdvanceTransactionListResponse],
+    summary="List Loan Transactions Endpoint",
+    dependencies=[Depends(require_permission(_LOAN_ADVANCE, A.READ))],
+)
+async def get_loan_transactions(
+    service: SettlementServiceDep,
+    org_id: OrgIdDep,
+    pagination: Annotated[PaginationParams, Depends(pagination_params)],
+    employee_id: Annotated[int | None, Query(description="Filter by employee ID.")] = None,
+    loan_id: Annotated[int | None, Query(description="Filter by loan ID.")] = None,
+    transaction_type: Annotated[
+        TransactionType | None, Query(description="Filter by transaction type.")
+    ] = None,
+    sort_by: Annotated[str | None, Query(description="Sort field.")] = None,
+    sort_order: Annotated[str | None, Query(description="Sort order.")] = None,
+) -> dict[str, Any]:
+    """Get filtered and paginated loan transactions with total_amount and outstanding_amount summary."""
+    query = LoanAdvanceTransactionSearchQuery(
+        page=pagination.page,
+        page_size=pagination.page_size,
+        transaction_type=transaction_type,
+        sort_by=sort_by,
+        sort_order=sort_order,
+    )
+    result = await service.list_all_loan_transactions(
+        org_id=org_id, query=query, employee_id=employee_id, loan_id=loan_id
     )
     return _ok(result)
 
@@ -469,6 +553,60 @@ async def add_loan_advance_transaction(
 
 
 @router.get(
+    "/loans/{employee_id}/active",
+    response_model=SuccessResponse[list[LoanAdvanceSchema]],
+    summary="Get Active Loans for Employee",
+    dependencies=[Depends(require_permission(_LOAN_ADVANCE, A.READ))],
+)
+async def get_active_loans_for_employee(
+    employee_id: int,
+    service: SettlementServiceDep,
+    org_id: OrgIdDep,
+) -> dict[str, Any]:
+    """Retrieve active loans and advances for a specific employee."""
+    query = LoanAdvanceSearchQuery(
+        page=1,
+        page_size=100,
+        employee_id=employee_id,
+        status=LoanAdvanceStatus.ACTIVE,
+    )
+    result = await service.search_loans_advances(org_id=org_id, query=query)
+    return _ok(result.items)
+
+
+@router.post(
+    "/loan-transactions",
+    response_model=SuccessResponse[LoanAdvanceTransactionSchema],
+    status_code=status.HTTP_201_CREATED,
+    summary="Submit Direct Loan Transaction",
+    dependencies=[Depends(require_permission(_LOAN_ADVANCE, A.EDIT))],
+)
+async def submit_loan_transaction(
+    payload: DirectLoanTransactionRequest,
+    service: SettlementServiceDep,
+    current_user: CurrentUserDep,
+    org_id: OrgIdDep,
+) -> dict[str, Any]:
+    """Submit a loan transaction (debit/repayment)."""
+    loan = await service.get_loan_advance(org_id=org_id, loan_advance_id=payload.loan_id)
+    tx_data = {
+        "transaction_date": payload.transaction_date,
+        "transaction_type": payload.transaction_type.lower(),
+        "amount": payload.amount,
+        "type_label": loan.type,
+        "comment": payload.comment,
+    }
+    result = await service.add_loan_advance_transaction(
+        org_id=org_id,
+        loan_advance_id=payload.loan_id,
+        data=tx_data,
+        user_id=current_user.user_id,
+    )
+    return _ok(result, "Debit transaction added successfully.")
+
+
+
+@router.get(
     "/loans-advances/{id}/transactions",
     response_model=SuccessResponse[LoanAdvanceTransactionListResponse],
     summary="List Ledger Transactions",
@@ -526,6 +664,42 @@ async def get_employee_arrears(
     return _ok(result)
 
 
+@router.get(
+    "/arrears",
+    response_model=SuccessResponse[EmployeeArrearsListResponse],
+    summary="List / Search Arrears",
+    dependencies=[Depends(require_permission(_ARREARS, A.READ))],
+)
+async def list_arrears(
+    service: SettlementServiceDep,
+    org_id: OrgIdDep,
+    pagination: Annotated[PaginationParams, Depends(pagination_params)],
+    employee_id: Annotated[int | None, Query(description="Filter by employee ID.")] = None,
+    branch_id: Annotated[int | None, Query(description="Filter by branch ID.")] = None,
+    dept_id: Annotated[int | None, Query(description="Filter by department ID.")] = None,
+    min_outstanding: Annotated[
+        Decimal | None, Query(description="Minimum outstanding arrears filter.")
+    ] = None,
+    search: Annotated[str | None, Query(description="Free-text search for employee name or code.")] = None,
+    sort_by: Annotated[str | None, Query(description="Sort field.")] = None,
+    sort_order: Annotated[str | None, Query(description="Sort order.")] = None,
+) -> dict[str, Any]:
+    """List and filter all employee arrears records for the organization."""
+    query = ArrearsSearchQuery(
+        page=pagination.page,
+        page_size=pagination.page_size,
+        employee_id=employee_id,
+        branch_id=branch_id,
+        dept_id=dept_id,
+        min_outstanding=min_outstanding,
+        search=search,
+        sort_by=sort_by,
+        sort_order=sort_order,
+    )
+    result = await service.list_employee_arrears(org_id=org_id, query=query)
+    return _ok(result)
+
+
 @router.post(
     "/arrears",
     response_model=SuccessResponse[EmployeeArrearsSchema],
@@ -543,7 +717,7 @@ async def create_arrears_entry(
     result = await service.create_arrears(
         org_id=org_id,
         data=payload.model_dump(),
-        user_id=current_user.id,
+        user_id=current_user.user_id,
     )
     return _ok(result, "Arrears entry created successfully.")
 
@@ -565,6 +739,7 @@ async def list_all_arrears_logs(
     source: Annotated[TransactionSource | None, Query(description="Filter by source.")] = None,
     date_from: Annotated[datetime.date | None, Query(description="Start date.")] = None,
     date_to: Annotated[datetime.date | None, Query(description="End date.")] = None,
+    search: Annotated[str | None, Query(description="Free-text search for employee name or code.")] = None,
     sort_by: Annotated[str | None, Query(description="Sort field.")] = None,
     sort_order: Annotated[str | None, Query(description="Sort order.")] = None,
 ) -> dict[str, Any]:
@@ -572,14 +747,15 @@ async def list_all_arrears_logs(
     query = ArrearsTransactionSearchQuery(
         page=pagination.page,
         page_size=pagination.page_size,
+        employee_id=employee_id,
         transaction_type=transaction_type,
         source=source,
         date_from=date_from,
         date_to=date_to,
+        search=search,
         sort_by=sort_by,
         sort_order=sort_order,
     )
-    query.employee_id = employee_id
     result = await service.list_all_arrears_transactions(org_id=org_id, query=query)
     return _ok(result)
 
@@ -618,7 +794,7 @@ async def update_arrears_entry(
         org_id=org_id,
         arrears_id=id,
         data=payload.model_dump(exclude_unset=True),
-        user_id=current_user.id,
+        user_id=current_user.user_id,
     )
     return _ok(result, "Arrears record updated successfully.")
 
@@ -636,7 +812,7 @@ async def delete_arrears_entry(
     current_user: CurrentUserDep,
 ) -> dict[str, Any]:
     """Delete an arrears header record."""
-    await service.delete_arrears(org_id=org_id, arrears_id=id, user_id=current_user.id)
+    await service.delete_arrears(org_id=org_id, arrears_id=id, user_id=current_user.user_id)
     return _ok(None, "Arrears record deleted successfully.")
 
 
@@ -658,7 +834,7 @@ async def pay_arrears_entry(
         org_id=org_id,
         arrears_id=id,
         data=payload.model_dump(),
-        user_id=current_user.id,
+        user_id=current_user.user_id,
     )
     return _ok(result, "Arrears payment processed successfully.")
 

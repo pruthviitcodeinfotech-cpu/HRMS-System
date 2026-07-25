@@ -79,5 +79,40 @@ export const loanAdvanceService = {
       payload
     );
   },
+
+  getActiveLoansForEmployee: async (
+    employeeId: number
+  ): Promise<ApiResponse<LoanAdvanceSchema[]>> => {
+    return apiClient.get<ApiResponse<LoanAdvanceSchema[]>>(`/loans/${employeeId}/active`);
+  },
+
+  submitLoanTransaction: async (payload: {
+    loan_id: number;
+    transaction_type: string;
+    amount: number;
+    comment: string;
+    transaction_date: string;
+  }): Promise<ApiResponse<LoanAdvanceTransactionSchema>> => {
+    return apiClient.post<ApiResponse<LoanAdvanceTransactionSchema>>(
+      "/loan-transactions",
+      payload
+    );
+  },
+  getLoanTransactions: async (
+    params: LoanAdvanceLogsParams = {}
+  ): Promise<ApiResponse<LoanAdvanceTransactionListResponse>> => {
+    const query = buildQueryString(params as Record<string, unknown>);
+    return apiClient.get<ApiResponse<LoanAdvanceTransactionListResponse>>(`/loan-transactions${query}`);
+  },
+  updateInstallment: async (
+    loanId: number,
+    payload: { installment_amount: number }
+  ): Promise<ApiResponse<LoanAdvanceSchema>> => {
+    return apiClient.patch<ApiResponse<LoanAdvanceSchema>>(
+      `/loans/${loanId}/installment`,
+      payload
+    );
+  },
 };
+
 

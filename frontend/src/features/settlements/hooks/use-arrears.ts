@@ -7,7 +7,6 @@ import {
   ArrearsPayPayload,
   ArrearsUpdatePayload,
 } from "../types";
-import { FALLBACK_MOCK_ARREARS, FALLBACK_MOCK_LOGS } from "../data/mock-arrears-data";
 
 export const arrearsKeys = {
   all: ["arrears"] as const,
@@ -23,35 +22,20 @@ export const useArrears = (params: ArrearsListParams = {}) => {
   return useQuery({
     queryKey: arrearsKeys.list(params),
     queryFn: async () => {
-      try {
-        const res = await arrearsService.getArrears(params);
-        if (res.data?.items && res.data.items.length > 0) {
-          return res.data;
+      const res = await arrearsService.getArrears(params);
+      return (
+        res.data || {
+          items: [],
+          pagination: {
+            page: params.page || 1,
+            page_size: params.page_size || 10,
+            total_records: 0,
+            total_pages: 1,
+            has_next: false,
+            has_previous: false,
+          },
         }
-        return {
-          items: FALLBACK_MOCK_ARREARS,
-          pagination: {
-            page: params.page || 1,
-            page_size: params.page_size || 10,
-            total_records: FALLBACK_MOCK_ARREARS.length,
-            total_pages: 1,
-            has_next: false,
-            has_previous: false,
-          },
-        };
-      } catch {
-        return {
-          items: FALLBACK_MOCK_ARREARS,
-          pagination: {
-            page: params.page || 1,
-            page_size: params.page_size || 10,
-            total_records: FALLBACK_MOCK_ARREARS.length,
-            total_pages: 1,
-            has_next: false,
-            has_previous: false,
-          },
-        };
-      }
+      );
     },
     staleTime: 1000 * 30, // 30 seconds
   });
@@ -62,13 +46,8 @@ export const useArrearsDetails = (id: number | null) => {
     queryKey: arrearsKeys.detail(id ?? 0),
     queryFn: async () => {
       if (!id) return null;
-      try {
-        const res = await arrearsService.getArrearsById(id);
-        return res.data;
-      } catch {
-        const found = FALLBACK_MOCK_ARREARS.find((item) => item.id === id);
-        return found || null;
-      }
+      const res = await arrearsService.getArrearsById(id);
+      return res.data || null;
     },
     enabled: !!id,
   });
@@ -78,35 +57,20 @@ export const useArrearsLogs = (params: ArrearsLogsParams = {}, enabled = true) =
   return useQuery({
     queryKey: arrearsKeys.logList(params),
     queryFn: async () => {
-      try {
-        const res = await arrearsService.getArrearsLogs(params);
-        if (res.data?.items && res.data.items.length > 0) {
-          return res.data;
+      const res = await arrearsService.getArrearsLogs(params);
+      return (
+        res.data || {
+          items: [],
+          pagination: {
+            page: params.page || 1,
+            page_size: params.page_size || 10,
+            total_records: 0,
+            total_pages: 1,
+            has_next: false,
+            has_previous: false,
+          },
         }
-        return {
-          items: FALLBACK_MOCK_LOGS,
-          pagination: {
-            page: params.page || 1,
-            page_size: params.page_size || 10,
-            total_records: FALLBACK_MOCK_LOGS.length,
-            total_pages: 1,
-            has_next: false,
-            has_previous: false,
-          },
-        };
-      } catch {
-        return {
-          items: FALLBACK_MOCK_LOGS,
-          pagination: {
-            page: params.page || 1,
-            page_size: params.page_size || 10,
-            total_records: FALLBACK_MOCK_LOGS.length,
-            total_pages: 1,
-            has_next: false,
-            has_previous: false,
-          },
-        };
-      }
+      );
     },
     enabled,
   });
@@ -133,21 +97,21 @@ export const useUpdateArrears = () => {
   });
 };
 
-export const useDeleteArrears = () => {
+export const usePayArrears = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (id: number) => arrearsService.deleteArrears(id),
+    mutationFn: ({ id, payload }: { id: number; payload: ArrearsPayPayload }) =>
+      arrearsService.payArrears(id, payload),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: arrearsKeys.all });
     },
   });
 };
 
-export const usePayArrears = () => {
+export const useDeleteArrears = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, payload }: { id: number; payload: ArrearsPayPayload }) =>
-      arrearsService.payArrears(id, payload),
+    mutationFn: (id: number) => arrearsService.deleteArrears(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: arrearsKeys.all });
     },

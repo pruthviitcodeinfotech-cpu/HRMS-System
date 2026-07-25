@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
   ArrowUp,
@@ -17,6 +18,7 @@ import {
   Ban,
   FileText,
   SlidersHorizontal,
+  MoreVertical,
 } from "lucide-react";
 import { ProtectedRoute } from "@/features/auth";
 import {
@@ -26,8 +28,8 @@ import {
   usePayrollGroups,
   usePayslip,
 } from "@/features/payroll/hooks/use-payroll";
-import { payrollService } from "@/features/payroll/services/payroll";
 import { FinalizedPayrollItem } from "@/features/payroll/types";
+import { downloadGlobalPayslipPdf } from "@/features/payroll/utils/generate-payslip-pdf";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -198,17 +200,16 @@ function PayslipPreviewModal({
   const branchWisePayslip = payslipData?.branch_wise_payslip ?? employeeData?.json_snapshot?.company_settings?.branch_wise_payslip ?? false;
 
   const handleDownloadPdf = async () => {
-    if (!rowId) return;
     try {
-      const blob = await payrollService.downloadPayslipPdf(rowId);
-      const url = window.URL.createObjectURL(blob as unknown as Blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.setAttribute("download", `payslip_${rowId}.pdf`);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url);
+      await downloadGlobalPayslipPdf({
+        employee_code: employeeData?.employee_code || "EMP",
+        employee_name: employeeData?.employee_name || "Employee",
+        department: employeeData?.department,
+        designation: employeeData?.designation,
+        net_payable: employeeData?.net_salary || payslipData?.net_pay || 0,
+        gross_wages: employeeData?.gross_salary || 0,
+        total_deductions: employeeData?.total_deductions || 0,
+      }, `Payslip_${employeeData?.employee_code || "EMP"}.pdf`);
       toast.success("Payslip PDF downloaded successfully.");
     } catch {
       toast.error("Failed to download Payslip PDF.");
@@ -531,6 +532,8 @@ function AmountCard({ label, value, color }: { label: string; value: string; col
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function FinalizedPayrollDetailsPage() {
+  const router = useRouter();
+  const [activeActionMenuId, setActiveActionMenuId] = useState<string | null>(null);
   // Filter state
   const [filterGroup, setFilterGroup] = useState<string>("");
   const [filterStatus, setFilterStatus] = useState<string>("");
@@ -565,12 +568,34 @@ export default function FinalizedPayrollDetailsPage() {
 
   const { data, isLoading, isError, error, refetch } = useFinalizedPayroll(queryParams);
 
-  const items: FinalizedPayrollItem[] = (data as any)?.items ?? [];
-  const pagination = (data as any)?.pagination ?? { total_records: 0, total_pages: 1 };
+  // Local persistent history state
+  const [localHistory, setLocalHistory] = useState<any[]>([]);
+
+  React.useEffect(() => {
+    if (typeof window !== "undefined") {
+      const stored = JSON.parse(localStorage.getItem("finalized_payroll_history_list") || "[]");
+      setLocalHistory(stored);
+    }
+  }, []);
+
+  const apiItems: FinalizedPayrollItem[] = (data as any)?.items ?? [];
+
+  // Combine API items and local persistent items (removing duplicates by from_date + to_date)
+  const combinedItems = useMemo(() => {
+    const list = [...apiItems];
+    for (const loc of localHistory) {
+      if (!list.some((item: any) => item.from_date === loc.from_date && item.to_date === loc.to_date)) {
+        list.push(loc);
+      }
+    }
+    return list;
+  }, [apiItems, localHistory]);
+
+  const pagination = (data as any)?.pagination ?? { total_records: combinedItems.length, total_pages: 1 };
 
   // ── Sorting ───────────────────────────────────────────────────────────────
 
-  const sortedItems = [...items].sort((a: any, b: any) => {
+  const sortedItems = [...combinedItems].sort((a: any, b: any) => {
     const av = a[sortField] ?? "";
     const bv = b[sortField] ?? "";
     if (av < bv) return sortOrder === "asc" ? -1 : 1;
@@ -613,115 +638,119 @@ export default function FinalizedPayrollDetailsPage() {
 
   return (
     <ProtectedRoute requiredPermission={{ feature: "payroll_record", action: "read" }}>
-      <div className="flex flex-col min-h-0">
-        {/* ── Page Title ── */}
-        <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
-          <div className="flex items-center justify-between">
-            <h1 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-              Finalized Payroll Details
-            </h1>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setShowFilters((v) => !v)}
-                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
-                  showFilters || hasFilters
-                    ? "bg-blue-50 border-blue-200 text-blue-600 dark:bg-blue-950/40 dark:border-blue-800 dark:text-blue-400"
-                    : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800"
-                }`}
-              >
-                <SlidersHorizontal className="w-3.5 h-3.5" />
-                Filters
-                {hasFilters && (
-                  <span className="ml-1 w-4 h-4 rounded-full bg-blue-600 text-white text-[9px] font-bold flex items-center justify-center">
-                    {[filterGroup, filterStatus, filterFromDate, filterToDate].filter(Boolean).length}
-                  </span>
-                )}
-              </button>
-              <button
-                onClick={() => refetch()}
-                className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
-                title="Refresh"
-              >
-                <RefreshCw className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* ── Filters Panel ── */}
-        {showFilters && (
-          <div className="px-6 py-3 bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800">
-            <div className="flex flex-wrap items-end gap-3">
-              {/* Payroll Group — reuses existing Payroll Group module */}
-              <div className="flex flex-col gap-1 min-w-[180px]">
-                <label className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Payroll Group</label>
-                <select
-                  value={filterGroup}
-                  onChange={(e) => { setFilterGroup(e.target.value); setPage(1); }}
-                  className="text-xs px-2.5 py-1.5 border border-slate-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="">All Groups</option>
-                  {groups.map((g) => (
-                    <option key={g.id} value={g.id}>{g.name}</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Status */}
-              <div className="flex flex-col gap-1 min-w-[140px]">
-                <label className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Status</label>
-                <select
-                  value={filterStatus}
-                  onChange={(e) => { setFilterStatus(e.target.value); setPage(1); }}
-                  className="text-xs px-2.5 py-1.5 border border-slate-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="">All Statuses</option>
-                  <option value="Draft">Draft</option>
-                  <option value="Finalized">Finalized</option>
-                  <option value="Paid">Paid</option>
-                  <option value="Cancelled">Cancelled</option>
-                </select>
-              </div>
-
-              {/* From Date */}
-              <div className="flex flex-col gap-1 min-w-[140px]">
-                <label className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">From Date</label>
-                <input
-                  type="date"
-                  value={filterFromDate}
-                  onChange={(e) => { setFilterFromDate(e.target.value); setPage(1); }}
-                  className="text-xs px-2.5 py-1.5 border border-slate-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-
-              {/* To Date */}
-              <div className="flex flex-col gap-1 min-w-[140px]">
-                <label className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">To Date</label>
-                <input
-                  type="date"
-                  value={filterToDate}
-                  onChange={(e) => { setFilterToDate(e.target.value); setPage(1); }}
-                  className="text-xs px-2.5 py-1.5 border border-slate-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-
-              {/* Clear */}
-              {hasFilters && (
+      <div className="p-6 space-y-6 w-full min-h-screen bg-slate-50/50 dark:bg-slate-950/50">
+        
+        {/* Main Card Container */}
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xs overflow-hidden flex flex-col min-h-[550px]">
+          
+          {/* ── Page Title ── */}
+          <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+            <div className="flex items-center justify-between">
+              <h1 className="text-base font-semibold text-slate-900 dark:text-slate-100">
+                Finalized Payroll Details
+              </h1>
+              <div className="flex items-center gap-2">
                 <button
-                  onClick={clearFilters}
-                  className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-red-500 transition-colors mt-4"
+                  onClick={() => setShowFilters((v) => !v)}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                    showFilters || hasFilters
+                      ? "bg-blue-50 border-blue-200 text-blue-600 dark:bg-blue-950/40 dark:border-blue-800 dark:text-blue-400"
+                      : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800"
+                  }`}
                 >
-                  <X className="w-3.5 h-3.5" />
-                  Clear
+                  <SlidersHorizontal className="w-3.5 h-3.5" />
+                  Filters
+                  {hasFilters && (
+                    <span className="ml-1 w-4 h-4 rounded-full bg-blue-600 text-white text-[9px] font-bold flex items-center justify-center">
+                      {[filterGroup, filterStatus, filterFromDate, filterToDate].filter(Boolean).length}
+                    </span>
+                  )}
                 </button>
-              )}
+                <button
+                  onClick={() => refetch()}
+                  className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+                  title="Refresh"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                </button>
+              </div>
             </div>
           </div>
-        )}
 
-        {/* ── Table ── */}
-        <div className="flex-1 overflow-auto">
-          <table className="w-full text-left border-collapse">
+          {/* ── Filters Panel ── */}
+          {showFilters && (
+            <div className="px-6 py-3 bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800">
+              <div className="flex flex-wrap items-end gap-3">
+                {/* Payroll Group — reuses existing Payroll Group module */}
+                <div className="flex flex-col gap-1 min-w-[180px]">
+                  <label className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Payroll Group</label>
+                  <select
+                    value={filterGroup}
+                    onChange={(e) => { setFilterGroup(e.target.value); setPage(1); }}
+                    className="text-xs px-2.5 py-1.5 border border-slate-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="">All Groups</option>
+                    {groups.map((g) => (
+                      <option key={g.id} value={g.id}>{g.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Status */}
+                <div className="flex flex-col gap-1 min-w-[140px]">
+                  <label className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Status</label>
+                  <select
+                    value={filterStatus}
+                    onChange={(e) => { setFilterStatus(e.target.value); setPage(1); }}
+                    className="text-xs px-2.5 py-1.5 border border-slate-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="">All Statuses</option>
+                    <option value="Draft">Draft</option>
+                    <option value="Finalized">Finalized</option>
+                    <option value="Paid">Paid</option>
+                    <option value="Cancelled">Cancelled</option>
+                  </select>
+                </div>
+
+                {/* From Date */}
+                <div className="flex flex-col gap-1 min-w-[140px]">
+                  <label className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">From Date</label>
+                  <input
+                    type="date"
+                    value={filterFromDate}
+                    onChange={(e) => { setFilterFromDate(e.target.value); setPage(1); }}
+                    className="text-xs px-2.5 py-1.5 border border-slate-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+
+                {/* To Date */}
+                <div className="flex flex-col gap-1 min-w-[140px]">
+                  <label className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">To Date</label>
+                  <input
+                    type="date"
+                    value={filterToDate}
+                    onChange={(e) => { setFilterToDate(e.target.value); setPage(1); }}
+                    className="text-xs px-2.5 py-1.5 border border-slate-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+
+                {/* Clear */}
+                {hasFilters && (
+                  <button
+                    onClick={clearFilters}
+                    className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-red-500 transition-colors mt-4"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                    Clear
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* ── Table ── */}
+          <div className="flex-1 overflow-x-auto min-h-[400px]">
+            <table className="w-full text-left border-collapse">
             <thead className="sticky top-0 z-10">
               <tr className="bg-slate-50 dark:bg-slate-800/80 border-b border-slate-200 dark:border-slate-700">
                 <TH label="From" field="from_date" />
@@ -765,46 +794,92 @@ export default function FinalizedPayrollDetailsPage() {
 
                     {/* Finalized On */}
                     <td className="px-3 py-3 text-slate-600 dark:text-slate-400 whitespace-nowrap">
-                      {fmtDate(item.finalized_on)}
+                      {fmtDateTime(item.finalized_on)}
                     </td>
 
                     {/* Paid Amount */}
                     <td className="px-3 py-3 text-right whitespace-nowrap">
                       {item.paid_amount != null ? (
-                        <span className="font-semibold text-emerald-600 dark:text-emerald-400">
+                        <span className="font-semibold text-slate-800 dark:text-slate-100">
                           {fmtAmount(item.paid_amount)}
                         </span>
                       ) : (
-                        <span className="text-slate-400">—</span>
+                        <span className="text-slate-400 font-medium">-</span>
                       )}
                     </td>
 
                     {/* Paid On */}
                     <td className="px-3 py-3 text-slate-600 dark:text-slate-400 whitespace-nowrap">
-                      {fmtDate(item.paid_on)}
+                      {item.paid_on ? fmtDateTime(item.paid_on) : <span className="text-slate-400 font-medium">-</span>}
                     </td>
 
                     {/* Payroll Module */}
                     <td className="px-3 py-3 text-slate-700 dark:text-slate-300 whitespace-nowrap">
-                      {item.payroll_module || "—"}
+                      {item.payroll_module || "Standard Monthly Payroll"}
                     </td>
 
                     {/* Payroll Group */}
                     <td className="px-3 py-3 whitespace-nowrap">
                       <span className="text-slate-700 dark:text-slate-300">
-                        {item.payroll_group_name || "—"}
+                        {item.payroll_group_name || "Monthly Payroll (No Compliance)"}
                       </span>
                     </td>
 
-                    {/* Action */}
+                    {/* Action Column — Petpooja Style: 3 Dots Menu Button + Dot Status Badge */}
                     <td className="px-3 py-3 whitespace-nowrap">
-                      <button
-                        onClick={() => setSelectedId(item.id)}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40 border border-blue-200 dark:border-blue-900/50 transition-colors"
-                      >
-                        <Eye className="w-3 h-3" />
-                        View
-                      </button>
+                      <div className="flex items-center gap-3">
+                        <div className="relative">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const targetId = String(item.id);
+                              setActiveActionMenuId((prev) =>
+                                prev !== null && String(prev) === targetId ? null : targetId
+                              );
+                            }}
+                            className="p-1.5 rounded-md text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer border border-slate-200 dark:border-slate-700 flex items-center justify-center"
+                            title="Actions"
+                          >
+                            <MoreVertical className="w-4 h-4" />
+                          </button>
+
+                          {activeActionMenuId !== null && String(activeActionMenuId) === String(item.id) && (
+                            <div
+                              className="absolute left-0 top-full mt-1.5 w-40 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-2xl p-1 z-[100] text-xs font-medium space-y-0.5"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setActiveActionMenuId(null);
+                                  router.push(
+                                    `/payroll/process-payroll?from=${item.from_date}&to=${
+                                      item.to_date
+                                    }&groupId=${item.payroll_group_id || 1}&status=${item.status}`
+                                  );
+                                }}
+                                className="w-full flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 cursor-pointer font-medium text-left"
+                              >
+                                <Eye className="w-4 h-4 text-blue-500" />
+                                <span>View Payroll</span>
+                              </button>
+                            </div>
+                          )}
+                        </div>
+
+                        {item.status === "Paid" ? (
+                          <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+                            <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                            Paid
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-500 dark:text-amber-400">
+                            <span className="w-2 h-2 rounded-full bg-amber-500"></span>
+                            Unpaid
+                          </span>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -861,12 +936,13 @@ export default function FinalizedPayrollDetailsPage() {
             </div>
           </div>
         )}
-      </div>
+        </div>
 
-      {/* Detail Drawer */}
-      {selectedId !== null && (
-        <DetailDrawer id={selectedId} onClose={() => setSelectedId(null)} />
-      )}
+        {/* Detail Drawer */}
+        {selectedId !== null && (
+          <DetailDrawer id={selectedId} onClose={() => setSelectedId(null)} />
+        )}
+      </div>
     </ProtectedRoute>
   );
 }

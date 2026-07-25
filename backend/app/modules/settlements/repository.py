@@ -11,7 +11,7 @@ from datetime import date
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import and_, func, literal_column, select, union_all
+from sqlalchemy import and_, func, literal_column, or_, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -93,15 +93,35 @@ class EmployeeLoanAdvanceRepository(BaseRepository[EmployeeLoanAdvance]):
             conds.append(EmployeeLoanAdvance.transaction_date >= date_from)
         if date_to is not None:
             conds.append(EmployeeLoanAdvance.transaction_date <= date_to)
-        if search:
-            conds.append(EmployeeLoanAdvance.name.ilike(f"%{search.strip()}%"))
 
-        if branch_id is not None or dept_id is not None:
-            stmt = stmt.join(Employee, Employee.employee_id == EmployeeLoanAdvance.employee_id)
-            if branch_id is not None:
-                conds.append(Employee.master_branch_id == branch_id)
-            if dept_id is not None:
-                conds.append(Employee.dept_id == dept_id)
+        need_employee_join = (
+            branch_id is not None or dept_id is not None or bool(search and search.strip())
+        )
+        if need_employee_join:
+            stmt = stmt.join(
+                Employee,
+                and_(
+                    Employee.employee_id == EmployeeLoanAdvance.employee_id,
+                    Employee.org_id == org_id,
+                ),
+                isouter=True,
+            )
+
+        if search and search.strip():
+            term = f"%{search.strip()}%"
+            conds.append(
+                or_(
+                    EmployeeLoanAdvance.name.ilike(term),
+                    Employee.employee_name.ilike(term),
+                    Employee.display_name.ilike(term),
+                    Employee.employee_code.ilike(term),
+                )
+            )
+
+        if branch_id is not None:
+            conds.append(Employee.master_branch_id == branch_id)
+        if dept_id is not None:
+            conds.append(Employee.dept_id == dept_id)
 
         return stmt.where(and_(*conds))
 
@@ -183,6 +203,20 @@ class EmployeeLoanAdvanceRepository(BaseRepository[EmployeeLoanAdvance]):
                 EmployeeLoanAdvance.org_id == org_id,
                 EmployeeLoanAdvance.employee_id == employee_id,
                 EmployeeLoanAdvance.status == "active",
+            )
+            .order_by(EmployeeLoanAdvance.transaction_date.desc())
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def get_all_by_employee_id(
+        self, org_id: int, employee_id: int
+    ) -> list[EmployeeLoanAdvance]:
+        """Return all active & closed loans/advances for a single employee."""
+        stmt = (
+            select(EmployeeLoanAdvance)
+            .where(
+                EmployeeLoanAdvance.org_id == org_id,
+                EmployeeLoanAdvance.employee_id == employee_id,
             )
             .order_by(EmployeeLoanAdvance.transaction_date.desc())
         )
@@ -275,10 +309,12 @@ class LoanAdvanceTransactionRepository(BaseRepository[LoanAdvanceTransaction]):
         self,
         org_id: int,
         employee_id: int | None = None,
+        loan_advance_id: int | None = None,
         transaction_type: str | None = None,
         source: str | None = None,
         date_from: date | None = None,
         date_to: date | None = None,
+        branch_id: int | None = None,
     ) -> select:
         stmt = (
             select(LoanAdvanceTransaction)
@@ -287,6 +323,8 @@ class LoanAdvanceTransactionRepository(BaseRepository[LoanAdvanceTransaction]):
         )
         if employee_id is not None:
             stmt = stmt.where(EmployeeLoanAdvance.employee_id == employee_id)
+        if loan_advance_id is not None:
+            stmt = stmt.where(LoanAdvanceTransaction.loan_advance_id == loan_advance_id)
         if transaction_type is not None:
             stmt = stmt.where(LoanAdvanceTransaction.transaction_type == transaction_type)
         if source is not None:
@@ -295,6 +333,10 @@ class LoanAdvanceTransactionRepository(BaseRepository[LoanAdvanceTransaction]):
             stmt = stmt.where(LoanAdvanceTransaction.transaction_date >= date_from)
         if date_to is not None:
             stmt = stmt.where(LoanAdvanceTransaction.transaction_date <= date_to)
+        if branch_id is not None:
+            stmt = stmt.join(Employee, Employee.employee_id == EmployeeLoanAdvance.employee_id).where(
+                Employee.master_branch_id == branch_id
+            )
         return stmt
 
     async def search_all_transactions(
@@ -302,10 +344,12 @@ class LoanAdvanceTransactionRepository(BaseRepository[LoanAdvanceTransaction]):
         org_id: int,
         *,
         employee_id: int | None = None,
+        loan_advance_id: int | None = None,
         transaction_type: str | None = None,
         source: str | None = None,
         date_from: date | None = None,
         date_to: date | None = None,
+        branch_id: int | None = None,
         sort_by: str | None = "transaction_date",
         sort_order: str | SortOrder = SortOrder.DESC,
         page: int = 1,
@@ -315,10 +359,12 @@ class LoanAdvanceTransactionRepository(BaseRepository[LoanAdvanceTransaction]):
         stmt = self._build_search_all_query(
             org_id=org_id,
             employee_id=employee_id,
+            loan_advance_id=loan_advance_id,
             transaction_type=transaction_type,
             source=source,
             date_from=date_from,
             date_to=date_to,
+            branch_id=branch_id,
         )
         stmt = apply_sorting(
             stmt,
@@ -336,19 +382,23 @@ class LoanAdvanceTransactionRepository(BaseRepository[LoanAdvanceTransaction]):
         org_id: int,
         *,
         employee_id: int | None = None,
+        loan_advance_id: int | None = None,
         transaction_type: str | None = None,
         source: str | None = None,
         date_from: date | None = None,
         date_to: date | None = None,
+        branch_id: int | None = None,
     ) -> int:
         """Return count of org-wide loan transactions matching filters."""
         base_stmt = self._build_search_all_query(
             org_id=org_id,
             employee_id=employee_id,
+            loan_advance_id=loan_advance_id,
             transaction_type=transaction_type,
             source=source,
             date_from=date_from,
             date_to=date_to,
+            branch_id=branch_id,
         )
         stmt = select(func.count()).select_from(base_stmt.subquery())
         return int((await self.session.execute(stmt)).scalar_one())
@@ -380,6 +430,7 @@ class EmployeeArrearsRepository(BaseRepository[EmployeeArrears]):
         min_outstanding: Decimal | None = None,
         branch_id: int | None = None,
         dept_id: int | None = None,
+        search: str | None = None,
     ) -> select:
         stmt = select(EmployeeArrears)
         conds = [EmployeeArrears.org_id == org_id]
@@ -388,12 +439,32 @@ class EmployeeArrearsRepository(BaseRepository[EmployeeArrears]):
         if min_outstanding is not None:
             conds.append(EmployeeArrears.outstanding_arrears >= min_outstanding)
 
-        if branch_id is not None or dept_id is not None:
-            stmt = stmt.join(Employee, Employee.employee_id == EmployeeArrears.employee_id)
+        need_employee_join = (
+            branch_id is not None or dept_id is not None or bool(search and search.strip())
+        )
+        if need_employee_join:
+            stmt = stmt.join(
+                Employee,
+                and_(
+                    Employee.employee_id == EmployeeArrears.employee_id,
+                    Employee.org_id == org_id,
+                ),
+                isouter=True,
+            )
             if branch_id is not None:
                 conds.append(Employee.master_branch_id == branch_id)
             if dept_id is not None:
                 conds.append(Employee.dept_id == dept_id)
+            if search and search.strip():
+                term = f"%{search.strip()}%"
+                conds.append(
+                    or_(
+                        Employee.employee_name.ilike(term),
+                        Employee.display_name.ilike(term),
+                        Employee.employee_code.ilike(term),
+                    )
+                )
+
         return stmt.where(and_(*conds))
 
     async def search(
@@ -404,6 +475,7 @@ class EmployeeArrearsRepository(BaseRepository[EmployeeArrears]):
         min_outstanding: Decimal | None = None,
         branch_id: int | None = None,
         dept_id: int | None = None,
+        search: str | None = None,
         sort_by: str | None = "outstanding_arrears",
         sort_order: str | SortOrder = SortOrder.DESC,
         page: int = 1,
@@ -416,6 +488,7 @@ class EmployeeArrearsRepository(BaseRepository[EmployeeArrears]):
             min_outstanding=min_outstanding,
             branch_id=branch_id,
             dept_id=dept_id,
+            search=search,
         )
         stmt = apply_sorting(
             stmt,
@@ -436,6 +509,7 @@ class EmployeeArrearsRepository(BaseRepository[EmployeeArrears]):
         min_outstanding: Decimal | None = None,
         branch_id: int | None = None,
         dept_id: int | None = None,
+        search: str | None = None,
     ) -> int:
         """Return the count of arrears headers matching the criteria."""
         base_stmt = self._build_search_query(
@@ -444,6 +518,7 @@ class EmployeeArrearsRepository(BaseRepository[EmployeeArrears]):
             min_outstanding=min_outstanding,
             branch_id=branch_id,
             dept_id=dept_id,
+            search=search,
         )
         stmt = select(func.count()).select_from(base_stmt.subquery())
         return int((await self.session.execute(stmt)).scalar_one())
@@ -539,19 +614,45 @@ class ArrearsTransactionRepository(BaseRepository[ArrearsTransaction]):
         source: str | None = None,
         date_from: date | None = None,
         date_to: date | None = None,
+        search: str | None = None,
+        branch_id: int | None = None,
     ) -> select:
-        stmt = select(ArrearsTransaction).where(ArrearsTransaction.org_id == org_id)
+        stmt = select(ArrearsTransaction)
+        conds = [ArrearsTransaction.org_id == org_id]
         if employee_id is not None:
-            stmt = stmt.where(ArrearsTransaction.employee_id == employee_id)
+            conds.append(ArrearsTransaction.employee_id == employee_id)
         if transaction_type is not None:
-            stmt = stmt.where(ArrearsTransaction.transaction_type == transaction_type)
+            conds.append(ArrearsTransaction.transaction_type == transaction_type)
         if source is not None:
-            stmt = stmt.where(ArrearsTransaction.source == source)
+            conds.append(ArrearsTransaction.source == source)
         if date_from is not None:
-            stmt = stmt.where(ArrearsTransaction.transaction_date >= date_from)
+            conds.append(ArrearsTransaction.transaction_date >= date_from)
         if date_to is not None:
-            stmt = stmt.where(ArrearsTransaction.transaction_date <= date_to)
-        return stmt
+            conds.append(ArrearsTransaction.transaction_date <= date_to)
+
+        need_employee_join = branch_id is not None or bool(search and search.strip())
+        if need_employee_join:
+            stmt = stmt.join(
+                Employee,
+                and_(
+                    Employee.employee_id == ArrearsTransaction.employee_id,
+                    Employee.org_id == org_id,
+                ),
+                isouter=True,
+            )
+            if branch_id is not None:
+                conds.append(Employee.master_branch_id == branch_id)
+            if search and search.strip():
+                term = f"%{search.strip()}%"
+                conds.append(
+                    or_(
+                        Employee.employee_name.ilike(term),
+                        Employee.display_name.ilike(term),
+                        Employee.employee_code.ilike(term),
+                    )
+                )
+
+        return stmt.where(and_(*conds))
 
     async def search_all_transactions(
         self,
@@ -562,6 +663,8 @@ class ArrearsTransactionRepository(BaseRepository[ArrearsTransaction]):
         source: str | None = None,
         date_from: date | None = None,
         date_to: date | None = None,
+        search: str | None = None,
+        branch_id: int | None = None,
         sort_by: str | None = "transaction_date",
         sort_order: str | SortOrder = SortOrder.DESC,
         page: int = 1,
@@ -575,6 +678,8 @@ class ArrearsTransactionRepository(BaseRepository[ArrearsTransaction]):
             source=source,
             date_from=date_from,
             date_to=date_to,
+            search=search,
+            branch_id=branch_id,
         )
         stmt = apply_sorting(
             stmt,
@@ -596,6 +701,8 @@ class ArrearsTransactionRepository(BaseRepository[ArrearsTransaction]):
         source: str | None = None,
         date_from: date | None = None,
         date_to: date | None = None,
+        search: str | None = None,
+        branch_id: int | None = None,
     ) -> int:
         """Return count of org-wide arrears transactions matching filters."""
         base_stmt = self._build_search_all_query(
@@ -605,6 +712,8 @@ class ArrearsTransactionRepository(BaseRepository[ArrearsTransaction]):
             source=source,
             date_from=date_from,
             date_to=date_to,
+            search=search,
+            branch_id=branch_id,
         )
         stmt = select(func.count()).select_from(base_stmt.subquery())
         return int((await self.session.execute(stmt)).scalar_one())

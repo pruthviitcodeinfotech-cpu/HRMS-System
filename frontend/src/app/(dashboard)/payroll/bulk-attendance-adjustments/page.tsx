@@ -795,8 +795,8 @@ export default function BulkAttendanceAdjustmentsPage() {
             </div>
           ) : (
             /* Matrix Table Grid */
-            <div className="overflow-x-auto overflow-y-auto max-h-[620px]">
-              <table className="w-full text-left border-collapse min-w-max text-xs">
+            <div className="overflow-x-auto overflow-y-auto min-h-[380px] max-h-[620px] pb-20">
+              <table className="w-full text-left border-collapse min-w-max text-xs mb-12">
                 
                 {/* Double Row Table Header */}
                 <thead className="sticky top-0 z-20 bg-slate-100 dark:bg-slate-800/90 text-slate-700 dark:text-slate-300 font-bold border-b border-slate-200 dark:border-slate-700 shadow-2xs">

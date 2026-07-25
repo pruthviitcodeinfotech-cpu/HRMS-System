@@ -45,7 +45,11 @@ async def main():
             await session.flush()
             print("Seeded User ID 1 (user@example.com / Secret123)")
         else:
-            print("User user@example.com already exists")
+            user.password_hash = hash_password("Secret123")
+            user.is_active = True
+            session.add(user)
+            await session.flush()
+            print("User user@example.com updated with password Secret123")
 
         # Seed membership
         stmt_mem = select(UserOrganizationMembership).where(
