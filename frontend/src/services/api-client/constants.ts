@@ -4,6 +4,7 @@ export const HTTP_HEADERS = {
   AUTHORIZATION: "Authorization",
   CONTENT_TYPE: "Content-Type",
   X_ORG_ID: "x-org-id",
+  X_BRANCH_ID: "x-branch-id",
 } as const;
 
 export const AUTH_ENDPOINTS = {

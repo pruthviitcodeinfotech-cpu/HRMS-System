@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { keepPreviousData, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { employeeService } from "../services/employees";
 import { EmployeeListParams, DepartmentListParams, DesignationListParams, BranchListParams, BranchCreatePayload, BranchUpdatePayload } from "../types";
+import { useBranchContext } from "@/context/branch-context";
 
 // Query-key factory: every employee cache entry lives under ["employees", ...]
 export const employeeKeys = {
@@ -25,10 +26,15 @@ export const departmentKeys = {
  * so pagination and filter changes do not flash the loading skeleton.
  */
 export const useEmployees = (params: EmployeeListParams) => {
+  const { selectedBranchId } = useBranchContext();
+  const effectiveParams = {
+    ...params,
+    branch_id: params.branch_id || selectedBranchId || undefined,
+  };
   return useQuery({
-    queryKey: employeeKeys.list(params),
+    queryKey: employeeKeys.list(effectiveParams),
     queryFn: async () => {
-      const response = await employeeService.getEmployees(params);
+      const response = await employeeService.getEmployees(effectiveParams);
       return response.data;
     },
     placeholderData: keepPreviousData,
@@ -37,11 +43,13 @@ export const useEmployees = (params: EmployeeListParams) => {
 
 /** Org-wide active-employee total for the page heading (1-row page, count only). */
 export const useActiveEmployeeCount = () => {
+  const { selectedBranchId } = useBranchContext();
   return useQuery({
-    queryKey: employeeKeys.activeCount(),
+    queryKey: [...employeeKeys.activeCount(), selectedBranchId],
     queryFn: async () => {
       const response = await employeeService.getEmployees({
         status: "active",
+        branch_id: selectedBranchId || undefined,
         page: 1,
         page_size: 1,
       });

@@ -6,6 +6,7 @@ import {
   LeaveTypeUpdateRequest,
   LeaveSettingsUpdateRequest,
 } from "../types";
+import { useBranchContext } from "@/context/branch-context";
 
 // Query-key factory
 export const leaveKeys = {
@@ -128,10 +129,15 @@ export const useUpdateLeaveSettings = () => {
  * List employee leave balances (GET /leave-balances).
  */
 export const useLeaveBalances = (params: import("../types").LeaveBalanceListParams = {}) => {
+  const { selectedBranchId } = useBranchContext();
+  const effectiveParams = {
+    ...params,
+    branch_id: params.branch_id || selectedBranchId || undefined,
+  };
   return useQuery({
-    queryKey: leaveKeys.balances(params),
+    queryKey: leaveKeys.balances(effectiveParams),
     queryFn: async () => {
-      const response = await leaveService.getLeaveBalances(params);
+      const response = await leaveService.getLeaveBalances(effectiveParams);
       return response.data;
     },
     placeholderData: keepPreviousData,

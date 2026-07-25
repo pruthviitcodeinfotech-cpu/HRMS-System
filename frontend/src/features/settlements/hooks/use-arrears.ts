@@ -7,6 +7,7 @@ import {
   ArrearsPayPayload,
   ArrearsUpdatePayload,
 } from "../types";
+import { useBranchContext } from "@/context/branch-context";
 
 export const arrearsKeys = {
   all: ["arrears"] as const,
@@ -19,10 +20,15 @@ export const arrearsKeys = {
 };
 
 export const useArrears = (params: ArrearsListParams = {}) => {
+  const { selectedBranchId } = useBranchContext();
+  const effectiveParams = {
+    ...params,
+    branch_id: params.branch_id || selectedBranchId || undefined,
+  };
   return useQuery({
-    queryKey: arrearsKeys.list(params),
+    queryKey: arrearsKeys.list(effectiveParams),
     queryFn: async () => {
-      const res = await arrearsService.getArrears(params);
+      const res = await arrearsService.getArrears(effectiveParams);
       return (
         res.data || {
           items: [],
@@ -54,10 +60,15 @@ export const useArrearsDetails = (id: number | null) => {
 };
 
 export const useArrearsLogs = (params: ArrearsLogsParams = {}, enabled = true) => {
+  const { selectedBranchId } = useBranchContext();
+  const effectiveParams = {
+    ...params,
+    branch_id: params.branch_id || selectedBranchId || undefined,
+  };
   return useQuery({
-    queryKey: arrearsKeys.logList(params),
+    queryKey: arrearsKeys.logList(effectiveParams),
     queryFn: async () => {
-      const res = await arrearsService.getArrearsLogs(params);
+      const res = await arrearsService.getArrearsLogs(effectiveParams);
       return (
         res.data || {
           items: [],

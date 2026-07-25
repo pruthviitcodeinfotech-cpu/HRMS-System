@@ -8,6 +8,7 @@ import {
   LoanAdvanceUpdatePayload,
   LoanAdvanceSchema,
 } from "../types";
+import { useBranchContext } from "@/context/branch-context";
 
 export const loanAdvanceKeys = {
   all: ["loan-advance"] as const,
@@ -22,10 +23,15 @@ export const loanAdvanceKeys = {
 };
 
 export const useLoansAdvances = (params: LoanAdvanceListParams = {}) => {
+  const { selectedBranchId } = useBranchContext();
+  const effectiveParams = {
+    ...params,
+    branch_id: params.branch_id || selectedBranchId || undefined,
+  };
   return useQuery({
-    queryKey: loanAdvanceKeys.list(params),
+    queryKey: loanAdvanceKeys.list(effectiveParams),
     queryFn: async () => {
-      const res = await loanAdvanceService.getLoansAdvances(params);
+      const res = await loanAdvanceService.getLoansAdvances(effectiveParams);
       return res.data;
     },
     staleTime: 1000 * 30, // 30 seconds
@@ -45,10 +51,15 @@ export const useLoanAdvanceDetails = (id: number | null) => {
 };
 
 export const useLoanAdvanceLogs = (params: LoanAdvanceLogsParams = {}, enabled = true) => {
+  const { selectedBranchId } = useBranchContext();
+  const effectiveParams = {
+    ...params,
+    branch_id: params.branch_id || selectedBranchId || undefined,
+  };
   return useQuery({
-    queryKey: loanAdvanceKeys.logList(params),
+    queryKey: loanAdvanceKeys.logList(effectiveParams),
     queryFn: async () => {
-      const res = await loanAdvanceService.getLoanAdvanceLogs(params);
+      const res = await loanAdvanceService.getLoanAdvanceLogs(effectiveParams);
       return res.data;
     },
     enabled,

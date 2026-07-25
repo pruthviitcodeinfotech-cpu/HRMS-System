@@ -139,6 +139,7 @@ export interface ShiftAssignmentQuery {
   page?: number;
   page_size?: number;
   employee_id?: number;
+  branch_id?: number;
   shift_id?: number;
   active_on?: string;
   date?: string;

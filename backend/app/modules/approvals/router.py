@@ -19,6 +19,7 @@ from app.core.dependencies.auth import (
     get_current_active_user,
     require_permission,
 )
+from app.core.dependencies.branch import BranchIdDep
 from app.core.dependencies.db import get_db
 from app.core.dependencies.pagination import PaginationParams, pagination_params
 from app.core.exceptions.base import AppException
@@ -161,7 +162,7 @@ async def list_approvals(
     employee_id: Annotated[int | None, Query(description="Filter by employee ID.")] = None,
     date_from: Annotated[date | None, Query(description="Filter by start requested date.")] = None,
     date_to: Annotated[date | None, Query(description="Filter by end requested date.")] = None,
-    branch_id: Annotated[int | None, Query(description="Filter by branch.")] = None,
+    branch_id: BranchIdDep = None,
     dept_id: Annotated[int | None, Query(description="Filter by department.")] = None,
     pagination: Annotated[PaginationParams, Depends(pagination_params)] = None,
 ) -> dict[str, Any]:

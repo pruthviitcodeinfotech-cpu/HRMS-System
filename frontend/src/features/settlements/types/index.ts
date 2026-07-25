@@ -72,6 +72,7 @@ export interface LoanAdvanceListParams {
   page?: number;
   page_size?: number;
   employee_id?: number;
+  branch_id?: number;
   type?: LoanAdvanceType;
   status?: "active" | "closed" | "all";
   search?: string;
@@ -190,6 +191,7 @@ export interface ArrearsLogsParams {
   page?: number;
   page_size?: number;
   employee_id?: number;
+  branch_id?: number;
   transaction_type?: TransactionType;
   source?: TransactionSource;
   date_from?: string;

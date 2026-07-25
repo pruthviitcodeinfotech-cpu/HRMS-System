@@ -24,6 +24,7 @@ from app.core.dependencies.auth import (
     get_current_active_user,
     require_permission,
 )
+from app.core.dependencies.branch import BranchIdDep
 from app.core.dependencies.pagination import PaginationParams, pagination_params
 from app.core.exceptions.base import AppException
 from app.core.middleware.request_context import get_request_id
@@ -713,6 +714,7 @@ async def list_finalized_payroll_history(
     org_id: OrgIdDep,
     pagination: Annotated[PaginationParams, Depends(pagination_params)],
     payroll_group_id: Annotated[int | None, Query(description="Filter by payroll group.")] = None,
+    branch_id: BranchIdDep = None,
     from_date: Annotated[datetime.date | None, Query(description="Cycle start date.")] = None,
     to_date: Annotated[datetime.date | None, Query(description="Cycle end date.")] = None,
     status: Annotated[str | None, Query(description="Filter by status.")] = None,
@@ -721,6 +723,7 @@ async def list_finalized_payroll_history(
     result = await service.list_finalized_payrolls(
         org_id=org_id,
         group_id=payroll_group_id,
+        branch_id=branch_id,
         from_date=from_date,
         to_date=to_date,
         status=status,
@@ -1186,7 +1189,7 @@ async def get_bulk_attendance_matrix(
     pagination: Annotated[PaginationParams, Depends(pagination_params)],
     date_from: Annotated[datetime.date, Query(description="Start date (inclusive).")],
     date_to: Annotated[datetime.date, Query(description="End date (inclusive).")],
-    branch_id: Annotated[int | None, Query(description="Filter by branch ID.")] = None,
+    branch_id: BranchIdDep = None,
     dept_id: Annotated[int | None, Query(description="Filter by department ID.")] = None,
     search: Annotated[str | None, Query(description="Search by employee name or code.")] = None,
 ) -> dict[str, Any]:

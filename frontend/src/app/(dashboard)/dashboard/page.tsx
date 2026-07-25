@@ -31,6 +31,7 @@ import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import { usePendingApprovals } from "@/features/approvals";
 import { usePermissions } from "@/features/auth";
+import { useBranchContext } from "@/context/branch-context";
 import {
   useDashboardKPIs,
   useAttendanceDays,
@@ -272,8 +273,11 @@ export default function DashboardPage() {
   const [drawerTitle, setDrawerTitle] = useState<string | null>(null);
   const [selectedKpi, setSelectedKpi] = useState<string>("Total Employees");
 
+  // Branch context
+  const { selectedBranchId } = useBranchContext();
+
   // Queries
-  const { data: kpiData, isLoading: isKpisLoading, error: kpisError } = useDashboardKPIs(targetDate);
+  const { data: kpiData, isLoading: isKpisLoading, error: kpisError } = useDashboardKPIs(targetDate, selectedBranchId);
   const {
     data: attendanceData,
     isLoading: isAttendanceLoading,
@@ -281,14 +285,16 @@ export default function DashboardPage() {
     refetch: refetchAttendance,
   } = useAttendanceDays({
     date: targetDate,
+    branch_id: selectedBranchId,
     page: 1,
     page_size: 150, // Fetch all records for drawer matching
   });
-  const { data: shiftData, isLoading: isShiftsLoading, error: shiftsError, refetch: refetchShifts } = useShiftSummary(targetDate);
-  const { data: deptChartData, isLoading: isDeptLoading, error: deptError } = useDepartmentAttendance(targetDate);
+  const { data: shiftData, isLoading: isShiftsLoading, error: shiftsError, refetch: refetchShifts } = useShiftSummary(targetDate, selectedBranchId);
+  const { data: deptChartData, isLoading: isDeptLoading, error: deptError } = useDepartmentAttendance(targetDate, selectedBranchId);
   const { data: devicesData, isLoading: isDevicesLoading, error: devicesError, refetch: refetchDevices } = useDevicesList({
     page: 1,
     page_size: 50,
+    branch_id: selectedBranchId,
   });
   const { hasPermission } = usePermissions();
   const canReadApprovals = hasPermission("approval", "read");
@@ -297,7 +303,7 @@ export default function DashboardPage() {
     { page: 1, page_size: 5 },
     { enabled: canReadApprovals }
   );
-  const { data: pendingBioData } = usePendingBiometrics({ page: 1, page_size: 100 });
+  const { data: pendingBioData } = usePendingBiometrics({ page: 1, page_size: 100, branch_id: selectedBranchId });
 
   // Query Client & Mutations
   const queryClient = useQueryClient();

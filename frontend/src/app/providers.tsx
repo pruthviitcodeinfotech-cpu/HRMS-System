@@ -6,6 +6,7 @@ import { queryClient } from "@/lib/query-client";
 import { ThemeProvider } from "@/providers/theme-provider";
 import { LoadingProvider } from "@/providers/loading-provider";
 import { AuthProvider } from "@/features/auth";
+import { BranchProvider } from "@/context/branch-context";
 import { Toaster } from "sonner";
 
 export default function Providers({ children }: { children: React.ReactNode }) {
@@ -14,8 +15,10 @@ export default function Providers({ children }: { children: React.ReactNode }) {
       <ThemeProvider>
         <LoadingProvider>
           <AuthProvider>
-            {children}
-            <Toaster position="bottom-right" richColors closeButton />
+            <BranchProvider>
+              {children}
+              <Toaster position="bottom-right" richColors closeButton />
+            </BranchProvider>
           </AuthProvider>
         </LoadingProvider>
       </ThemeProvider>

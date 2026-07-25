@@ -18,6 +18,7 @@ from app.core.dependencies.auth import (
     get_current_active_user,
     require_permission,
 )
+from app.core.dependencies.branch import BranchIdDep
 from app.core.dependencies.pagination import PaginationParams, pagination_params
 from app.core.exceptions.base import AppException
 from app.core.middleware.request_context import get_request_id
@@ -111,7 +112,7 @@ async def list_devices(
     search: Annotated[str | None, Query(description="Search by name, code or serial number.")] = None,
     status: Annotated[DeviceStatus | None, Query(description="Filter by connectivity status.")] = None,
     protocol: Annotated[DeviceProtocol | None, Query(description="Filter by communication protocol.")] = None,
-    branch_id: Annotated[int | None, Query(description="Filter by branch assignment.")] = None,
+    branch_id: BranchIdDep = None,
     is_active: Annotated[bool | None, Query(description="Filter by administrative active state.")] = None,
     adms_enabled: Annotated[bool | None, Query(description="Filter by ADMS enabled mode.")] = None,
     sort_by: Annotated[str | None, Query(description="Field to sort by (device_name, created_at, last_seen_at).")] = None,

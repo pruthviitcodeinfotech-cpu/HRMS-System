@@ -34,6 +34,7 @@ export interface ActivityLogListResponseData {
 export interface ActivityLogQueryParams {
   page?: number;
   page_size?: number;
+  branch_id?: number;
   module?: string;
   sub_module?: string;
   action_type?: string;

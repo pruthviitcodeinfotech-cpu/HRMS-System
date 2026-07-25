@@ -22,6 +22,7 @@ from app.core.dependencies.auth import (
     get_current_active_user,
     require_permission,
 )
+from app.core.dependencies.branch import BranchIdDep
 from app.core.dependencies.pagination import PaginationParams, pagination_params
 from app.core.exceptions.base import AppException
 from app.core.middleware.request_context import get_request_id
@@ -152,7 +153,7 @@ async def search_loans_advances(
         datetime.date | None, Query(description="End range of transaction date.")
     ] = None,
     search: Annotated[str | None, Query(description="Free-text search on name.")] = None,
-    branch_id: Annotated[int | None, Query(description="Filter by branch ID.")] = None,
+    branch_id: BranchIdDep = None,
     dept_id: Annotated[int | None, Query(description="Filter by department ID.")] = None,
     sort_by: Annotated[str | None, Query(description="Field to sort by.")] = None,
     sort_order: Annotated[str | None, Query(description="Sort order (asc/desc).")] = None,
@@ -386,7 +387,7 @@ async def list_loan_advance_logs(
     source: Annotated[TransactionSource | None, Query(description="Filter by source.")] = None,
     date_from: Annotated[datetime.date | None, Query(description="Start date.")] = None,
     date_to: Annotated[datetime.date | None, Query(description="End date.")] = None,
-    branch_id: Annotated[int | None, Query(description="Filter by branch ID.")] = None,
+    branch_id: BranchIdDep = None,
     sort_by: Annotated[str | None, Query(description="Sort field.")] = None,
     sort_order: Annotated[str | None, Query(description="Sort order.")] = None,
 ) -> dict[str, Any]:
@@ -423,6 +424,7 @@ async def get_loan_transactions(
     transaction_type: Annotated[
         TransactionType | None, Query(description="Filter by transaction type.")
     ] = None,
+    branch_id: BranchIdDep = None,
     sort_by: Annotated[str | None, Query(description="Sort field.")] = None,
     sort_order: Annotated[str | None, Query(description="Sort order.")] = None,
 ) -> dict[str, Any]:
@@ -431,6 +433,7 @@ async def get_loan_transactions(
         page=pagination.page,
         page_size=pagination.page_size,
         transaction_type=transaction_type,
+        branch_id=branch_id,
         sort_by=sort_by,
         sort_order=sort_order,
     )
@@ -675,7 +678,7 @@ async def list_arrears(
     org_id: OrgIdDep,
     pagination: Annotated[PaginationParams, Depends(pagination_params)],
     employee_id: Annotated[int | None, Query(description="Filter by employee ID.")] = None,
-    branch_id: Annotated[int | None, Query(description="Filter by branch ID.")] = None,
+    branch_id: BranchIdDep = None,
     dept_id: Annotated[int | None, Query(description="Filter by department ID.")] = None,
     min_outstanding: Annotated[
         Decimal | None, Query(description="Minimum outstanding arrears filter.")

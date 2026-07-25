@@ -19,6 +19,7 @@ from app.core.dependencies.auth import (
     get_current_active_user,
     require_permission,
 )
+from app.core.dependencies.branch import BranchIdDep
 from app.core.dependencies.db import get_db
 from app.core.dependencies.pagination import PaginationParams, pagination_params
 from app.core.exceptions.base import AppException
@@ -109,7 +110,7 @@ async def list_attendance_days(
     q_date: Annotated[date | None, Query(alias="date", description="Target calendar date.")] = None,
     date_from: Annotated[date | None, Query(alias="date_from", description="Start date of range.")] = None,
     date_to: Annotated[date | None, Query(alias="date_to", description="End date of range.")] = None,
-    branch_id: Annotated[int | None, Query(description="Filter by branch.")] = None,
+    branch_id: BranchIdDep = None,
     department_id: Annotated[int | None, Query(description="Filter by department.")] = None,
     shift_id: Annotated[int | None, Query(description="Filter by shift.")] = None,
     pagination: Annotated[PaginationParams, Depends(pagination_params)] = None,
@@ -548,7 +549,7 @@ async def get_daily_summary(
     service: ServiceDep,
     org_id: OrgIdDep,
     q_date: Annotated[date, Query(alias="date", description="Target summary date.")],
-    branch_id: Annotated[int | None, Query(description="Filter by branch.")] = None,
+    branch_id: BranchIdDep = None,
     department_id: Annotated[int | None, Query(description="Filter by department.")] = None,
     shift_id: Annotated[int | None, Query(description="Filter by shift.")] = None,
 ) -> dict[str, Any]:
@@ -575,7 +576,7 @@ async def get_monthly_summary(
     month: Annotated[int, Query(ge=1, le=12, description="Month.")],
     year: Annotated[int, Query(ge=1900, le=2100, description="Year.")],
     employee_id: Annotated[int | None, Query(description="Filter by employee.")] = None,
-    branch_id: Annotated[int | None, Query(description="Filter by branch.")] = None,
+    branch_id: BranchIdDep = None,
     department_id: Annotated[int | None, Query(description="Filter by department.")] = None,
     shift_id: Annotated[int | None, Query(description="Filter by shift.")] = None,
 ) -> dict[str, Any]:

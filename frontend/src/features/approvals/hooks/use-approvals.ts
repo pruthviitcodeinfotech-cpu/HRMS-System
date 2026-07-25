@@ -9,12 +9,18 @@ import {
   BackendRequestType,
   ApprovalStatus,
 } from "../types";
+import { useBranchContext } from "@/context/branch-context";
 
 export const useApprovalsList = (params: ApprovalQueryParams = {}) => {
+  const { selectedBranchId } = useBranchContext();
+  const effectiveParams = {
+    ...params,
+    branch_id: params.branch_id || selectedBranchId || undefined,
+  };
   return useQuery({
-    queryKey: ["approvals", "list", params],
+    queryKey: ["approvals", "list", effectiveParams],
     queryFn: async () => {
-      const response = await approvalService.getApprovals(params);
+      const response = await approvalService.getApprovals(effectiveParams);
       return response.data;
     },
   });
@@ -29,10 +35,15 @@ export const usePendingApprovals = (
   },
   options?: { enabled?: boolean }
 ) => {
+  const { selectedBranchId } = useBranchContext();
+  const effectiveParams = {
+    ...(params || {}),
+    branch_id: params?.branch_id || selectedBranchId || undefined,
+  };
   return useQuery({
-    queryKey: ["approvals", "pending", params || {}],
+    queryKey: ["approvals", "pending", effectiveParams],
     queryFn: async () => {
-      const response = await approvalService.getPendingApprovals(params);
+      const response = await approvalService.getPendingApprovals(effectiveParams);
       return response.data;
     },
     ...options,
@@ -49,10 +60,15 @@ export const useApprovalHistory = (params?: {
   page?: number;
   page_size?: number;
 }) => {
+  const { selectedBranchId } = useBranchContext();
+  const effectiveParams = {
+    ...(params || {}),
+    branch_id: params?.branch_id || selectedBranchId || undefined,
+  };
   return useQuery({
-    queryKey: ["approvals", "history", params || {}],
+    queryKey: ["approvals", "history", effectiveParams],
     queryFn: async () => {
-      const response = await approvalService.getApprovalHistory(params);
+      const response = await approvalService.getApprovalHistory(effectiveParams);
       return response.data;
     },
   });
@@ -64,10 +80,15 @@ export const useMyPendingApprovals = (params?: {
   page?: number;
   page_size?: number;
 }) => {
+  const { selectedBranchId } = useBranchContext();
+  const effectiveParams = {
+    ...(params || {}),
+    branch_id: params?.branch_id || selectedBranchId || undefined,
+  };
   return useQuery({
-    queryKey: ["approvals", "my-pending", params || {}],
+    queryKey: ["approvals", "my-pending", effectiveParams],
     queryFn: async () => {
-      const response = await approvalService.getMyPendingApprovals(params);
+      const response = await approvalService.getMyPendingApprovals(effectiveParams);
       return response.data;
     },
   });
@@ -80,10 +101,15 @@ export const useRecentDecisions = (params: {
   dept_id?: number;
   limit?: number;
 }) => {
+  const { selectedBranchId } = useBranchContext();
+  const effectiveParams = {
+    ...params,
+    branch_id: params.branch_id || selectedBranchId || undefined,
+  };
   return useQuery({
-    queryKey: ["approvals", "recent", params],
+    queryKey: ["approvals", "recent", effectiveParams],
     queryFn: async () => {
-      const response = await approvalService.getRecentDecisions(params);
+      const response = await approvalService.getRecentDecisions(effectiveParams);
       return response.data;
     },
   });

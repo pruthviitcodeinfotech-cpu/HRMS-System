@@ -67,6 +67,7 @@ export interface AttendancePunchesQueryParams {
   from: string;
   to: string;
   employee_id?: number;
+  branch_id?: number;
   device_id?: number;
   page?: number;
   page_size?: number;
@@ -563,6 +564,7 @@ export interface LeaveTakenReportData {
 export interface EmployeeDayWiseMasterReportQueryParams {
   date_from?: string;
   date_to?: string;
+  branch_id?: number;
   department_id?: number;
   designation_id?: number;
   page?: number;

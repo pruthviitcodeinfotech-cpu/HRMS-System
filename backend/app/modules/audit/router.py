@@ -25,6 +25,7 @@ from app.core.dependencies.auth import (
     get_current_active_user,
     require_permission,
 )
+from app.core.dependencies.branch import BranchIdDep
 from app.core.exceptions.base import AppException
 from app.core.middleware.request_context import get_request_id
 from app.modules.audit.constants import ActionFrom, ActionType
@@ -97,6 +98,7 @@ async def list_activity_logs(
     performed_by_user_id: Annotated[int | None, Query(description="Filter by acting user.")] = None,
     date_from: Annotated[datetime.date | None, Query(description="log_date lower bound.")] = None,
     date_to: Annotated[datetime.date | None, Query(description="log_date upper bound.")] = None,
+    branch_id: BranchIdDep = None,
     search: Annotated[str | None, Query(description="Free-text on title/description.")] = None,
     sort_by: Annotated[str | None, Query(description="logged_at (default) | log_date.")] = None,
     sort_order: Annotated[SortOrder, Query(description="asc | desc.")] = SortOrder.DESC,
@@ -113,6 +115,7 @@ async def list_activity_logs(
         performed_by_user_id=performed_by_user_id,
         date_from=date_from,
         date_to=date_to,
+        branch_id=branch_id,
         search=search,
         sort_by=sort_by,
         sort_order=sort_order,

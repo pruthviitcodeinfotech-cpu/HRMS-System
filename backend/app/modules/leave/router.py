@@ -20,6 +20,7 @@ from app.core.dependencies.auth import (
     get_current_active_user,
     require_permission,
 )
+from app.core.dependencies.branch import BranchIdDep
 from app.core.dependencies.pagination import PaginationParams, pagination_params
 from app.core.exceptions.base import AppException
 from app.core.middleware.request_context import get_request_id
@@ -263,7 +264,7 @@ async def list_leave_balances(
     leave_type_id: Annotated[int | None, Query(description="Filter by leave type.")] = None,
     cycle_year: Annotated[int | None, Query(description="Filter by cycle year.")] = None,
     employee_id: Annotated[int | None, Query(description="Filter by employee.")] = None,
-    branch_id: Annotated[int | None, Query(description="Filter by branch.")] = None,
+    branch_id: BranchIdDep = None,
     dept_id: Annotated[int | None, Query(description="Filter by department.")] = None,
 ) -> dict[str, Any]:
     """Search and paginate employee leave balances (org-scoped)."""
@@ -475,7 +476,7 @@ async def list_leave_requests(
     ] = None,
     date_from: Annotated[datetime.date | None, Query(description="Overlap range start.")] = None,
     date_to: Annotated[datetime.date | None, Query(description="Overlap range end.")] = None,
-    branch_id: Annotated[int | None, Query(description="Filter by branch.")] = None,
+    branch_id: BranchIdDep = None,
     dept_id: Annotated[int | None, Query(description="Filter by department.")] = None,
     sort_by: Annotated[str | None, Query(description="Sort field.")] = "applied_on",
     sort_dir: Annotated[SortOrder, Query(description="Sort direction.")] = SortOrder.DESC,

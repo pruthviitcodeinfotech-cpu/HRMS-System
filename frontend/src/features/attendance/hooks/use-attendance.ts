@@ -24,6 +24,7 @@ import {
 } from "../services/attendance";
 
 import { leaveService } from "@/features/leaves/services";
+import { useBranchContext } from "@/context/branch-context";
 
 export const attendanceKeys = {
   all: ["attendance"] as const,
@@ -66,10 +67,15 @@ const getErrorMessage = (error: unknown, fallback: string): string => {
  * Fetch daily attendance records (GET /attendance/days)
  */
 export const useAttendanceDays = (params: AttendanceDailyQueryParams, enabled = true) => {
+  const { selectedBranchId } = useBranchContext();
+  const effectiveParams = {
+    ...params,
+    branch_id: params.branch_id || selectedBranchId || undefined,
+  };
   return useQuery({
-    queryKey: attendanceKeys.dayList(params),
+    queryKey: attendanceKeys.dayList(effectiveParams),
     queryFn: async () => {
-      const response = await attendanceService.getAttendanceDays(params);
+      const response = await attendanceService.getAttendanceDays(effectiveParams);
       return response.data;
     },
     placeholderData: keepPreviousData,
@@ -81,10 +87,15 @@ export const useAttendanceDays = (params: AttendanceDailyQueryParams, enabled = 
  * Fetch daily summary metrics (GET /attendance/summary/daily)
  */
 export const useDailySummary = (params: AttendanceDailySummaryParams, enabled = true) => {
+  const { selectedBranchId } = useBranchContext();
+  const effectiveParams = {
+    ...params,
+    branch_id: params.branch_id || selectedBranchId || undefined,
+  };
   return useQuery({
-    queryKey: attendanceKeys.dailySummary(params),
+    queryKey: attendanceKeys.dailySummary(effectiveParams),
     queryFn: async () => {
-      const response = await attendanceService.getDailySummary(params);
+      const response = await attendanceService.getDailySummary(effectiveParams);
       return response.data;
     },
     enabled: enabled && !!params.date,
@@ -95,10 +106,15 @@ export const useDailySummary = (params: AttendanceDailySummaryParams, enabled = 
  * Fetch monthly attendance summary (GET /attendance/summary/monthly)
  */
 export const useMonthlySummary = (params: AttendanceMonthlySummaryParams, enabled = true) => {
+  const { selectedBranchId } = useBranchContext();
+  const effectiveParams = {
+    ...params,
+    branch_id: params.branch_id || selectedBranchId || undefined,
+  };
   return useQuery({
-    queryKey: attendanceKeys.monthlySummary(params),
+    queryKey: attendanceKeys.monthlySummary(effectiveParams),
     queryFn: async () => {
-      const response = await attendanceService.getMonthlySummary(params);
+      const response = await attendanceService.getMonthlySummary(effectiveParams);
       return response.data;
     },
     enabled: enabled && !!params.month && !!params.year,
@@ -109,10 +125,15 @@ export const useMonthlySummary = (params: AttendanceMonthlySummaryParams, enable
  * Fetch raw attendance punches (GET /attendance/punches)
  */
 export const useAttendancePunches = (params: AttendancePunchesQueryParams, enabled = true) => {
+  const { selectedBranchId } = useBranchContext();
+  const effectiveParams = {
+    ...params,
+    branch_id: params.branch_id || selectedBranchId || undefined,
+  };
   return useQuery({
-    queryKey: attendanceKeys.punchList(params),
+    queryKey: attendanceKeys.punchList(effectiveParams),
     queryFn: async () => {
-      const response = await attendanceService.getAttendancePunches(params);
+      const response = await attendanceService.getAttendancePunches(effectiveParams);
       return response.data;
     },
     placeholderData: keepPreviousData,
@@ -263,10 +284,15 @@ export const useAttendanceLocks = () => {
  * Fetch Daily Punch Matrix Report (GET /reports/attendance/daily-punch)
  */
 export const useDailyPunchReport = (params: DailyPunchReportQueryParams, enabled = true) => {
+  const { selectedBranchId } = useBranchContext();
+  const effectiveParams = {
+    ...params,
+    branch_id: params.branch_id || selectedBranchId || undefined,
+  };
   return useQuery({
-    queryKey: attendanceKeys.dailyPunchReport(params),
+    queryKey: attendanceKeys.dailyPunchReport(effectiveParams),
     queryFn: async () => {
-      const response = await attendanceService.getDailyPunchReport(params);
+      const response = await attendanceService.getDailyPunchReport(effectiveParams);
       return response.data;
     },
     placeholderData: keepPreviousData,
@@ -278,10 +304,15 @@ export const useDailyPunchReport = (params: DailyPunchReportQueryParams, enabled
  * Fetch Working Hours Matrix Report (GET /reports/attendance/working-hours)
  */
 export const useWorkingHoursReport = (params: WorkingHoursReportQueryParams, enabled = true) => {
+  const { selectedBranchId } = useBranchContext();
+  const effectiveParams = {
+    ...params,
+    branch_id: params.branch_id || selectedBranchId || undefined,
+  };
   return useQuery({
-    queryKey: attendanceKeys.workingHoursReport(params),
+    queryKey: attendanceKeys.workingHoursReport(effectiveParams),
     queryFn: async () => {
-      const response = await attendanceService.getWorkingHoursReport(params);
+      const response = await attendanceService.getWorkingHoursReport(effectiveParams);
       return response.data;
     },
     placeholderData: keepPreviousData,
@@ -293,10 +324,15 @@ export const useWorkingHoursReport = (params: WorkingHoursReportQueryParams, ena
  * Fetch Muster Roll Report (GET /reports/attendance/muster)
  */
 export const useMusterReport = (params: MusterReportQueryParams, enabled = true) => {
+  const { selectedBranchId } = useBranchContext();
+  const effectiveParams = {
+    ...params,
+    branch_id: params.branch_id || selectedBranchId || undefined,
+  };
   return useQuery({
-    queryKey: attendanceKeys.musterReport(params),
+    queryKey: attendanceKeys.musterReport(effectiveParams),
     queryFn: async () => {
-      const response = await attendanceService.getMusterReport(params);
+      const response = await attendanceService.getMusterReport(effectiveParams);
       return response.data;
     },
     placeholderData: keepPreviousData,
@@ -308,10 +344,15 @@ export const useMusterReport = (params: MusterReportQueryParams, enabled = true)
  * Fetch Branch Wise Punch Report (GET /reports/attendance/branch-wise-punch)
  */
 export const useBranchWisePunchReport = (params: BranchWisePunchReportQueryParams, enabled = true) => {
+  const { selectedBranchId } = useBranchContext();
+  const effectiveParams = {
+    ...params,
+    branch_id: params.branch_id || selectedBranchId || undefined,
+  };
   return useQuery({
-    queryKey: attendanceKeys.branchWisePunchReport(params),
+    queryKey: attendanceKeys.branchWisePunchReport(effectiveParams),
     queryFn: async () => {
-      const response = await attendanceService.getBranchWisePunchReport(params);
+      const response = await attendanceService.getBranchWisePunchReport(effectiveParams);
       return response.data;
     },
     placeholderData: keepPreviousData,
@@ -476,8 +517,13 @@ const generateMockLeaveTakenData = (params: LeaveTakenReportQueryParams, leaveTy
  * Fetch Leave Taken Report (GET /reports/leave/taken)
  */
 export const useLeaveTakenReport = (params: LeaveTakenReportQueryParams, enabled = true) => {
+  const { selectedBranchId } = useBranchContext();
+  const effectiveParams = {
+    ...params,
+    branch_id: params.branch_id || selectedBranchId || undefined,
+  };
   return useQuery({
-    queryKey: attendanceKeys.leaveTakenReport(params),
+    queryKey: attendanceKeys.leaveTakenReport(effectiveParams),
     queryFn: async () => {
       if (USE_MOCK_DATA) {
         // Fetch active leave types from database (only those created under Leave Create)
@@ -496,9 +542,9 @@ export const useLeaveTakenReport = (params: LeaveTakenReportQueryParams, enabled
 
         // Return realistic mock data simulation with brief delay to mimic network latency
         await new Promise((resolve) => setTimeout(resolve, 200));
-        return generateMockLeaveTakenData(params, activeLeaveTypes);
+        return generateMockLeaveTakenData(effectiveParams, activeLeaveTypes);
       }
-      const response = await attendanceService.getLeaveTakenReport(params);
+      const response = await attendanceService.getLeaveTakenReport(effectiveParams);
       return response.data;
     },
     placeholderData: keepPreviousData,
@@ -513,10 +559,15 @@ export const useEmployeeDayWiseMasterReport = (
   params: EmployeeDayWiseMasterReportQueryParams,
   enabled = true
 ) => {
+  const { selectedBranchId } = useBranchContext();
+  const effectiveParams = {
+    ...params,
+    branch_id: params.branch_id || selectedBranchId || undefined,
+  };
   return useQuery({
-    queryKey: attendanceKeys.employeeDayWiseMasterReport(params),
+    queryKey: attendanceKeys.employeeDayWiseMasterReport(effectiveParams),
     queryFn: async () => {
-      const response = await attendanceService.getEmployeeDayWiseMasterReport(params);
+      const response = await attendanceService.getEmployeeDayWiseMasterReport(effectiveParams);
       return response.data;
     },
     placeholderData: keepPreviousData,

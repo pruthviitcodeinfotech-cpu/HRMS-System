@@ -27,6 +27,13 @@ axiosClient.interceptors.request.use(
       config.headers[HTTP_HEADERS.X_ORG_ID] = user.orgId;
     }
 
+    if (typeof window !== "undefined") {
+      const storedBranchId = localStorage.getItem("selected_branch_id");
+      if (storedBranchId && storedBranchId !== "null" && storedBranchId !== "all") {
+        config.headers[HTTP_HEADERS.X_BRANCH_ID] = storedBranchId;
+      }
+    }
+
     return config;
   },
   (error) => {

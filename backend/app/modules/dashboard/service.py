@@ -70,14 +70,24 @@ class DashboardService(BaseService):
         super().__init__(session)
         self.repo = DashboardRepository(session)
 
-    def _resolve_data_scopes(self, user: CurrentUser) -> tuple[list[int] | None, list[int] | None]:
+    def _resolve_data_scopes(
+        self, user: CurrentUser, override_branch_id: int | None = None
+    ) -> tuple[list[int] | None, list[int] | None]:
         """Resolve branch and department list scopes for the user.
 
         Super admins have unrestricted access, yielding (None, None).
+        If override_branch_id is provided, validates permissions and scopes to [override_branch_id].
         """
-        if user.is_super_admin:
-            return None, None
-        return list(user.permissions.branch_ids), list(user.permissions.department_ids)
+        dept_ids = None if user.is_super_admin else list(user.permissions.department_ids)
+
+        if override_branch_id is not None:
+            if not user.is_super_admin and user.permissions.branch_ids:
+                if override_branch_id not in user.permissions.branch_ids:
+                    raise AuthorizationException("Access denied for requested branch.")
+            return [override_branch_id], dept_ids
+
+        branch_ids = None if user.is_super_admin else list(user.permissions.branch_ids)
+        return branch_ids, dept_ids
 
     def get_widgets_metadata(self, org_id: int, user: CurrentUser) -> WidgetsMetadataResponse:
         """Return metadata configuration of all widgets along with access permissions."""
@@ -158,11 +168,11 @@ class DashboardService(BaseService):
         return WidgetsMetadataResponse(widgets=widgets)
 
     async def get_summary(
-        self, org_id: int, user: CurrentUser, target_date: datetime.date | None = None
+        self, org_id: int, user: CurrentUser, target_date: datetime.date | None = None, branch_id: int | None = None
     ) -> DashboardSummaryResponse:
         """Fetch unified overview metrics for all authorized modules."""
         t_date = target_date or utcnow().date()
-        branch_ids, dept_ids = self._resolve_data_scopes(user)
+        branch_ids, dept_ids = self._resolve_data_scopes(user, branch_id)
 
         branch_part = ",".join(map(str, sorted(branch_ids))) if branch_ids else "all"
         dept_part = ",".join(map(str, sorted(dept_ids))) if dept_ids else "all"
@@ -258,11 +268,11 @@ class DashboardService(BaseService):
         return response_obj
 
     async def get_kpis(
-        self, org_id: int, user: CurrentUser, target_date: datetime.date | None = None
+        self, org_id: int, user: CurrentUser, target_date: datetime.date | None = None, branch_id: int | None = None
     ) -> DashboardKPIsResponse:
         """Fetch flat headliner KPIs across the authorized modules."""
         t_date = target_date or utcnow().date()
-        branch_ids, dept_ids = self._resolve_data_scopes(user)
+        branch_ids, dept_ids = self._resolve_data_scopes(user, branch_id)
 
         branch_part = ",".join(map(str, sorted(branch_ids))) if branch_ids else "all"
         dept_part = ",".join(map(str, sorted(dept_ids))) if dept_ids else "all"
@@ -376,11 +386,11 @@ class DashboardService(BaseService):
         return response_obj
 
     async def get_statistics(
-        self, org_id: int, user: CurrentUser, target_date: datetime.date | None = None
+        self, org_id: int, user: CurrentUser, target_date: datetime.date | None = None, branch_id: int | None = None
     ) -> DashboardStatisticsResponse:
         """Fetch computed dashboard statistics and ratios."""
         t_date = target_date or utcnow().date()
-        branch_ids, dept_ids = self._resolve_data_scopes(user)
+        branch_ids, dept_ids = self._resolve_data_scopes(user, branch_id)
 
         branch_part = ",".join(map(str, sorted(branch_ids))) if branch_ids else "all"
         dept_part = ",".join(map(str, sorted(dept_ids))) if dept_ids else "all"
@@ -452,14 +462,14 @@ class DashboardService(BaseService):
         return response_obj
 
     async def get_employee_dashboard(
-        self, org_id: int, user: CurrentUser, target_date: datetime.date | None = None
+        self, org_id: int, user: CurrentUser, target_date: datetime.date | None = None, branch_id: int | None = None
     ) -> EmployeeDashboardResponse:
         """Fetch metrics and category distributions for Employee Dashboard."""
         if not user.permissions.has_permission(EMPLOYEE_FEATURE, PermissionAction.READ):
             raise AuthorizationException("Missing permission 'employee:read'.")
 
         t_date = target_date or utcnow().date()
-        branch_ids, dept_ids = self._resolve_data_scopes(user)
+        branch_ids, dept_ids = self._resolve_data_scopes(user, branch_id)
 
         branch_part = ",".join(map(str, sorted(branch_ids))) if branch_ids else "all"
         dept_part = ",".join(map(str, sorted(dept_ids))) if dept_ids else "all"
@@ -499,14 +509,14 @@ class DashboardService(BaseService):
         return response_obj
 
     async def get_attendance_dashboard(
-        self, org_id: int, user: CurrentUser, target_date: datetime.date | None = None
+        self, org_id: int, user: CurrentUser, target_date: datetime.date | None = None, branch_id: int | None = None
     ) -> AttendanceDashboardResponse:
         """Fetch today's attendance summary and historical daily trend."""
         if not user.permissions.has_permission(ATTENDANCE_FEATURE, PermissionAction.READ):
             raise AuthorizationException("Missing permission 'attendance:read'.")
 
         t_date = target_date or utcnow().date()
-        branch_ids, dept_ids = self._resolve_data_scopes(user)
+        branch_ids, dept_ids = self._resolve_data_scopes(user, branch_id)
 
         branch_part = ",".join(map(str, sorted(branch_ids))) if branch_ids else "all"
         dept_part = ",".join(map(str, sorted(dept_ids))) if dept_ids else "all"
@@ -550,14 +560,14 @@ class DashboardService(BaseService):
         return response_obj
 
     async def get_shift_summary(
-        self, org_id: int, user: CurrentUser, target_date: datetime.date | None = None
+        self, org_id: int, user: CurrentUser, target_date: datetime.date | None = None, branch_id: int | None = None
     ) -> ShiftSummaryResponse:
         """Fetch target date's attendance summary grouped by shift."""
         if not user.permissions.has_permission(ATTENDANCE_FEATURE, PermissionAction.READ):
             raise AuthorizationException("Missing permission 'attendance:read'.")
 
         t_date = target_date or utcnow().date()
-        branch_ids, dept_ids = self._resolve_data_scopes(user)
+        branch_ids, dept_ids = self._resolve_data_scopes(user, branch_id)
 
         branch_part = ",".join(map(str, sorted(branch_ids))) if branch_ids else "all"
         dept_part = ",".join(map(str, sorted(dept_ids))) if dept_ids else "all"
@@ -589,14 +599,14 @@ class DashboardService(BaseService):
         return response_obj
 
     async def get_leave_dashboard(
-        self, org_id: int, user: CurrentUser, target_date: datetime.date | None = None
+        self, org_id: int, user: CurrentUser, target_date: datetime.date | None = None, branch_id: int | None = None
     ) -> LeaveDashboardResponse:
         """Fetch leave request summary and breakdown by type for the current month."""
         if not user.permissions.has_permission(LEAVE_FEATURE, PermissionAction.READ):
             raise AuthorizationException("Missing permission 'leave_request:read'.")
 
         t_date = target_date or utcnow().date()
-        branch_ids, dept_ids = self._resolve_data_scopes(user)
+        branch_ids, dept_ids = self._resolve_data_scopes(user, branch_id)
 
         branch_part = ",".join(map(str, sorted(branch_ids))) if branch_ids else "all"
         dept_part = ",".join(map(str, sorted(dept_ids))) if dept_ids else "all"
@@ -633,13 +643,13 @@ class DashboardService(BaseService):
         return response_obj
 
     async def get_approval_dashboard(
-        self, org_id: int, user: CurrentUser
+        self, org_id: int, user: CurrentUser, branch_id: int | None = None
     ) -> ApprovalDashboardResponse:
         """Fetch pending approval counts, types, and recent approval logs."""
         if not user.permissions.has_permission(APPROVAL_FEATURE, PermissionAction.READ):
             raise AuthorizationException("Missing permission 'approval:read'.")
 
-        branch_ids, dept_ids = self._resolve_data_scopes(user)
+        branch_ids, dept_ids = self._resolve_data_scopes(user, branch_id)
 
         branch_part = ",".join(map(str, sorted(branch_ids))) if branch_ids else "all"
         dept_part = ",".join(map(str, sorted(dept_ids))) if dept_ids else "all"
@@ -765,16 +775,16 @@ class DashboardService(BaseService):
         return response_obj
 
     async def get_notification_dashboard(
-        self, org_id: int, user: CurrentUser, limit: int = 5
+        self, org_id: int, user: CurrentUser, limit: int = 5, branch_id: int | None = None
     ) -> NotificationDashboardResponse:
         """Fetch unread notifications count and recent notification items for the caller."""
-        cache_key = f"dashboard:{org_id}:widget:notification:u_{user.user_id}:l_{limit}"
+        cache_key = f"dashboard:{org_id}:widget:notification:u_{user.user_id}:b_{branch_id}:l_{limit}"
 
         cached = await cache_get_json(cache_key)
         if cached:
             return NotificationDashboardResponse.model_validate(cached)
 
-        res = await self.repo.get_notification_dashboard(org_id, user.user_id, limit=limit)
+        res = await self.repo.get_notification_dashboard(org_id, user.user_id, limit=limit, branch_id=branch_id)
 
         recent = [
             NotificationBriefSchema(
@@ -797,10 +807,10 @@ class DashboardService(BaseService):
         return response_obj
 
     async def get_recent_activity(
-        self, org_id: int, user: CurrentUser, limit: int = 10
+        self, org_id: int, user: CurrentUser, limit: int = 10, branch_id: int | None = None
     ) -> list[dict[str, Any]]:
         """Fetch recent activity logs within the branch and department scopes."""
-        branch_ids, dept_ids = self._resolve_data_scopes(user)
+        branch_ids, dept_ids = self._resolve_data_scopes(user, branch_id)
         # Always read-only query, no special feature-level permission gating needed beyond dashboard:read
         return await self.repo.get_recent_activities(
             org_id, limit=limit, branch_ids=branch_ids, dept_ids=dept_ids
@@ -811,13 +821,13 @@ class DashboardService(BaseService):
     # ===========================================================================
 
     async def get_attendance_trend_chart(
-        self, org_id: int, user: CurrentUser, days: int = 30
+        self, org_id: int, user: CurrentUser, days: int = 30, branch_id: int | None = None
     ) -> ChartResponseSchema:
         """Fetch past N days daily attendance counts trend."""
         if not user.permissions.has_permission(ATTENDANCE_FEATURE, PermissionAction.READ):
             raise AuthorizationException("Missing permission 'attendance:read'.")
 
-        branch_ids, dept_ids = self._resolve_data_scopes(user)
+        branch_ids, dept_ids = self._resolve_data_scopes(user, branch_id)
 
         branch_part = ",".join(map(str, sorted(branch_ids))) if branch_ids else "all"
         dept_part = ",".join(map(str, sorted(dept_ids))) if dept_ids else "all"
@@ -851,13 +861,13 @@ class DashboardService(BaseService):
         return response_obj
 
     async def get_employee_growth_chart(
-        self, org_id: int, user: CurrentUser, months: int = 6
+        self, org_id: int, user: CurrentUser, months: int = 6, branch_id: int | None = None
     ) -> ChartResponseSchema:
         """Fetch past N months cumulative active headcount growth trend."""
         if not user.permissions.has_permission(EMPLOYEE_FEATURE, PermissionAction.READ):
             raise AuthorizationException("Missing permission 'employee:read'.")
 
-        branch_ids, dept_ids = self._resolve_data_scopes(user)
+        branch_ids, dept_ids = self._resolve_data_scopes(user, branch_id)
 
         branch_part = ",".join(map(str, sorted(branch_ids))) if branch_ids else "all"
         dept_part = ",".join(map(str, sorted(dept_ids))) if dept_ids else "all"
@@ -894,13 +904,13 @@ class DashboardService(BaseService):
         return response_obj
 
     async def get_leave_trend_chart(
-        self, org_id: int, user: CurrentUser, months: int = 6
+        self, org_id: int, user: CurrentUser, months: int = 6, branch_id: int | None = None
     ) -> ChartResponseSchema:
         """Fetch past N months daily count of leave requests by status."""
         if not user.permissions.has_permission(LEAVE_FEATURE, PermissionAction.READ):
             raise AuthorizationException("Missing permission 'leave_request:read'.")
 
-        branch_ids, dept_ids = self._resolve_data_scopes(user)
+        branch_ids, dept_ids = self._resolve_data_scopes(user, branch_id)
 
         branch_part = ",".join(map(str, sorted(branch_ids))) if branch_ids else "all"
         dept_part = ",".join(map(str, sorted(dept_ids))) if dept_ids else "all"
@@ -966,14 +976,14 @@ class DashboardService(BaseService):
         return response_obj
 
     async def get_dept_attendance_chart(
-        self, org_id: int, user: CurrentUser, target_date: datetime.date | None = None
+        self, org_id: int, user: CurrentUser, target_date: datetime.date | None = None, branch_id: int | None = None
     ) -> ChartResponseSchema:
         """Fetch today's attendance rates broken down by department."""
         if not user.permissions.has_permission(ATTENDANCE_FEATURE, PermissionAction.READ):
             raise AuthorizationException("Missing permission 'attendance:read'.")
 
         t_date = target_date or utcnow().date()
-        branch_ids, dept_ids = self._resolve_data_scopes(user)
+        branch_ids, dept_ids = self._resolve_data_scopes(user, branch_id)
 
         branch_part = ",".join(map(str, sorted(branch_ids))) if branch_ids else "all"
         dept_part = ",".join(map(str, sorted(dept_ids))) if dept_ids else "all"
@@ -1002,14 +1012,14 @@ class DashboardService(BaseService):
         return response_obj
 
     async def get_branch_attendance_chart(
-        self, org_id: int, user: CurrentUser, target_date: datetime.date | None = None
+        self, org_id: int, user: CurrentUser, target_date: datetime.date | None = None, branch_id: int | None = None
     ) -> ChartResponseSchema:
         """Fetch today's attendance rates broken down by branch."""
         if not user.permissions.has_permission(ATTENDANCE_FEATURE, PermissionAction.READ):
             raise AuthorizationException("Missing permission 'attendance:read'.")
 
         t_date = target_date or utcnow().date()
-        branch_ids, dept_ids = self._resolve_data_scopes(user)
+        branch_ids, dept_ids = self._resolve_data_scopes(user, branch_id)
 
         branch_part = ",".join(map(str, sorted(branch_ids))) if branch_ids else "all"
         dept_part = ",".join(map(str, sorted(dept_ids))) if dept_ids else "all"
@@ -1044,12 +1054,13 @@ class DashboardService(BaseService):
         search: str | None = None,
         page: int = 1,
         page_size: int = 20,
+        branch_id: int | None = None,
     ) -> PendingBiometricsResponse:
         """Fetch paginated and searchable list of employees lacking biometric enrollment."""
         if not user.permissions.has_permission(EMPLOYEE_FEATURE, PermissionAction.READ):
             raise AuthorizationException("Missing permission 'employee:read'.")
 
-        branch_ids, dept_ids = self._resolve_data_scopes(user)
+        branch_ids, dept_ids = self._resolve_data_scopes(user, branch_id)
 
         items, total_records = await self.repo.get_pending_biometrics_employees(
             org_id=org_id,

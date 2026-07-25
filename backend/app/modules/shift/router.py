@@ -29,6 +29,7 @@ from app.core.dependencies.auth import (
     get_current_active_user,
     require_permission,
 )
+from app.core.dependencies.branch import BranchIdDep
 from app.core.dependencies.db import get_db
 from app.core.dependencies.pagination import PaginationParams, pagination_params
 from app.core.exceptions.base import AppException
@@ -382,6 +383,7 @@ async def list_shift_assignments(
     org_id: OrgIdDep,
     pagination: Annotated[PaginationParams, Depends(pagination_params)],
     employee_id: Annotated[int | None, Query(description="Filter by employee.")] = None,
+    branch_id: BranchIdDep = None,
     shift_id: Annotated[int | None, Query(description="Filter by shift.")] = None,
     active_on: Annotated[
         date | None, Query(description="Assignments whose effective range covers this date.")
@@ -393,6 +395,7 @@ async def list_shift_assignments(
     """Filtered, paginated assignment list (contract #16)."""
     query = ShiftAssignmentQuery(
         employee_id=employee_id,
+        branch_id=branch_id,
         shift_id=shift_id,
         active_on=active_on,
         on_date=on_date,
@@ -583,7 +586,7 @@ async def get_roster(
     date_from: Annotated[date | None, Query(description="Range start (with date_to).")] = None,
     date_to: Annotated[date | None, Query(description="Range end (with date_from).")] = None,
     month: Annotated[str | None, Query(description="Calendar month (YYYY-MM).")] = None,
-    branch_id: Annotated[int | None, Query(description="Filter by branch.")] = None,
+    branch_id: BranchIdDep = None,
     department_id: Annotated[
         int | None, Query(alias="dept_id", description="Filter by department.")
     ] = None,

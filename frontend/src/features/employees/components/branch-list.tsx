@@ -205,9 +205,9 @@ export function BranchList() {
     setFormAddress("");
     setFormLandmark("");
     setFormPincode("");
-    setFormCity("Surat");
-    setFormState("Gujarat");
-    setFormCountry("India");
+    setFormCity("");
+    setFormState("");
+    setFormCountry("");
     setFormIndustryType("");
     setFormLatitude("");
     setFormLongitude("");
@@ -771,7 +771,6 @@ export function BranchList() {
                           });
                         }
                       }}
-                      placeholder="Itcode Infotech"
                       className={`h-10 text-xs w-full bg-card ${
                         errors.name ? "border-red-500 focus-visible:ring-red-500" : ""
                       }`}
@@ -786,7 +785,6 @@ export function BranchList() {
                       <Input
                         value={formGstin}
                         onChange={e => setFormGstin(e.target.value)}
-                        placeholder="24AAICI0352E1Z1"
                         className="h-10 text-xs w-full bg-card"
                       />
                     </div>
@@ -795,7 +793,6 @@ export function BranchList() {
                       <Input
                         value={formMobile}
                         onChange={e => setFormMobile(e.target.value)}
-                        placeholder="Please Enter Mobile Number"
                         className="h-10 text-xs w-full bg-card"
                       />
                     </div>
@@ -807,7 +804,6 @@ export function BranchList() {
                     <textarea
                       value={formAddress}
                       onChange={e => setFormAddress(e.target.value)}
-                      placeholder="Please Enter Address"
                       rows={3}
                       className="w-full rounded-md border border-input bg-card px-3 py-2 text-xs ring-offset-background placeholder:text-muted-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                     />
@@ -819,7 +815,6 @@ export function BranchList() {
                     <Input
                       value={formLandmark}
                       onChange={e => setFormLandmark(e.target.value)}
-                      placeholder="Please Enter Landmark"
                       className="h-10 text-xs w-full bg-card"
                     />
                   </div>
@@ -831,7 +826,6 @@ export function BranchList() {
                       <Input
                         value={formPincode}
                         onChange={e => setFormPincode(e.target.value)}
-                        placeholder="394105"
                         className="h-10 text-xs w-full bg-card"
                       />
                     </div>
@@ -842,11 +836,12 @@ export function BranchList() {
                         onChange={e => setFormCity(e.target.value)}
                         className="w-full rounded-md border border-input bg-card h-10 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
                       >
+                        <option value="">Select City</option>
                         <option value="Surat">Surat</option>
                         <option value="Ahmedabad">Ahmedabad</option>
                         <option value="Mumbai">Mumbai</option>
                         <option value="Delhi">Delhi</option>
-                        {!["Surat", "Ahmedabad", "Mumbai", "Delhi"].includes(formCity) && formCity && (
+                        {!["", "Surat", "Ahmedabad", "Mumbai", "Delhi"].includes(formCity) && formCity && (
                           <option value={formCity}>{formCity}</option>
                         )}
                       </select>
@@ -858,10 +853,11 @@ export function BranchList() {
                         onChange={e => setFormState(e.target.value)}
                         className="w-full rounded-md border border-input bg-card h-10 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
                       >
+                        <option value="">Select State</option>
                         <option value="Gujarat">Gujarat</option>
                         <option value="Maharashtra">Maharashtra</option>
                         <option value="Delhi">Delhi</option>
-                        {!["Gujarat", "Maharashtra", "Delhi"].includes(formState) && formState && (
+                        {!["", "Gujarat", "Maharashtra", "Delhi"].includes(formState) && formState && (
                           <option value={formState}>{formState}</option>
                         )}
                       </select>
@@ -873,9 +869,10 @@ export function BranchList() {
                         onChange={e => setFormCountry(e.target.value)}
                         className="w-full rounded-md border border-input bg-card h-10 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
                       >
+                        <option value="">Select Country</option>
                         <option value="India">India</option>
                         <option value="United States">United States</option>
-                        {!["India", "United States"].includes(formCountry) && formCountry && (
+                        {!["", "India", "United States"].includes(formCountry) && formCountry && (
                           <option value={formCountry}>{formCountry}</option>
                         )}
                       </select>
@@ -890,7 +887,7 @@ export function BranchList() {
                       onChange={e => setFormIndustryType(e.target.value)}
                       className="w-full rounded-md border border-input bg-card h-10 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
                     >
-                      <option value="">Please select industry type</option>
+                      <option value="">Select Industry Type</option>
                       <option value="IT">Information Technology</option>
                       <option value="Retail">Retail</option>
                       <option value="Manufacturing">Manufacturing</option>
@@ -922,7 +919,6 @@ export function BranchList() {
                             });
                           }
                         }}
-                        placeholder="Please Enter Latitude"
                         className={`h-10 text-xs w-full bg-card ${
                           errors.latitude ? "border-red-500 focus-visible:ring-red-500" : ""
                         }`}
@@ -948,7 +944,6 @@ export function BranchList() {
                             });
                           }
                         }}
-                        placeholder="Please Enter Longitude"
                         className={`h-10 text-xs w-full bg-card ${
                           errors.longitude ? "border-red-500 focus-visible:ring-red-500" : ""
                         }`}
@@ -974,7 +969,6 @@ export function BranchList() {
                             });
                           }
                         }}
-                        placeholder="Please Enter Allowed Radius"
                         className={`h-10 text-xs w-full bg-card ${
                           errors.allowed_radius ? "border-red-500 focus-visible:ring-red-500" : ""
                         }`}

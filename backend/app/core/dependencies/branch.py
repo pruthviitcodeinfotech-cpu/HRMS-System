@@ -1,0 +1,36 @@
+"""Branch resolution dependency for multi-tenant data isolation.
+
+Resolves branch_id from either query parameter `branch_id` or `x-branch-id` HTTP header,
+and validates RBAC access rights against the current principal.
+"""
+
+from typing import Annotated
+from fastapi import Header, Query, Depends
+
+from app.core.dependencies.auth import CurrentUser, get_current_user
+from app.core.exceptions.base import AuthorizationException
+
+async def get_current_branch_id(
+    current_user: Annotated[CurrentUser, Depends(get_current_user)],
+    branch_id: Annotated[int | None, Query(description="Filter by branch ID.")] = None,
+    x_branch_id: Annotated[str | None, Header(alias="x-branch-id", description="Filter by branch ID header.")] = None,
+) -> int | None:
+    """Resolve current branch_id from Query or Header and enforce RBAC permission isolation."""
+    resolved_id: int | None = branch_id
+
+    if resolved_id is None and x_branch_id:
+        try:
+            parsed = int(x_branch_id)
+            if parsed > 0:
+                resolved_id = parsed
+        except (ValueError, TypeError):
+            pass
+
+    if resolved_id is not None and not current_user.is_super_admin:
+        branch_ids = current_user.permissions.branch_ids
+        if branch_ids and resolved_id not in branch_ids:
+            raise AuthorizationException("Access denied for requested branch.")
+
+    return resolved_id
+
+BranchIdDep = Annotated[int | None, Depends(get_current_branch_id)]

@@ -48,6 +48,7 @@ class ActivityLogSearchQuery(PaginationRequest):
     performed_by_user_id: int | None = Field(default=None, description="Filter by acting user.")
     date_from: datetime.date | None = Field(default=None, description="Lower bound on log_date.")
     date_to: datetime.date | None = Field(default=None, description="Upper bound on log_date.")
+    branch_id: int | None = Field(default=None, description="Filter by branch.")
     search: str | None = Field(default=None, description="Free-text on title/description.")
     sort_by: str | None = Field(default=None, description="logged_at (default) | log_date.")
     sort_order: SortOrder = Field(default=SortOrder.DESC, description="asc | desc.")

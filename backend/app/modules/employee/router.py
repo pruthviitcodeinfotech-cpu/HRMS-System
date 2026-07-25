@@ -36,6 +36,7 @@ from app.core.dependencies.auth import (
     get_current_active_user,
     require_permission,
 )
+from app.core.dependencies.branch import BranchIdDep
 from app.core.dependencies.db import get_db
 from app.core.dependencies.pagination import PaginationParams, pagination_params
 from app.core.exceptions.base import AppException
@@ -155,7 +156,7 @@ async def list_employees(
     current_user: CurrentUserDep,
     org_id: OrgIdDep,
     pagination: Annotated[PaginationParams, Depends(pagination_params)],
-    branch_id: Annotated[int | None, Query(description="Filter by master branch.")] = None,
+    branch_id: BranchIdDep = None,
     department_id: Annotated[int | None, Query(description="Filter by department.")] = None,
     designation_id: Annotated[int | None, Query(description="Filter by designation.")] = None,
     employee_status: Annotated[

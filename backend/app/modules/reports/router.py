@@ -17,6 +17,7 @@ from app.core.dependencies.auth import (
     get_current_active_user,
     require_permission,
 )
+from app.core.dependencies.branch import BranchIdDep
 from app.core.exceptions.base import AppException
 from app.core.middleware.request_context import get_request_id
 from app.modules.reports.dependencies import ReportsServiceDep
@@ -47,7 +48,18 @@ def get_org_id(current_user: Annotated[CurrentUser, Depends(get_current_active_u
 
 OrgIdDep = Annotated[int, Depends(get_org_id)]
 CurrentUserDep = Annotated[CurrentUser, Depends(get_current_active_user)]
-ReportQueryDep = Annotated[ReportQueryRequest, Depends()]
+
+
+async def get_report_query(
+    query: Annotated[ReportQueryRequest, Depends()],
+    branch_id: BranchIdDep = None,
+) -> ReportQueryRequest:
+    if query.branch_id is None and branch_id is not None:
+        query.branch_id = branch_id
+    return query
+
+
+ReportQueryDep = Annotated[ReportQueryRequest, Depends(get_report_query)]
 
 
 async def _map_report_result(

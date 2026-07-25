@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { payrollService } from "../services/payroll";
+import { useBranchContext } from "@/context/branch-context";
 
 export const payrollKeys = {
   all: ["payroll"] as const,
@@ -115,21 +116,31 @@ export const usePayrollCycles = (params?: { group_id?: number; is_finalized?: bo
   });
 };
 
-export const useFinalizedPayrollRuns = (params?: { page?: number; page_size?: number; payroll_group_id?: number }) => {
+export const useFinalizedPayrollRuns = (params?: { page?: number; page_size?: number; payroll_group_id?: number; branch_id?: number }) => {
+  const { selectedBranchId } = useBranchContext();
+  const effectiveParams = {
+    ...(params || {}),
+    branch_id: params?.branch_id || selectedBranchId || undefined,
+  };
   return useQuery({
-    queryKey: payrollKeys.finalizedRuns(params),
+    queryKey: payrollKeys.finalizedRuns(effectiveParams),
     queryFn: async () => {
-      const res = await payrollService.getFinalizedRuns(params);
+      const res = await payrollService.getFinalizedRuns(effectiveParams);
       return res.data;
     },
   });
 };
 
-export const useAttendanceAdjustments = (params?: { employee_id?: number; page?: number; page_size?: number }) => {
+export const useAttendanceAdjustments = (params?: { employee_id?: number; page?: number; page_size?: number; branch_id?: number }) => {
+  const { selectedBranchId } = useBranchContext();
+  const effectiveParams = {
+    ...(params || {}),
+    branch_id: params?.branch_id || selectedBranchId || undefined,
+  };
   return useQuery({
-    queryKey: payrollKeys.adjustments(params),
+    queryKey: payrollKeys.adjustments(effectiveParams),
     queryFn: async () => {
-      const res = await payrollService.getAdjustments(params);
+      const res = await payrollService.getAdjustments(effectiveParams);
       return res.data;
     },
   });
@@ -144,10 +155,15 @@ export const useBulkAttendanceMatrix = (params: {
   page?: number;
   page_size?: number;
 }) => {
+  const { selectedBranchId } = useBranchContext();
+  const effectiveParams = {
+    ...params,
+    branch_id: params.branch_id || selectedBranchId || undefined,
+  };
   return useQuery({
-    queryKey: payrollKeys.bulkMatrix(params),
+    queryKey: payrollKeys.bulkMatrix(effectiveParams),
     queryFn: async () => {
-      const res = await payrollService.getBulkAttendanceMatrix(params);
+      const res = await payrollService.getBulkAttendanceMatrix(effectiveParams);
       return res.data;
     },
   });
@@ -206,11 +222,16 @@ export const useProcessPayrollMatrix = (params: {
   page_size?: number;
   enabled?: boolean;
 }) => {
+  const { selectedBranchId } = useBranchContext();
   const { enabled = true, ...queryParams } = params;
+  const effectiveQueryParams = {
+    ...queryParams,
+    branch_id: queryParams.branch_id || selectedBranchId || undefined,
+  };
   return useQuery({
-    queryKey: [...payrollKeys.all, "process-matrix", queryParams],
+    queryKey: [...payrollKeys.all, "process-matrix", effectiveQueryParams],
     queryFn: async () => {
-      const res = await payrollService.getProcessPayrollMatrix(queryParams);
+      const res = await payrollService.getProcessPayrollMatrix(effectiveQueryParams);
       return res.data;
     },
     enabled: enabled && Boolean(params.date_from) && Boolean(params.date_to),
@@ -275,14 +296,20 @@ export const useFinalizedPayroll = (params?: {
   page?: number;
   page_size?: number;
   payroll_group_id?: number;
+  branch_id?: number;
   from_date?: string;
   to_date?: string;
   status?: string;
 }) => {
+  const { selectedBranchId } = useBranchContext();
+  const effectiveParams = {
+    ...(params || {}),
+    branch_id: params?.branch_id || selectedBranchId || undefined,
+  };
   return useQuery({
-    queryKey: payrollKeys.finalizedPayroll(params),
+    queryKey: payrollKeys.finalizedPayroll(effectiveParams),
     queryFn: async () => {
-      const res = await payrollService.getFinalizedPayroll(params);
+      const res = await payrollService.getFinalizedPayroll(effectiveParams);
       return res.data;
     },
     retry: 2,

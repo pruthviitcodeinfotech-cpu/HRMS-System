@@ -3,20 +3,29 @@
 import { useState, useRef, useEffect } from "react";
 import { useSidebarStore } from "@/lib/stores/sidebar-store";
 import { useThemeStore } from "@/lib/stores/theme-store";
-import { Menu, Bell, ChevronDown, User, ShieldCheck, Sun, Moon, LogOut } from "lucide-react";
+import { Menu, Bell, ChevronDown, User, ShieldCheck, Sun, Moon, LogOut, Building2, Check } from "lucide-react";
 import { useAuth } from "@/features/auth/hooks";
+import { useBranchContext } from "@/context/branch-context";
 
 export const Header = () => {
   const { toggle } = useSidebarStore();
   const { theme, toggleTheme } = useThemeStore();
   const { user, logout } = useAuth();
+  const { selectedBranchId, selectedBranchName, availableBranches, setSelectedBranchId } = useBranchContext();
+
   const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [isBranchOpen, setIsBranchOpen] = useState(false);
+
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const branchDropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
         setIsProfileOpen(false);
+      }
+      if (branchDropdownRef.current && !branchDropdownRef.current.contains(event.target as Node)) {
+        setIsBranchOpen(false);
       }
     };
     document.addEventListener("mousedown", handleClickOutside);
@@ -32,8 +41,8 @@ export const Header = () => {
   };
 
   return (
-    <header className="h-16 border-b border-border bg-card text-card-foreground flex items-center justify-between px-6 shrink-0 z-10 shadow-xs transition-colors duration-250">
-      {/* Left side: Hamburger, Logo & Org Selector */}
+    <header className="h-16 border-b border-border bg-card text-card-foreground flex items-center justify-between px-6 shrink-0 z-40 shadow-xs transition-colors duration-250">
+      {/* Left side: Hamburger, Logo & Org/Branch Selector */}
       <div className="flex items-center space-x-6">
         {/* Toggle Sidebar Button */}
         <button
@@ -62,12 +71,47 @@ export const Header = () => {
         {/* Vertical Divider */}
         <div className="h-6 w-px bg-border hidden md:block" />
 
-        {/* Organization Selector */}
-        <div className="relative hidden md:block">
-          <button className="flex items-center space-x-2 px-3 py-1.5 border border-border rounded-md bg-slate-50/50 dark:bg-slate-800/40 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-medium transition-all shadow-sm hover:border-slate-300 dark:hover:border-slate-700 cursor-pointer">
-            <span>Itcode Infotech (116478)</span>
-            <ChevronDown className="h-3 w-3 text-slate-400" />
+        {/* Branch Selector */}
+        <div className="relative hidden md:block" ref={branchDropdownRef}>
+          <button
+            onClick={() => setIsBranchOpen(!isBranchOpen)}
+            className="flex items-center space-x-2 px-3 py-1.5 border border-border rounded-md bg-slate-50/50 dark:bg-slate-800/40 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-medium transition-all shadow-sm hover:border-slate-300 dark:hover:border-slate-700 cursor-pointer"
+          >
+            <Building2 className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" />
+            <span className="font-semibold">{selectedBranchName}</span>
+            <ChevronDown className={`h-3 w-3 text-slate-400 transition-transform duration-200 ${isBranchOpen ? "rotate-180" : ""}`} />
           </button>
+
+          {isBranchOpen && (
+            <div className="absolute left-0 mt-2 w-64 rounded-xl border border-border bg-card dark:bg-slate-900 text-card-foreground shadow-2xl py-1.5 z-50 animate-in fade-in slide-in-from-top-2 duration-150 origin-top-left dark:border-slate-800 ring-1 ring-black/5 dark:ring-white/10">
+              <div className="px-3 py-1.5 border-b border-border dark:border-slate-800 mb-1">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-400">
+                  Select Branch
+                </p>
+              </div>
+
+              <div className="max-h-60 overflow-y-auto py-1">
+                {availableBranches.map((branch) => {
+                  const isSelected = selectedBranchId === branch.branch_id;
+                  return (
+                    <button
+                      key={branch.branch_id}
+                      onClick={() => {
+                        setSelectedBranchId(branch.branch_id);
+                        setIsBranchOpen(false);
+                      }}
+                      className={`w-full flex items-center justify-between px-3 py-2 text-xs font-medium transition-colors hover:bg-slate-100 dark:hover:bg-slate-800/80 cursor-pointer ${
+                        isSelected ? "text-blue-600 dark:text-blue-400 font-bold bg-blue-50/50 dark:bg-blue-950/40" : "text-slate-700 dark:text-slate-300"
+                      }`}
+                    >
+                      <span className="truncate">{branch.branch_name}</span>
+                      {isSelected && <Check className="h-4 w-4 text-blue-600 dark:text-blue-400 shrink-0 ml-2" />}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

@@ -784,7 +784,7 @@ class DashboardRepository(BaseRepository[Employee]):
         }
 
     async def get_notification_dashboard(
-        self, org_id: int, user_id: int, limit: int = 5
+        self, org_id: int, user_id: int, limit: int = 5, branch_id: int | None = None
     ) -> dict[str, Any]:
         """Fetch unread count and recent notifications for a user."""
         unread_stmt = select(func.count(NotificationRecipient.id)).where(

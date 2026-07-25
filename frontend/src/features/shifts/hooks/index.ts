@@ -1,6 +1,7 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { shiftService } from "../services";
 import { CreateShiftRequest, ShiftListParams, UpdateShiftRequest } from "../types";
+import { useBranchContext } from "@/context/branch-context";
 
 // ---------------------------------------------------------------------------
 // Query-key factory
@@ -138,10 +139,15 @@ export const useBulkAssignShift = () => {
  * List shift assignments (GET /shift-assignments).
  */
 export const useShiftAssignments = (params: import("../types").ShiftAssignmentQuery) => {
+  const { selectedBranchId } = useBranchContext();
+  const effectiveParams = {
+    ...params,
+    branch_id: params.branch_id || selectedBranchId || undefined,
+  };
   return useQuery({
-    queryKey: [...shiftKeys.all, "assignments", params] as const,
+    queryKey: [...shiftKeys.all, "assignments", effectiveParams] as const,
     queryFn: async () => {
-      const response = await shiftService.listAssignments(params);
+      const response = await shiftService.listAssignments(effectiveParams);
       return response.data;
     },
     placeholderData: keepPreviousData,
@@ -259,10 +265,15 @@ export const rosterKeys = {
  * Fetch roster entries (GET /roster).
  */
 export const useRoster = (params: import("../types").RosterQuery, enabled = true) => {
+  const { selectedBranchId } = useBranchContext();
+  const effectiveParams = {
+    ...params,
+    branch_id: params.branch_id || selectedBranchId || undefined,
+  };
   return useQuery({
-    queryKey: rosterKeys.list(params),
+    queryKey: rosterKeys.list(effectiveParams),
     queryFn: async () => {
-      const response = await shiftService.getRoster(params);
+      const response = await shiftService.getRoster(effectiveParams);
       return response.data;
     },
     enabled,

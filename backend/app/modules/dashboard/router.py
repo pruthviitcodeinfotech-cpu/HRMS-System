@@ -18,6 +18,7 @@ from app.core.dependencies.auth import (
     get_current_active_user,
     require_permission,
 )
+from app.core.dependencies.branch import BranchIdDep
 from app.core.exceptions.base import AppException
 from app.core.middleware.request_context import get_request_id
 from app.modules.dashboard.dependencies import DashboardServiceDep
@@ -88,9 +89,12 @@ async def get_summary(
         datetime.date | None,
         Query(description="Target date for the summary metrics. Defaults to today."),
     ] = None,
+    branch_id: Annotated[
+        int | None, Query(description="Filter by specific branch ID.")
+    ] = None,
 ) -> dict[str, Any]:
     """Retrieve summarized dashboard metrics across all modules."""
-    res = await service.get_summary(org_id=org_id, user=current_user, target_date=date)
+    res = await service.get_summary(org_id=org_id, user=current_user, target_date=date, branch_id=branch_id)
     return _ok(res)
 
 
@@ -125,9 +129,12 @@ async def get_kpis(
     date: Annotated[
         datetime.date | None, Query(description="Target date for the KPIs. Defaults to today.")
     ] = None,
+    branch_id: Annotated[
+        int | None, Query(description="Filter by specific branch ID.")
+    ] = None,
 ) -> dict[str, Any]:
     """Retrieve flat metrics set across all modules."""
-    res = await service.get_kpis(org_id=org_id, user=current_user, target_date=date)
+    res = await service.get_kpis(org_id=org_id, user=current_user, target_date=date, branch_id=branch_id)
     return _ok(res)
 
 
@@ -145,9 +152,12 @@ async def get_statistics(
     date: Annotated[
         datetime.date | None, Query(description="Target date for ratios. Defaults to today.")
     ] = None,
+    branch_id: Annotated[
+        int | None, Query(description="Filter by specific branch ID.")
+    ] = None,
 ) -> dict[str, Any]:
     """Retrieve computed ratios for employee turnover, attendance, and device uptime."""
-    res = await service.get_statistics(org_id=org_id, user=current_user, target_date=date)
+    res = await service.get_statistics(org_id=org_id, user=current_user, target_date=date, branch_id=branch_id)
     return _ok(res)
 
 
@@ -170,9 +180,12 @@ async def get_employee_dashboard(
     date: Annotated[
         datetime.date | None, Query(description="Target date for employee snapshot.")
     ] = None,
+    branch_id: Annotated[
+        int | None, Query(description="Filter by specific branch ID.")
+    ] = None,
 ) -> dict[str, Any]:
     """Retrieve employee counts and breakdown distributions (dept, branch, status)."""
-    res = await service.get_employee_dashboard(org_id=org_id, user=current_user, target_date=date)
+    res = await service.get_employee_dashboard(org_id=org_id, user=current_user, target_date=date, branch_id=branch_id)
     return _ok(res)
 
 
@@ -191,9 +204,12 @@ async def get_attendance_dashboard(
         datetime.date | None,
         Query(description="Target date for attendance metrics. Defaults to today."),
     ] = None,
+    branch_id: Annotated[
+        int | None, Query(description="Filter by specific branch ID.")
+    ] = None,
 ) -> dict[str, Any]:
     """Retrieve daily attendance statuses plus historical daily trend logs."""
-    res = await service.get_attendance_dashboard(org_id=org_id, user=current_user, target_date=date)
+    res = await service.get_attendance_dashboard(org_id=org_id, user=current_user, target_date=date, branch_id=branch_id)
     return _ok(res)
 
 
@@ -212,9 +228,12 @@ async def get_shift_summary(
         datetime.date | None,
         Query(description="Target date for shift attendance metrics. Defaults to today."),
     ] = None,
+    branch_id: Annotated[
+        int | None, Query(description="Filter by specific branch ID.")
+    ] = None,
 ) -> dict[str, Any]:
     """Retrieve daily attendance metrics grouped by shift."""
-    res = await service.get_shift_summary(org_id=org_id, user=current_user, target_date=date)
+    res = await service.get_shift_summary(org_id=org_id, user=current_user, target_date=date, branch_id=branch_id)
     return _ok(res)
 
 
@@ -241,6 +260,9 @@ async def get_pending_biometrics_employees(
         int,
         Query(ge=1, le=100, description="Items per page"),
     ] = 20,
+    branch_id: Annotated[
+        int | None, Query(description="Filter by specific branch ID.")
+    ] = None,
 ) -> dict[str, Any]:
     """Retrieve daily attendance metrics grouped by shift."""
     res = await service.get_pending_biometrics_employees(
@@ -249,6 +271,7 @@ async def get_pending_biometrics_employees(
         search=search,
         page=page,
         page_size=page_size,
+        branch_id=branch_id,
     )
     return _ok(res)
 
@@ -270,9 +293,12 @@ async def get_leave_dashboard(
         datetime.date | None,
         Query(description="Target date for leave requests filter. Defaults to today."),
     ] = None,
+    branch_id: Annotated[
+        int | None, Query(description="Filter by specific branch ID.")
+    ] = None,
 ) -> dict[str, Any]:
     """Retrieve leave requests totals, statuses, and category type breakdowns."""
-    res = await service.get_leave_dashboard(org_id=org_id, user=current_user, target_date=date)
+    res = await service.get_leave_dashboard(org_id=org_id, user=current_user, target_date=date, branch_id=branch_id)
     return _ok(res)
 
 
@@ -287,9 +313,12 @@ async def get_approval_dashboard(
     service: DashboardServiceDep,
     org_id: OrgIdDep,
     current_user: CurrentUserDep,
+    branch_id: Annotated[
+        int | None, Query(description="Filter by specific branch ID.")
+    ] = None,
 ) -> dict[str, Any]:
     """Retrieve pending approvals mapping and recent approval log brief items."""
-    res = await service.get_approval_dashboard(org_id=org_id, user=current_user)
+    res = await service.get_approval_dashboard(org_id=org_id, user=current_user, branch_id=branch_id)
     return _ok(res)
 
 
@@ -304,9 +333,12 @@ async def get_payroll_dashboard(
     service: DashboardServiceDep,
     org_id: OrgIdDep,
     current_user: CurrentUserDep,
+    branch_id: Annotated[
+        int | None, Query(description="Filter by specific branch ID.")
+    ] = None,
 ) -> dict[str, Any]:
     """Retrieve current payroll cycle status, payment state breakdown, and finalized metrics."""
-    res = await service.get_payroll_dashboard(org_id=org_id, user=current_user)
+    res = await service.get_payroll_dashboard(org_id=org_id, user=current_user, branch_id=branch_id)
     return _ok(res)
 
 
@@ -321,9 +353,12 @@ async def get_settlement_dashboard(
     service: DashboardServiceDep,
     org_id: OrgIdDep,
     current_user: CurrentUserDep,
+    branch_id: Annotated[
+        int | None, Query(description="Filter by specific branch ID.")
+    ] = None,
 ) -> dict[str, Any]:
     """Retrieve active loans/advances metrics and outstanding arrears balances."""
-    res = await service.get_settlement_dashboard(org_id=org_id, user=current_user)
+    res = await service.get_settlement_dashboard(org_id=org_id, user=current_user, branch_id=branch_id)
     return _ok(res)
 
 
@@ -338,9 +373,12 @@ async def get_hardware_dashboard(
     service: DashboardServiceDep,
     org_id: OrgIdDep,
     current_user: CurrentUserDep,
+    branch_id: Annotated[
+        int | None, Query(description="Filter by specific branch ID.")
+    ] = None,
 ) -> dict[str, Any]:
     """Retrieve online/offline biometric device aggregates and sync timestamps."""
-    res = await service.get_hardware_dashboard(org_id=org_id, user=current_user)
+    res = await service.get_hardware_dashboard(org_id=org_id, user=current_user, branch_id=branch_id)
     return _ok(res)
 
 
@@ -358,9 +396,10 @@ async def get_notification_dashboard(
     limit: Annotated[
         int, Query(description="Maximum notification logs to retrieve in list.", ge=1)
     ] = 5,
+    branch_id: BranchIdDep = None,
 ) -> dict[str, Any]:
     """Retrieve active notification count and recent inbox items for the caller."""
-    res = await service.get_notification_dashboard(org_id=org_id, user=current_user, limit=limit)
+    res = await service.get_notification_dashboard(org_id=org_id, user=current_user, limit=limit, branch_id=branch_id)
     return _ok(res)
 
 
@@ -376,9 +415,10 @@ async def get_recent_activity(
     org_id: OrgIdDep,
     current_user: CurrentUserDep,
     limit: Annotated[int, Query(description="Maximum activity audit logs to retrieve.", ge=1)] = 10,
+    branch_id: BranchIdDep = None,
 ) -> dict[str, Any]:
     """Retrieve recent tenant audit log activities."""
-    res = await service.get_recent_activity(org_id=org_id, user=current_user, limit=limit)
+    res = await service.get_recent_activity(org_id=org_id, user=current_user, limit=limit, branch_id=branch_id)
     return _ok(res)
 
 
@@ -401,9 +441,12 @@ async def get_attendance_trend_chart(
     days: Annotated[
         int, Query(description="Number of days to group trend metrics over.", ge=1)
     ] = 30,
+    branch_id: Annotated[
+        int | None, Query(description="Filter by specific branch ID.")
+    ] = None,
 ) -> dict[str, Any]:
     """Retrieve attendance status chart points over time."""
-    res = await service.get_attendance_trend_chart(org_id=org_id, user=current_user, days=days)
+    res = await service.get_attendance_trend_chart(org_id=org_id, user=current_user, days=days, branch_id=branch_id)
     return _ok(res)
 
 
@@ -421,9 +464,12 @@ async def get_employee_growth_chart(
     months: Annotated[
         int, Query(description="Number of historical months to project growth over.", ge=1)
     ] = 6,
+    branch_id: Annotated[
+        int | None, Query(description="Filter by specific branch ID.")
+    ] = None,
 ) -> dict[str, Any]:
     """Retrieve cumulative employee growth trend data points."""
-    res = await service.get_employee_growth_chart(org_id=org_id, user=current_user, months=months)
+    res = await service.get_employee_growth_chart(org_id=org_id, user=current_user, months=months, branch_id=branch_id)
     return _ok(res)
 
 
@@ -441,9 +487,12 @@ async def get_leave_trend_chart(
     months: Annotated[
         int, Query(description="Number of months to group leave trend over.", ge=1)
     ] = 6,
+    branch_id: Annotated[
+        int | None, Query(description="Filter by specific branch ID.")
+    ] = None,
 ) -> dict[str, Any]:
     """Retrieve leave status series points over time."""
-    res = await service.get_leave_trend_chart(org_id=org_id, user=current_user, months=months)
+    res = await service.get_leave_trend_chart(org_id=org_id, user=current_user, months=months, branch_id=branch_id)
     return _ok(res)
 
 
@@ -461,9 +510,12 @@ async def get_payroll_trend_chart(
     limit: Annotated[
         int, Query(description="Maximum number of historical payroll cycles to include.", ge=1)
     ] = 6,
+    branch_id: Annotated[
+        int | None, Query(description="Filter by specific branch ID.")
+    ] = None,
 ) -> dict[str, Any]:
     """Retrieve historical payroll monetary runs cost series points."""
-    res = await service.get_payroll_trend_chart(org_id=org_id, user=current_user, limit=limit)
+    res = await service.get_payroll_trend_chart(org_id=org_id, user=current_user, limit=limit, branch_id=branch_id)
     return _ok(res)
 
 
@@ -482,10 +534,13 @@ async def get_dept_attendance_chart(
         datetime.date | None,
         Query(description="Target date for department statistics. Defaults to today."),
     ] = None,
+    branch_id: Annotated[
+        int | None, Query(description="Filter by specific branch ID.")
+    ] = None,
 ) -> dict[str, Any]:
     """Retrieve department attendance series metrics."""
     res = await service.get_dept_attendance_chart(
-        org_id=org_id, user=current_user, target_date=date
+        org_id=org_id, user=current_user, target_date=date, branch_id=branch_id
     )
     return _ok(res)
 
@@ -505,9 +560,12 @@ async def get_branch_attendance_chart(
         datetime.date | None,
         Query(description="Target date for branch statistics. Defaults to today."),
     ] = None,
+    branch_id: Annotated[
+        int | None, Query(description="Filter by specific branch ID.")
+    ] = None,
 ) -> dict[str, Any]:
     """Retrieve branch attendance series metrics."""
     res = await service.get_branch_attendance_chart(
-        org_id=org_id, user=current_user, target_date=date
+        org_id=org_id, user=current_user, target_date=date, branch_id=branch_id
     )
     return _ok(res)
