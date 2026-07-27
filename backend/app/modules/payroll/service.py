@@ -97,6 +97,8 @@ from app.modules.payroll.schemas import (
     PayrollProcessItemResultSchema,
     PayrollProcessRequestSchema,
     PayrollProcessResponseSchema,
+    PayrollComputedRowSchema,
+    PayrollRecordListResponse,
     PayrollSettingUpdateSchema,
     PayrollSummaryResponseSchema,
     MergedPayslipDTO,
@@ -222,13 +224,14 @@ class PayrollService(BaseService):
             raise PayrollGroupNotFoundException()
         return group
 
-    async def _get_or_create_settings(self, org_id: int) -> PayrollSetting:
+    async def _get_or_create_settings(self, org_id: int, branch_id: int | None = None) -> PayrollSetting:
         """Get or create default payroll settings for the organization."""
-        settings = await self.settings.get_by_org(org_id)
+        settings = await self.settings.get_by_org(org_id, branch_id=branch_id)
         if not settings:
             settings = await self.settings.create(
                 {
                     "org_id": org_id,
+                    "branch_id": branch_id,
                     "working_hour_type": WorkingHourType.FIXED.value,
                     "full_day_working_hours": time(9, 0),
                     "half_day_working_hours": time(4, 30),
@@ -250,26 +253,50 @@ class PayrollService(BaseService):
 
     # --- 1. Payroll Configuration --------------------------------------------
 
-    async def get_settings(self, org_id: int) -> PayrollSetting:
+    async def get_settings(self, org_id: int, branch_id: int | None = None) -> PayrollSetting:
         """Retrieve organization-wide calculation settings."""
-        return await self._get_or_create_settings(org_id)
+        return await self._get_or_create_settings(org_id, branch_id=branch_id)
 
     async def update_settings(
-        self, org_id: int, payload: PayrollSettingUpdateSchema, user_id: int
+        self, org_id: int, payload: PayrollSettingUpdateSchema, user_id: int, branch_id: int | None = None
     ) -> PayrollSetting:
         """Update organization-wide calculation settings."""
-        settings = await self._get_or_create_settings(org_id)
+        settings = await self.settings.get_by_org(org_id, branch_id=branch_id)
         update_data = payload.model_dump(exclude_unset=True)
 
         async with self.transaction():
-            updated = await self.settings.update(settings, update_data)
+            if settings is None or (branch_id is not None and settings.branch_id != branch_id):
+                create_payload = {
+                    "org_id": org_id,
+                    "branch_id": branch_id,
+                    "working_hour_type": settings.working_hour_type if settings else WorkingHourType.FIXED.value,
+                    "full_day_working_hours": settings.full_day_working_hours if settings else time(9, 0),
+                    "half_day_working_hours": settings.half_day_working_hours if settings else time(4, 30),
+                    "attendance_mode": settings.attendance_mode if settings else AttendanceMode.CONSIDER_ALL_PUNCH.value,
+                    "off_day_compensation": settings.off_day_compensation if settings else "paid",
+                    "off_day_wage_multiplier": settings.off_day_wage_multiplier if settings else Decimal("1.0"),
+                    "daily_wage_formula": settings.daily_wage_formula if settings else "calendar_days",
+                    "overtime_type": settings.overtime_type if settings else "multiplier",
+                    "overtime_hourly_multiplier": settings.overtime_hourly_multiplier if settings else Decimal("1.5"),
+                    "overtime_buffer_period": settings.overtime_buffer_period if settings else time(0, 30),
+                    "overtime_period_interval": settings.overtime_period_interval if settings else "daily",
+                    "full_day_penalty_enabled": settings.full_day_penalty_enabled if settings else False,
+                    "half_day_penalty_enabled": settings.half_day_penalty_enabled if settings else False,
+                    "late_coming_penalty_enabled": settings.late_coming_penalty_enabled if settings else False,
+                    "grace_time": settings.grace_time if settings else time(0, 15),
+                }
+                create_payload.update(update_data)
+                updated = await self.settings.create(create_payload)
+            else:
+                updated = await self.settings.update(settings, update_data)
+
             await self.audit.record(
                 org_id=org_id,
                 module="payroll",
                 sub_module="settings",
                 action_type=ActionType.UPDATE,
                 title="Update Payroll Settings",
-                description="Updated organization-level payroll settings parameters.",
+                description=f"Updated organization-level payroll settings parameters for branch {branch_id}.",
                 performed_by_user_id=user_id,
                 performed_by_name=f"User {user_id}",
             )
@@ -280,9 +307,10 @@ class PayrollService(BaseService):
     # --- 2. Payroll Groups (Salary Structures) ------------------------------
 
     async def create_group(
-        self, org_id: int, payload: PayrollGroupCreateSchema, user_id: int
+        self, org_id: int, payload: PayrollGroupCreateSchema, user_id: int, branch_id: int | None = None
     ) -> PayrollGroupResponseSchema:
         """Create a new payroll group and enforce default policy constraints per payroll type."""
+        effective_branch_id = payload.branch_id or branch_id or 1
         async with self.transaction():
             # Validate name uniqueness among non-deleted groups in this org
             name_exists = await self.groups.name_exists(org_id, payload.name)
@@ -295,6 +323,7 @@ class PayrollService(BaseService):
             group = await self.groups.create(
                 {
                     "org_id": org_id,
+                    "branch_id": effective_branch_id,
                     "name": payload.name,
                     "payroll_type": payload.payroll_type.value,
                     "is_default": payload.is_default,
@@ -323,6 +352,7 @@ class PayrollService(BaseService):
         self,
         org_id: int,
         *,
+        branch_id: int | None = None,
         search: str | None = None,
         payroll_type: str | None = None,
         is_default: bool | None = None,
@@ -334,6 +364,7 @@ class PayrollService(BaseService):
         """List paginated payroll groups with search, filters, sorting, and employee count."""
         groups = await self.groups.search(
             org_id,
+            branch_id=branch_id,
             search=search,
             payroll_type=payroll_type,
             is_default=is_default,
@@ -343,7 +374,7 @@ class PayrollService(BaseService):
             page_size=page_size,
         )
         total = await self.groups.search_count(
-            org_id, search=search, payroll_type=payroll_type, is_default=is_default
+            org_id, branch_id=branch_id, search=search, payroll_type=payroll_type, is_default=is_default
         )
 
         group_ids = [g.id for g in groups]
@@ -2701,6 +2732,7 @@ class PayrollService(BaseService):
         self,
         org_id: int,
         group_id: int | None = None,
+        branch_id: int | None = None,
         from_date: date | None = None,
         to_date: date | None = None,
         status: str | None = None,
@@ -2711,6 +2743,7 @@ class PayrollService(BaseService):
         total = await self.finalizations.search_count(
             org_id=org_id,
             payroll_group_id=group_id,
+            branch_id=branch_id,
             from_date=from_date,
             to_date=to_date,
             status=status,
@@ -2718,6 +2751,7 @@ class PayrollService(BaseService):
         records = await self.finalizations.search(
             org_id=org_id,
             payroll_group_id=group_id,
+            branch_id=branch_id,
             from_date=from_date,
             to_date=to_date,
             status=status,

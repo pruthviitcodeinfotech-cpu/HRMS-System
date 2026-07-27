@@ -34,6 +34,7 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
+    Index,
     String,
     Text,
     Time,
@@ -57,6 +58,15 @@ class OrgSettings(Base):
             ondelete="RESTRICT",
         ),
         nullable=False,
+    )
+    branch_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "branches.branch_id",
+            name="fk_org_settings_branch_id_branches",
+            ondelete="RESTRICT",
+        ),
+        nullable=True,
     )
     # Shifts & Time Management
     advance_shift_enabled: Mapped[bool] = mapped_column(
@@ -88,7 +98,9 @@ class OrgSettings(Base):
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
 
-    __table_args__ = (UniqueConstraint("org_id", name="uq_org_settings_org_id"),)
+    __table_args__ = (
+        Index("ix_org_settings_org_id_branch_id", "org_id", "branch_id"),
+    )
 
 
 class OrgSalarySlipSettings(Base):
@@ -103,6 +115,15 @@ class OrgSalarySlipSettings(Base):
             ondelete="RESTRICT",
         ),
         nullable=False,
+    )
+    branch_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "branches.branch_id",
+            name="fk_org_salary_slip_settings_branch_id_branches",
+            ondelete="RESTRICT",
+        ),
+        nullable=True,
     )
     company_logo_url: Mapped[str | None] = mapped_column(Text)
     company_name: Mapped[str] = mapped_column(String(200), nullable=False)
@@ -151,5 +172,5 @@ class OrgSalarySlipSettings(Base):
     )
 
     __table_args__ = (
-        UniqueConstraint("org_id", name="uq_org_salary_slip_settings_org_id"),
+        Index("ix_org_salary_slip_settings_org_id_branch_id", "org_id", "branch_id"),
     )

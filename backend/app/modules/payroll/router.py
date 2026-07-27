@@ -24,7 +24,7 @@ from app.core.dependencies.auth import (
     get_current_active_user,
     require_permission,
 )
-from app.core.dependencies.branch import BranchIdDep
+from app.core.dependencies.branch import BranchIdDep, RequiredBranchIdDep
 from app.core.dependencies.pagination import PaginationParams, pagination_params
 from app.core.exceptions.base import AppException
 from app.core.middleware.request_context import get_request_id
@@ -126,9 +126,10 @@ def _ok(data: Any, message: str = "OK") -> dict[str, Any]:
 async def get_payroll_settings(
     service: PayrollServiceDep,
     org_id: OrgIdDep,
+    branch_id: BranchIdDep = None,
 ) -> dict[str, Any]:
     """Retrieve the organization-wide payroll calculation settings."""
-    result = await service.get_settings(org_id=org_id)
+    result = await service.get_settings(org_id=org_id, branch_id=branch_id)
     return _ok(result)
 
 
@@ -143,10 +144,11 @@ async def update_payroll_settings(
     service: PayrollServiceDep,
     current_user: CurrentUserDep,
     org_id: OrgIdDep,
+    branch_id: BranchIdDep = None,
 ) -> dict[str, Any]:
     """Upsert the single org-level payroll settings row."""
     result = await service.update_settings(
-        org_id=org_id, payload=payload, user_id=current_user.user_id
+        org_id=org_id, payload=payload, user_id=current_user.user_id, branch_id=branch_id
     )
     return _ok(result, "Payroll settings updated successfully.")
 
@@ -181,10 +183,12 @@ async def create_payroll_group(
     service: PayrollServiceDep,
     current_user: CurrentUserDep,
     org_id: OrgIdDep,
+    branch_id: RequiredBranchIdDep,
 ) -> dict[str, Any]:
     """Create a new payroll group (salary structure) for the organization."""
+    payload.branch_id = branch_id
     result = await service.create_group(
-        org_id=org_id, payload=payload, user_id=current_user.user_id
+        org_id=org_id, payload=payload, user_id=current_user.user_id, branch_id=branch_id
     )
     return _ok(result, "Payroll group created successfully.")
 
@@ -205,6 +209,7 @@ async def create_payroll_group(
 async def list_payroll_groups(
     service: PayrollServiceDep,
     org_id: OrgIdDep,
+    branch_id: RequiredBranchIdDep,
     pagination: Annotated[PaginationParams, Depends(pagination_params)],
     search: str | None = Query(None, description="Search by group name"),
     payroll_type: str | None = Query(None, description="Filter by payroll type"),
@@ -215,6 +220,7 @@ async def list_payroll_groups(
     """List paginated payroll groups with search, filtering, and sorting."""
     result = await service.list_groups(
         org_id=org_id,
+        branch_id=branch_id,
         search=search,
         payroll_type=payroll_type,
         is_default=is_default,
@@ -713,8 +719,8 @@ async def list_finalized_payroll_history(
     service: PayrollServiceDep,
     org_id: OrgIdDep,
     pagination: Annotated[PaginationParams, Depends(pagination_params)],
-    payroll_group_id: Annotated[int | None, Query(description="Filter by payroll group.")] = None,
     branch_id: BranchIdDep = None,
+    payroll_group_id: Annotated[int | None, Query(description="Filter by payroll group.")] = None,
     from_date: Annotated[datetime.date | None, Query(description="Cycle start date.")] = None,
     to_date: Annotated[datetime.date | None, Query(description="Cycle end date.")] = None,
     status: Annotated[str | None, Query(description="Filter by status.")] = None,
@@ -1189,7 +1195,7 @@ async def get_bulk_attendance_matrix(
     pagination: Annotated[PaginationParams, Depends(pagination_params)],
     date_from: Annotated[datetime.date, Query(description="Start date (inclusive).")],
     date_to: Annotated[datetime.date, Query(description="End date (inclusive).")],
-    branch_id: BranchIdDep = None,
+    branch_id: RequiredBranchIdDep,
     dept_id: Annotated[int | None, Query(description="Filter by department ID.")] = None,
     search: Annotated[str | None, Query(description="Search by employee name or code.")] = None,
 ) -> dict[str, Any]:

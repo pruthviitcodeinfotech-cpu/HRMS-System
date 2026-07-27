@@ -34,6 +34,7 @@ export interface HolidayTemplateSchema {
 export interface HolidayTemplateListParams {
   page?: number;
   page_size?: number;
+  branch_id?: number;
 }
 
 export interface HolidayTemplateListResponse {

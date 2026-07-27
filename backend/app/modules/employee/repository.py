@@ -62,16 +62,22 @@ class EmployeeRepository(BaseRepository[Employee]):
         super().__init__(session, Employee)
 
     # --- Lookups -------------------------------------------------------------
-    async def get_active_by_id(self, employee_id: int, org_id: int) -> Employee | None:
-        """Return a non-deleted employee by id within ``org_id``, or ``None``."""
+    async def get_active_by_id(
+        self, employee_id: int, org_id: int, branch_id: int | None = None
+    ) -> Employee | None:
+        """Return a non-deleted employee by id within ``org_id`` and optional ``branch_id``, or ``None``."""
         stmt = select(Employee).where(
             Employee.employee_id == employee_id,
             Employee.org_id == org_id,
             Employee.is_deleted.is_(False),
         )
+        if branch_id is not None:
+            stmt = stmt.where(Employee.master_branch_id == branch_id)
         return (await self.session.execute(stmt.limit(1))).scalar_one_or_none()
 
-    async def get_detail(self, employee_id: int, org_id: int) -> Employee | None:
+    async def get_detail(
+        self, employee_id: int, org_id: int, branch_id: int | None = None
+    ) -> Employee | None:
         """Return a non-deleted employee with all profile relationships eager-loaded.
 
         Loads org links (branch/department/designation) and every satellite
@@ -86,74 +92,79 @@ class EmployeeRepository(BaseRepository[Employee]):
                 Employee.org_id == org_id,
                 Employee.is_deleted.is_(False),
             )
-            .options(
-                # Many-to-one / one-to-one links are single rows: JOIN them into the
-                # parent SELECT instead of paying a round-trip each. `selectinload`
-                # would issue one extra statement per relationship — four wasted
-                # round-trips on the hottest read in the module.
-                joinedload(Employee.master_branch),
-                joinedload(Employee.department),
-                joinedload(Employee.designation),
-                joinedload(Employee.attendance_permission),
-                # The to-many collections stay on `selectinload`: joining them would
-                # multiply the parent row by the cartesian product of every satellite.
-                selectinload(Employee.bank_details),
-                selectinload(Employee.documents),
-                selectinload(Employee.emergency_contacts),
-                selectinload(Employee.references),
-                selectinload(Employee.biometrics),
-                selectinload(Employee.punch_branches),
-                selectinload(Employee.tags),
-                selectinload(Employee.status_history),
-            )
+        )
+        if branch_id is not None:
+            stmt = stmt.where(Employee.master_branch_id == branch_id)
+        stmt = stmt.options(
+            joinedload(Employee.master_branch),
+            joinedload(Employee.department),
+            joinedload(Employee.designation),
+            joinedload(Employee.attendance_permission),
+            selectinload(Employee.bank_details),
+            selectinload(Employee.documents),
+            selectinload(Employee.emergency_contacts),
+            selectinload(Employee.references),
+            selectinload(Employee.biometrics),
+            selectinload(Employee.punch_branches),
+            selectinload(Employee.tags),
+            selectinload(Employee.status_history),
         )
         return (await self.session.execute(stmt.limit(1))).scalar_one_or_none()
 
     async def get_by_code(
-        self, org_id: int, employee_code: str, *, include_deleted: bool = False
+        self,
+        org_id: int,
+        employee_code: str,
+        *,
+        branch_id: int | None = None,
+        include_deleted: bool = False,
     ) -> Employee | None:
         """Return the employee with ``employee_code`` in ``org_id`` (active by default)."""
         stmt = select(Employee).where(
             Employee.org_id == org_id, Employee.employee_code == employee_code
         )
+        if branch_id is not None:
+            stmt = stmt.where(Employee.master_branch_id == branch_id)
         if not include_deleted:
             stmt = stmt.where(Employee.is_deleted.is_(False))
         return (await self.session.execute(stmt.limit(1))).scalar_one_or_none()
 
     async def get_reporting_manager(
-        self, org_id: int, manager_employee_id: int
+        self, org_id: int, manager_employee_id: int, branch_id: int | None = None
     ) -> Employee | None:
-        """Resolve a reporting-manager reference to an active employee in ``org_id``.
-
-        The schema has no ``reporting_manager_id`` column; a manager is any active
-        employee in the same organisation. Returns the manager's row, or ``None``
-        when the id does not resolve to an active employee.
-        """
-        return await self.get_active_by_id(manager_employee_id, org_id)
+        """Resolve a reporting-manager reference to an active employee in ``org_id`` and optional ``branch_id``."""
+        return await self.get_active_by_id(manager_employee_id, org_id, branch_id=branch_id)
 
     # --- Exists checks -------------------------------------------------------
-    async def exists_in_org(self, org_id: int, employee_id: int) -> bool:
-        """Return whether an active employee ``employee_id`` exists in ``org_id``."""
+    async def exists_in_org(
+        self, org_id: int, employee_id: int, branch_id: int | None = None
+    ) -> bool:
+        """Return whether an active employee ``employee_id`` exists in ``org_id`` and optional ``branch_id``."""
         stmt = select(Employee.employee_id).where(
             Employee.employee_id == employee_id,
             Employee.org_id == org_id,
             Employee.is_deleted.is_(False),
         )
+        if branch_id is not None:
+            stmt = stmt.where(Employee.master_branch_id == branch_id)
         return (await self.session.execute(stmt.limit(1))).first() is not None
 
     async def code_exists(
-        self, org_id: int, employee_code: str, *, exclude_employee_id: int | None = None
+        self,
+        org_id: int,
+        employee_code: str,
+        *,
+        branch_id: int | None = None,
+        exclude_employee_id: int | None = None,
     ) -> bool:
-        """Return whether an active employee already uses ``employee_code`` in ``org_id``.
-
-        Mirrors the partial unique index ``uq_employees_org_id_employee_code``
-        (which applies only to non-deleted rows).
-        """
+        """Return whether an active employee already uses ``employee_code`` in ``org_id``."""
         stmt = select(Employee.employee_id).where(
             Employee.org_id == org_id,
             Employee.employee_code == employee_code,
             Employee.is_deleted.is_(False),
         )
+        if branch_id is not None:
+            stmt = stmt.where(Employee.master_branch_id == branch_id)
         if exclude_employee_id is not None:
             stmt = stmt.where(Employee.employee_id != exclude_employee_id)
         return (await self.session.execute(stmt.limit(1))).first() is not None
@@ -350,56 +361,70 @@ class BranchRepository(BaseRepository[Branch]):
 
 
 class DepartmentRepository(BaseRepository[Department]):
-    """Lookup and exists checks for ``departments`` (org FK validation)."""
+    """Lookup and exists checks for ``departments`` (org and branch FK validation)."""
 
     def __init__(self, session: AsyncSession) -> None:
         super().__init__(session, Department)
 
-    async def get_active_by_id(self, dept_id: int, org_id: int) -> Department | None:
-        """Return a non-deleted department by id within ``org_id``, or ``None``."""
+    async def get_active_by_id(
+        self, dept_id: int, org_id: int, branch_id: int | None = None
+    ) -> Department | None:
+        """Return a non-deleted department by id within ``org_id`` and optional ``branch_id``, or ``None``."""
         stmt = select(Department).where(
             Department.dept_id == dept_id,
             Department.org_id == org_id,
             Department.is_deleted.is_(False),
         )
+        if branch_id is not None:
+            stmt = stmt.where(Department.branch_id == branch_id)
         return (await self.session.execute(stmt.limit(1))).scalar_one_or_none()
 
-    async def exists_active(self, org_id: int, dept_id: int) -> bool:
-        """Return whether ``dept_id`` is an active, non-deleted department in ``org_id``."""
+    async def exists_active(
+        self, org_id: int, dept_id: int, branch_id: int | None = None
+    ) -> bool:
+        """Return whether ``dept_id`` is an active, non-deleted department in ``org_id`` and optional ``branch_id``."""
         stmt = select(Department.dept_id).where(
             Department.dept_id == dept_id,
             Department.org_id == org_id,
             Department.is_active.is_(True),
             Department.is_deleted.is_(False),
         )
+        if branch_id is not None:
+            stmt = stmt.where(Department.branch_id == branch_id)
         return (await self.session.execute(stmt.limit(1))).first() is not None
 
 
 class DesignationRepository(BaseRepository[Designation]):
-    """Lookup and exists checks for ``designations`` (org FK validation)."""
+    """Lookup and exists checks for ``designations`` (org and branch FK validation)."""
 
     def __init__(self, session: AsyncSession) -> None:
         super().__init__(session, Designation)
 
     async def get_active_by_id(
-        self, designation_id: int, org_id: int
+        self, designation_id: int, org_id: int, branch_id: int | None = None
     ) -> Designation | None:
-        """Return a non-deleted designation by id within ``org_id``, or ``None``."""
+        """Return a non-deleted designation by id within ``org_id`` and optional ``branch_id``, or ``None``."""
         stmt = select(Designation).where(
             Designation.designation_id == designation_id,
             Designation.org_id == org_id,
             Designation.is_deleted.is_(False),
         )
+        if branch_id is not None:
+            stmt = stmt.where(Designation.branch_id == branch_id)
         return (await self.session.execute(stmt.limit(1))).scalar_one_or_none()
 
-    async def exists_active(self, org_id: int, designation_id: int) -> bool:
-        """Return whether ``designation_id`` is an active designation in ``org_id``."""
+    async def exists_active(
+        self, org_id: int, designation_id: int, branch_id: int | None = None
+    ) -> bool:
+        """Return whether ``designation_id`` is an active designation in ``org_id`` and optional ``branch_id``."""
         stmt = select(Designation.designation_id).where(
             Designation.designation_id == designation_id,
             Designation.org_id == org_id,
             Designation.is_active.is_(True),
             Designation.is_deleted.is_(False),
         )
+        if branch_id is not None:
+            stmt = stmt.where(Designation.branch_id == branch_id)
         return (await self.session.execute(stmt.limit(1))).first() is not None
 
 

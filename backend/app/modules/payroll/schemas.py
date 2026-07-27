@@ -92,6 +92,7 @@ class PayrollGroupResponseSchema(BaseSchema):
 
     id: int = Field(..., description="Unique payroll group ID.")
     org_id: int = Field(..., description="Organization ID.")
+    branch_id: int | None = Field(default=None, description="Branch ID.")
     name: str = Field(..., description="Name of the payroll group.")
     payroll_type: PayrollType = Field(..., description="Payroll type configuration.")
     is_default: bool = Field(..., description="True if group is default for organization.")
@@ -109,6 +110,7 @@ class PayrollGroupCreateSchema(BaseSchema):
     name: str = Field(..., min_length=1, max_length=150, description="Name of the payroll group.")
     payroll_type: PayrollType = Field(..., description="Type of payroll computation.")
     is_default: bool = Field(default=False, description="Set as default group.")
+    branch_id: int | None = Field(default=None, description="Branch ID.")
 
     @field_validator("name")
     @classmethod

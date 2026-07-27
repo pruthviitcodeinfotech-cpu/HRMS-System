@@ -157,6 +157,7 @@ export interface DepartmentListParams {
   page?: number;
   page_size?: number;
   search?: string;
+  branch_id?: number;
   is_active?: boolean;
   include_deleted?: boolean;
   sort_by?: "dept_name" | "created_at";
@@ -188,6 +189,7 @@ export interface DesignationListParams {
   page?: number;
   page_size?: number;
   search?: string;
+  branch_id?: number;
   is_active?: boolean;
   include_deleted?: boolean;
   sort_by?: "designation_name" | "created_at";

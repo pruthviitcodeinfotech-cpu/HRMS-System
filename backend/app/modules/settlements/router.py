@@ -22,7 +22,7 @@ from app.core.dependencies.auth import (
     get_current_active_user,
     require_permission,
 )
-from app.core.dependencies.branch import BranchIdDep
+from app.core.dependencies.branch import BranchIdDep, RequiredBranchIdDep
 from app.core.dependencies.pagination import PaginationParams, pagination_params
 from app.core.exceptions.base import AppException
 from app.core.middleware.request_context import get_request_id
@@ -123,10 +123,13 @@ async def create_loan_advance(
     service: SettlementServiceDep,
     current_user: CurrentUserDep,
     org_id: OrgIdDep,
+    branch_id: RequiredBranchIdDep,
 ) -> dict[str, Any]:
     """Register and issue a new loan or advance header for an employee."""
+    data = payload.model_dump()
+    data["branch_id"] = branch_id
     result = await service.create_loan_advance(
-        org_id=org_id, data=payload.model_dump(), user_id=current_user.user_id
+        org_id=org_id, data=data, user_id=current_user.user_id, branch_id=branch_id
     )
     return _ok(result, "Loan/Advance created successfully.")
 
@@ -140,6 +143,7 @@ async def create_loan_advance(
 async def search_loans_advances(
     service: SettlementServiceDep,
     org_id: OrgIdDep,
+    branch_id: RequiredBranchIdDep,
     pagination: Annotated[PaginationParams, Depends(pagination_params)],
     employee_id: Annotated[int | None, Query(description="Filter by employee ID.")] = None,
     type: Annotated[LoanAdvanceType | None, Query(description="Filter by type.")] = None,
@@ -153,7 +157,6 @@ async def search_loans_advances(
         datetime.date | None, Query(description="End range of transaction date.")
     ] = None,
     search: Annotated[str | None, Query(description="Free-text search on name.")] = None,
-    branch_id: BranchIdDep = None,
     dept_id: Annotated[int | None, Query(description="Filter by department ID.")] = None,
     sort_by: Annotated[str | None, Query(description="Field to sort by.")] = None,
     sort_order: Annotated[str | None, Query(description="Sort order (asc/desc).")] = None,
@@ -379,6 +382,7 @@ async def list_loan_advance_logs(
     service: SettlementServiceDep,
     org_id: OrgIdDep,
     pagination: Annotated[PaginationParams, Depends(pagination_params)],
+    branch_id: RequiredBranchIdDep,
     employee_id: Annotated[int | None, Query(description="Filter by employee ID.")] = None,
     loan_id: Annotated[int | None, Query(description="Filter by loan ID.")] = None,
     transaction_type: Annotated[
@@ -387,7 +391,6 @@ async def list_loan_advance_logs(
     source: Annotated[TransactionSource | None, Query(description="Filter by source.")] = None,
     date_from: Annotated[datetime.date | None, Query(description="Start date.")] = None,
     date_to: Annotated[datetime.date | None, Query(description="End date.")] = None,
-    branch_id: BranchIdDep = None,
     sort_by: Annotated[str | None, Query(description="Sort field.")] = None,
     sort_order: Annotated[str | None, Query(description="Sort order.")] = None,
 ) -> dict[str, Any]:
@@ -419,12 +422,12 @@ async def get_loan_transactions(
     service: SettlementServiceDep,
     org_id: OrgIdDep,
     pagination: Annotated[PaginationParams, Depends(pagination_params)],
+    branch_id: RequiredBranchIdDep,
     employee_id: Annotated[int | None, Query(description="Filter by employee ID.")] = None,
     loan_id: Annotated[int | None, Query(description="Filter by loan ID.")] = None,
     transaction_type: Annotated[
         TransactionType | None, Query(description="Filter by transaction type.")
     ] = None,
-    branch_id: BranchIdDep = None,
     sort_by: Annotated[str | None, Query(description="Sort field.")] = None,
     sort_order: Annotated[str | None, Query(description="Sort order.")] = None,
 ) -> dict[str, Any]:
@@ -677,8 +680,8 @@ async def list_arrears(
     service: SettlementServiceDep,
     org_id: OrgIdDep,
     pagination: Annotated[PaginationParams, Depends(pagination_params)],
+    branch_id: RequiredBranchIdDep,
     employee_id: Annotated[int | None, Query(description="Filter by employee ID.")] = None,
-    branch_id: BranchIdDep = None,
     dept_id: Annotated[int | None, Query(description="Filter by department ID.")] = None,
     min_outstanding: Annotated[
         Decimal | None, Query(description="Minimum outstanding arrears filter.")

@@ -18,6 +18,7 @@ const buildHolidayTemplateQuery = (params: HolidayTemplateListParams): string =>
   const query = new URLSearchParams();
   if (params.page) query.append("page", String(params.page));
   if (params.page_size) query.append("page_size", String(params.page_size));
+  if (params.branch_id) query.append("branch_id", String(params.branch_id));
   return query.toString();
 };
 

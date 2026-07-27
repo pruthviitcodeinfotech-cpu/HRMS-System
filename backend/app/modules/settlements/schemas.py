@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import datetime
 from decimal import Decimal
+from typing import Any
 
 from pydantic import Field, model_validator
 
@@ -692,7 +693,7 @@ class LoanAdvanceTransactionListResponse(PaginatedResponse[LoanAdvanceTransactio
     outstanding_amount: Decimal = Field(default=Decimal("0.00"), description="Total outstanding exposure.")
 
 
-class EmployeeArrearsListResponse(PaginatedResponse[EmployeeArrearsSchema]):
+class EmployeeArrearsListResponse(PaginatedResponse[Any]):
     """Paginated response containing a list of employee arrears headers."""
 
 

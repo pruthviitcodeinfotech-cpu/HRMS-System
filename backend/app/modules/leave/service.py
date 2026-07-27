@@ -1073,7 +1073,7 @@ class LeaveService(BaseService):
     # =========================================================================
 
     async def create_holiday_group(
-        self, org_id: int, data: dict[str, Any], created_by: int
+        self, org_id: int, branch_id: int, data: dict[str, Any], created_by: int
     ) -> HolidayTemplate:
         """Atomically create a holiday group template together with its items.
 
@@ -1082,20 +1082,26 @@ class LeaveService(BaseService):
         transaction is rolled back — no orphan template, no partial items.
 
         ``data`` must contain:
-          - ``name``  (str)        — template name, unique (case-insensitive) per org.
+          - ``name``  (str)        — template name, unique (case-insensitive) per branch.
           - ``items`` (list[dict]) — zero or more holiday item payloads.
         """
         name: str = data["name"]
         items_data: list[dict[str, Any]] = data.get("items", [])
 
         # Pre-transaction read-only uniqueness check
-        if await self.templates.name_exists(org_id, name):
+        if await self.templates.name_exists(org_id, branch_id, name):
             raise HolidayTemplateNameExistsException()
 
         async with self.transaction():
             # 1. Create template row (flushed, not yet committed)
             template = await self.templates.create(
-                {"org_id": org_id, "name": name, "holiday_count": 0, "created_by": created_by}
+                {
+                    "org_id": org_id,
+                    "branch_id": branch_id,
+                    "name": name,
+                    "holiday_count": 0,
+                    "created_by": created_by,
+                }
             )
 
             # 2. Bulk-insert all holiday items in one flush (same transaction)
@@ -1120,6 +1126,7 @@ class LeaveService(BaseService):
             # 4. Audit log (flushed in the same transaction)
             await self.audit.record(
                 org_id=org_id,
+                branch_id=branch_id,
                 module="leave",
                 sub_module="holiday",
                 action_type=ActionType.INSERT,
@@ -1131,37 +1138,38 @@ class LeaveService(BaseService):
                 performed_by_user_id=created_by,
                 performed_by_name=f"User {created_by}",
             )
-        return await self.get_holiday_group(org_id, template.id)
+        return await self.get_holiday_group(org_id, branch_id, template.id)
 
 
     async def list_holiday_groups(
-        self, org_id: int, *, page: int = 1, page_size: int = 25
+        self, org_id: int, branch_id: int, *, page: int = 1, page_size: int = 25
     ) -> PaginatedResponse[HolidayTemplate]:
         """List and paginate holiday group templates."""
-        items = await self.templates.search(org_id, page=page, page_size=page_size)
-        total = await self.templates.search_count(org_id)
+        items = await self.templates.search(org_id, branch_id, page=page, page_size=page_size)
+        total = await self.templates.search_count(org_id, branch_id)
         return self.paginate(items, page=page, page_size=page_size, total_records=total)
 
-    async def get_holiday_group(self, org_id: int, template_id: int) -> HolidayTemplate:
+    async def get_holiday_group(self, org_id: int, branch_id: int, template_id: int) -> HolidayTemplate:
         """Get holiday group template details with its items."""
-        template = await self.templates.get_by_id_in_org(org_id, template_id)
+        template = await self.templates.get_by_id_in_org(org_id, branch_id, template_id)
         if not template:
             raise HolidayTemplateNotFoundException()
         return template
 
     async def update_holiday_group(
-        self, org_id: int, template_id: int, data: dict[str, Any], updated_by: int
+        self, org_id: int, branch_id: int, template_id: int, data: dict[str, Any], updated_by: int
     ) -> HolidayTemplate:
         """Update a holiday group template name."""
-        template = await self.get_holiday_group(org_id, template_id)
+        template = await self.get_holiday_group(org_id, branch_id, template_id)
         name = data["name"]
-        if name != template.name and await self.templates.name_exists(org_id, name, exclude_id=template_id):
+        if name != template.name and await self.templates.name_exists(org_id, branch_id, name, exclude_id=template_id):
             raise HolidayTemplateNameExistsException()
 
         async with self.transaction():
             await self.templates.update(template, {"name": name, "updated_by": updated_by})
             await self.audit.record(
                 org_id=org_id,
+                branch_id=branch_id,
                 module="leave",
                 sub_module="holiday",
                 action_type=ActionType.UPDATE,
@@ -1170,11 +1178,11 @@ class LeaveService(BaseService):
                 performed_by_user_id=updated_by,
                 performed_by_name=f"User {updated_by}",
             )
-        return await self.get_holiday_group(org_id, template_id)
+        return await self.get_holiday_group(org_id, branch_id, template_id)
 
-    async def delete_holiday_group(self, org_id: int, template_id: int, user_id: int) -> None:
+    async def delete_holiday_group(self, org_id: int, branch_id: int, template_id: int, user_id: int) -> None:
         """Soft-delete a holiday template group."""
-        template = await self.get_holiday_group(org_id, template_id)
+        template = await self.get_holiday_group(org_id, branch_id, template_id)
 
         async with self.transaction():
             await self.templates.soft_delete(template)

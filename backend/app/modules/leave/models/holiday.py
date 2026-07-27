@@ -36,6 +36,11 @@ class HolidayTemplate(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     org_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    branch_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("branches.branch_id", name="fk_holiday_templates_branch_id_branches"),
+        nullable=False,
+    )
     name: Mapped[str] = mapped_column(String(150), nullable=False)
     holiday_count: Mapped[int] = mapped_column(
         SmallInteger, nullable=False, server_default=text("0")
@@ -59,12 +64,13 @@ class HolidayTemplate(Base):
 
     __table_args__ = (
         Index(
-            "uq_holiday_templates_org_id_name_ci",
-            "org_id",
+            "uq_holiday_templates_branch_id_name_ci",
+            "branch_id",
             text("lower(name)"),
             unique=True,
             postgresql_where=text("is_deleted = false"),
         ),
+        Index("ix_holiday_templates_branch_id", "branch_id"),
     )
 
     items: Mapped[list["HolidayTemplateItem"]] = relationship(
@@ -123,6 +129,11 @@ class EmployeeHolidayAssignment(Base):
     __tablename__ = "employee_holiday_assignments"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    branch_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("branches.branch_id", name="fk_employee_holiday_assignments_branch_id_branches"),
+        nullable=False,
+    )
     # DEFERRED cross-module FK -> employees
     employee_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     template_id: Mapped[int | None] = mapped_column(

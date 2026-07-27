@@ -41,6 +41,11 @@ class ShiftAssignment(Base):
         ForeignKey("organizations.org_id", name="fk_shift_assignments_org_id_organizations"),
         nullable=False,
     )
+    branch_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("branches.branch_id", name="fk_shift_assignments_branch_id_branches"),
+        nullable=False,
+    )
     employee_id: Mapped[int] = mapped_column(
         BigInteger,
         ForeignKey("employees.employee_id", name="fk_shift_assignments_employee_id_employees"),
@@ -69,10 +74,8 @@ class ShiftAssignment(Base):
             "effective_from",
             "effective_to",
         ),
-        # shift/repository.py: WHERE org_id = ? [AND employee_id = ?]. The leading
-        # org_id also supplies the missing FK index.
         Index("ix_shift_assignments_org_id_employee_id", "org_id", "employee_id"),
-        # shift/repository.py:108,119: WHERE shift_id = ?
+        Index("ix_shift_assignments_branch_id_employee_id", "branch_id", "employee_id"),
         Index("ix_shift_assignments_shift_id", "shift_id"),
     )
 
@@ -145,6 +148,11 @@ class Roster(Base):
         ForeignKey("organizations.org_id", name="fk_roster_org_id_organizations"),
         nullable=False,
     )
+    branch_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("branches.branch_id", name="fk_roster_branch_id_branches"),
+        nullable=False,
+    )
     employee_id: Mapped[int] = mapped_column(
         BigInteger,
         ForeignKey("employees.employee_id", name="fk_roster_employee_id_employees"),
@@ -169,7 +177,7 @@ class Roster(Base):
     __table_args__ = (
         UniqueConstraint("employee_id", "roster_date", name="uq_roster_employee_id_roster_date"),
         Index("ix_roster_org_id_roster_date", "org_id", "roster_date"),
-        # Roster rows are looked up by the shift they were generated from.
+        Index("ix_roster_branch_id_roster_date", "branch_id", "roster_date"),
         Index("ix_roster_shift_id", "shift_id"),
     )
 

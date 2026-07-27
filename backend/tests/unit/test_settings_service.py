@@ -231,7 +231,9 @@ async def test_reset_org_settings_success() -> None:
 
     result = await svc.reset_org_settings(_ORG_ID, _USER_ID, _CALLER_NAME)
 
-    svc.org_settings.reset_to_defaults.assert_called_once_with(_ORG_ID, updated_by=_USER_ID)
+    svc.org_settings.reset_to_defaults.assert_called_once_with(
+        _ORG_ID, updated_by=_USER_ID, branch_id=None
+    )
     svc.audit.record.assert_called_once()
     assert result == reset_row
 

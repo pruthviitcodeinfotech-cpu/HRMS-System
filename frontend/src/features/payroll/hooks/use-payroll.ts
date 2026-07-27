@@ -19,15 +19,21 @@ export const usePayrollGroups = (params?: {
   search?: string;
   payroll_type?: string;
   is_default?: boolean;
+  branch_id?: number;
   sort_by?: string;
   sort_order?: string;
   page?: number;
   page_size?: number;
 }) => {
+  const { selectedBranchId } = useBranchContext();
+  const effectiveParams = {
+    ...(params || {}),
+    branch_id: params?.branch_id || selectedBranchId || undefined,
+  };
   return useQuery({
-    queryKey: payrollKeys.groups(params),
+    queryKey: payrollKeys.groups(effectiveParams),
     queryFn: async () => {
-      const res = await payrollService.getGroups(params);
+      const res = await payrollService.getGroups(effectiveParams);
       return res.data;
     },
   });

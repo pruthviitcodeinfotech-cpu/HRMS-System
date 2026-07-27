@@ -41,6 +41,11 @@ class Shift(Base):
         ForeignKey("organizations.org_id", name="fk_shifts_org_id_organizations"),
         nullable=False,
     )
+    branch_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("branches.branch_id", name="fk_shifts_branch_id_branches"),
+        nullable=False,
+    )
     shift_name: Mapped[str] = mapped_column(String(150), nullable=False)
     shift_type: Mapped[str] = mapped_column(
         String(20), nullable=False, server_default=text("'fixed'")
@@ -72,12 +77,13 @@ class Shift(Base):
 
     __table_args__ = (
         Index(
-            "uq_shifts_org_id_shift_name",
-            "org_id",
+            "uq_shifts_branch_id_shift_name",
+            "branch_id",
             "shift_name",
             unique=True,
             postgresql_where=text("is_deleted = false"),
         ),
+        Index("ix_shifts_branch_id", "branch_id"),
         CheckConstraint("shift_type IN ('fixed', 'open')", name="ck_shifts_shift_type"),
     )
 

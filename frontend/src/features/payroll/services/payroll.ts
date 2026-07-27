@@ -127,6 +127,7 @@ export const payrollService = {
     page?: number;
     page_size?: number;
     payroll_group_id?: number;
+    branch_id?: number;
     from_date?: string;
     to_date?: string;
     status?: string;
@@ -135,6 +136,7 @@ export const payrollService = {
     if (params?.page) query.append("page", params.page.toString());
     if (params?.page_size) query.append("page_size", params.page_size.toString());
     if (params?.payroll_group_id) query.append("payroll_group_id", params.payroll_group_id.toString());
+    if (params?.branch_id) query.append("branch_id", params.branch_id.toString());
     if (params?.from_date) query.append("from_date", params.from_date);
     if (params?.to_date) query.append("to_date", params.to_date);
     if (params?.status) query.append("status", params.status);

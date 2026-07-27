@@ -22,15 +22,34 @@ class OrgSettingsRepository(BaseRepository[OrgSettings]):
     def __init__(self, session: AsyncSession) -> None:
         super().__init__(session, OrgSettings)
 
-    async def get_by_org_id(self, org_id: int) -> OrgSettings | None:
-        """Fetch the single settings row for the given organization."""
-        stmt = select(OrgSettings).where(OrgSettings.org_id == org_id)
-        result = await self.session.execute(stmt)
-        return result.scalar_one_or_none()
+    async def get_by_org_id(self, org_id: int, branch_id: int | None = None) -> OrgSettings | None:
+        """Fetch settings row for the given organization and branch (with fallback)."""
+        if branch_id is not None:
+            stmt = select(OrgSettings).where(
+                OrgSettings.org_id == org_id, OrgSettings.branch_id == branch_id
+            )
+            res = await self.session.execute(stmt)
+            row = res.scalar_one_or_none()
+            if row is not None:
+                return row
+        # Fallback to org default (branch_id is null or first available org row)
+        stmt = select(OrgSettings).where(
+            OrgSettings.org_id == org_id, OrgSettings.branch_id.is_(None)
+        )
+        res = await self.session.execute(stmt)
+        row = res.scalar_one_or_none()
+        if row is None:
+            stmt = select(OrgSettings).where(OrgSettings.org_id == org_id).limit(1)
+            res = await self.session.execute(stmt)
+            row = res.scalar_one_or_none()
+        return row
 
-    async def exists_in_org(self, org_id: int) -> bool:
-        """Check if settings row exists for the given organization."""
-        return await self.exists(filters={"org_id": org_id})
+    async def exists_in_org(self, org_id: int, branch_id: int | None = None) -> bool:
+        """Check if settings row exists for the given organization and branch."""
+        filters: dict[str, Any] = {"org_id": org_id}
+        if branch_id is not None:
+            filters["branch_id"] = branch_id
+        return await self.exists(filters=filters)
 
     async def search(self, org_id: int, **filters: Any) -> list[OrgSettings]:
         """Search organization settings under tenant context.
@@ -46,10 +65,10 @@ class OrgSettingsRepository(BaseRepository[OrgSettings]):
         return list(result.scalars().all())
 
     async def reset_to_defaults(
-        self, org_id: int, updated_by: int | None = None
+        self, org_id: int, updated_by: int | None = None, branch_id: int | None = None
     ) -> OrgSettings | None:
         """Reset organization settings to defaults (toggles and time)."""
-        settings = await self.get_by_org_id(org_id)
+        settings = await self.get_by_org_id(org_id, branch_id=branch_id)
         if not settings:
             return None
 
@@ -72,15 +91,39 @@ class OrgSalarySlipSettingsRepository(BaseRepository[OrgSalarySlipSettings]):
     def __init__(self, session: AsyncSession) -> None:
         super().__init__(session, OrgSalarySlipSettings)
 
-    async def get_by_org_id(self, org_id: int) -> OrgSalarySlipSettings | None:
-        """Fetch the salary slip settings row for the given organization."""
-        stmt = select(OrgSalarySlipSettings).where(OrgSalarySlipSettings.org_id == org_id)
-        result = await self.session.execute(stmt)
-        return result.scalar_one_or_none()
+    async def get_by_org_id(
+        self, org_id: int, branch_id: int | None = None
+    ) -> OrgSalarySlipSettings | None:
+        """Fetch the salary slip settings row for the given organization and branch."""
+        if branch_id is not None:
+            stmt = select(OrgSalarySlipSettings).where(
+                OrgSalarySlipSettings.org_id == org_id,
+                OrgSalarySlipSettings.branch_id == branch_id,
+            )
+            res = await self.session.execute(stmt)
+            row = res.scalar_one_or_none()
+            if row is not None:
+                return row
+        stmt = select(OrgSalarySlipSettings).where(
+            OrgSalarySlipSettings.org_id == org_id,
+            OrgSalarySlipSettings.branch_id.is_(None),
+        )
+        res = await self.session.execute(stmt)
+        row = res.scalar_one_or_none()
+        if row is None:
+            stmt = select(OrgSalarySlipSettings).where(
+                OrgSalarySlipSettings.org_id == org_id
+            ).limit(1)
+            res = await self.session.execute(stmt)
+            row = res.scalar_one_or_none()
+        return row
 
-    async def exists_in_org(self, org_id: int) -> bool:
-        """Check if salary slip settings exist for the given organization."""
-        return await self.exists(filters={"org_id": org_id})
+    async def exists_in_org(self, org_id: int, branch_id: int | None = None) -> bool:
+        """Check if salary slip settings exist for the given organization and branch."""
+        filters: dict[str, Any] = {"org_id": org_id}
+        if branch_id is not None:
+            filters["branch_id"] = branch_id
+        return await self.exists(filters=filters)
 
 
 class SettingsCrossModuleRepository:

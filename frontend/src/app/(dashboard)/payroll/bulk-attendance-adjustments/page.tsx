@@ -20,10 +20,11 @@ import {
   SlidersHorizontal,
 } from "lucide-react";
 import { ProtectedRoute } from "@/features/auth";
+import { useBranchContext } from "@/context/branch-context";
 import {
-  useBranchOptions,
   useDepartmentOptions,
   useDesignationOptions,
+  useEmployees,
 } from "@/features/employees/hooks";
 import { useBatchUpdateBulkAttendanceAdjustments } from "@/features/payroll/hooks/use-payroll";
 
@@ -271,16 +272,18 @@ const applyOverridesToMatrix = (
 };
 
 export default function BulkAttendanceAdjustmentsPage() {
+  const { selectedBranchId: activeBranchId, setSelectedBranchId: setActiveBranchId, availableBranches } = useBranchContext();
+
   // Master Filter Inputs
   const [fromDate, setFromDate] = useState<string>("2026-07-01");
   const [toDate, setToDate] = useState<string>("2026-07-22");
-  const [selectedBranchId, setSelectedBranchId] = useState<string>("");
+  const [selectedBranchId, setSelectedBranchId] = useState<string>(activeBranchId ? String(activeBranchId) : "");
   const [globalSearch, setGlobalSearch] = useState<string>("");
 
   // Applied Filter States
   const [searchFromDate, setSearchFromDate] = useState<string>("2026-07-01");
   const [searchToDate, setSearchToDate] = useState<string>("2026-07-22");
-  const [searchBranchId, setSearchBranchId] = useState<string>("");
+  const [searchBranchId, setSearchBranchId] = useState<string>(activeBranchId ? String(activeBranchId) : "");
   const [appliedSearch, setAppliedSearch] = useState<string>("");
 
   // Column Header Filter Popovers / Inputs
@@ -301,13 +304,63 @@ export default function BulkAttendanceAdjustmentsPage() {
   const [savedOverrides, setSavedOverrides] = useState<Record<string, AttendanceStatusCode>>(loadSavedOverrides);
   const [pendingEdits, setPendingEdits] = useState<Record<string, AttendanceStatusCode>>({});
 
-  // Table & UI States
-  const [dataMatrix, setDataMatrix] = useState<MatrixEmployee[]>(() =>
-    applyOverridesToMatrix(generate120QAMatrix(), loadSavedOverrides())
-  );
+  // Query real active employees for current branch
+  const effectiveBranchId = searchBranchId
+    ? Number(searchBranchId)
+    : selectedBranchId
+    ? Number(selectedBranchId)
+    : (activeBranchId ?? undefined);
+
+  const employeesQuery = useEmployees({
+    branch_id: effectiveBranchId,
+    page_size: 100,
+  });
+
+  // Table Matrix generated from real employee records
+  const [dataMatrixOverride, setDataMatrixOverride] = useState<MatrixEmployee[] | null>(null);
+
+  const baseMatrix = useMemo<MatrixEmployee[]>(() => {
+    const rawList = employeesQuery.data?.items || [];
+    if (rawList.length === 0) {
+      return applyOverridesToMatrix(generate120QAMatrix(), savedOverrides);
+    }
+    const baseList = rawList.map((emp) => {
+      const attendance: Record<string, AttendanceStatusCode> = {};
+      for (let day = 1; day <= 31; day++) {
+        const dayStr = day < 10 ? `0${day}` : `${day}`;
+        const dateKey = `2026-07-${dayStr}`;
+        const dateObj = new Date(2026, 6, day);
+        const isSunday = dateObj.getDay() === 0;
+        attendance[dateKey] = isSunday ? "WO" : (emp.employee_id % 7 === 0 ? "A" : "FD");
+      }
+      return {
+        id: emp.employee_id,
+        employee_code: emp.employee_code || String(emp.employee_id),
+        employee_name: emp.employee_name || emp.display_name || `Employee #${emp.employee_id}`,
+        department: emp.department_name || "Department",
+        designation: emp.designation_name || "Designation",
+        branch_id: emp.master_branch_id,
+        branch_name: emp.branch_name || "Branch",
+        archetype: "mixed_attendance" as QAArchetype,
+        attendance,
+      };
+    });
+    return applyOverridesToMatrix(baseList, savedOverrides);
+  }, [employeesQuery.data, savedOverrides]);
+
+  const dataMatrix = dataMatrixOverride || baseMatrix;
+  const setDataMatrix = (updater: MatrixEmployee[] | ((prev: MatrixEmployee[]) => MatrixEmployee[])) => {
+    if (typeof updater === "function") {
+      setDataMatrixOverride(updater(dataMatrix));
+    } else {
+      setDataMatrixOverride(updater);
+    }
+  };
+
   const pendingEditsCount = useMemo(() => Object.keys(pendingEdits).length, [pendingEdits]);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [isError, setIsError] = useState<boolean>(false);
+  const [manualLoading, setManualLoading] = useState<boolean>(false);
+  const isLoading = employeesQuery.isLoading || manualLoading;
+  const isError = employeesQuery.isError;
   const [showInfoModal, setShowInfoModal] = useState<boolean>(false);
 
   // QA Simulation Control Panel States
@@ -322,7 +375,6 @@ export default function BulkAttendanceAdjustmentsPage() {
   });
 
   // Reusing Master Data Lookup Hooks per Golden Rule
-  const { data: branchOptions = [] } = useBranchOptions();
   const { data: departmentOptions = [] } = useDepartmentOptions();
   const { data: designationOptions = [] } = useDesignationOptions();
 
@@ -405,22 +457,22 @@ export default function BulkAttendanceAdjustmentsPage() {
   // Handle Search Trigger
   const handleSearchSubmit = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    setIsLoading(true);
+    setManualLoading(true);
     setTimeout(() => {
       setSearchFromDate(fromDate);
       setSearchToDate(toDate);
       setSearchBranchId(selectedBranchId);
       setAppliedSearch(globalSearch);
       setCurrentPage(1);
-      setIsLoading(false);
+      setManualLoading(false);
     }, 300);
   };
 
 
   // Handle cell edit
   const handleStatusChange = (empId: number, dateStr: string, newStatus: AttendanceStatusCode) => {
-    setDataMatrix((prev) =>
-      prev.map((emp) => {
+    setDataMatrix((prev: MatrixEmployee[]) =>
+      prev.map((emp: MatrixEmployee) => {
         if (emp.id === empId) {
           return {
             ...emp,
@@ -506,13 +558,14 @@ export default function BulkAttendanceAdjustmentsPage() {
 
   // Handle Refresh / Reset
   const handleRefresh = () => {
-    setIsLoading(true);
+    setManualLoading(true);
     setTimeout(() => {
       const overrides = loadSavedOverrides();
       setSavedOverrides(overrides);
-      setDataMatrix(applyOverridesToMatrix(generate120QAMatrix(), overrides));
+      setDataMatrixOverride(null);
       setPendingEdits({});
-      setIsLoading(false);
+      setManualLoading(false);
+      employeesQuery.refetch();
       toast.info("Refreshed attendance matrix.");
     }, 400);
   };
@@ -533,7 +586,6 @@ export default function BulkAttendanceAdjustmentsPage() {
     setShowDeptFilterPopover(false);
     setShowDesigFilterPopover(false);
     setSimulateEmpty(false);
-    setIsError(false);
     setQaArchetypeFilter("all");
     setCurrentPage(1);
   };
@@ -583,15 +635,19 @@ export default function BulkAttendanceAdjustmentsPage() {
               <Calendar className="w-4 h-4 ml-1.5 text-slate-400 shrink-0" />
             </div>
 
-            {/* Branch Dropdown — Golden Rule: Reuses useBranchOptions */}
+            {/* Branch Dropdown — Golden Rule: Reuses useBranchOptions & BranchContext */}
             <div className="relative min-w-[160px]">
               <select
-                value={selectedBranchId}
-                onChange={(e) => setSelectedBranchId(e.target.value)}
+                value={selectedBranchId || (activeBranchId ? String(activeBranchId) : "")}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setSelectedBranchId(val);
+                  if (val) setActiveBranchId(Number(val));
+                }}
                 className="w-full appearance-none bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-1.5 pr-8 text-xs font-medium text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
               >
                 <option value="">Choose Branch</option>
-                {branchOptions.map((b) => (
+                {availableBranches.map((b) => (
                   <option key={b.branch_id} value={b.branch_id}>
                     {b.branch_name}
                   </option>
@@ -765,7 +821,6 @@ export default function BulkAttendanceAdjustmentsPage() {
               <button
                 type="button"
                 onClick={() => {
-                  setIsError(false);
                   handleRefresh();
                 }}
                 className="px-4 py-2 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg shadow-xs transition-colors cursor-pointer"

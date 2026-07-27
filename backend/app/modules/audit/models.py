@@ -62,6 +62,15 @@ class ActivityLog(Base):
         ),
         nullable=False,
     )
+    branch_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "branches.branch_id",
+            name="fk_activity_logs_branch_id_branches",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+    )
     module: Mapped[str] = mapped_column(String(100), nullable=False)
     sub_module: Mapped[str | None] = mapped_column(String(150))
     employee_id: Mapped[int | None] = mapped_column(
@@ -97,6 +106,7 @@ class ActivityLog(Base):
     )
 
     __table_args__ = (
+        Index("ix_activity_logs_branch_id_logged_at", "branch_id", "logged_at"),
         Index(
             "ix_activity_logs_org_id_logged_at",
             "org_id",

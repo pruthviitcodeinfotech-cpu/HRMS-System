@@ -33,4 +33,22 @@ async def get_current_branch_id(
 
     return resolved_id
 
+
+async def get_required_branch_id(
+    current_user: Annotated[CurrentUser, Depends(get_current_user)],
+    branch_id: Annotated[int | None, Query(description="Filter by branch ID.")] = None,
+    x_branch_id: Annotated[str | None, Header(alias="x-branch-id", description="Filter by branch ID header.")] = None,
+) -> int:
+    """Resolve mandatory active branch_id from Query, Header, or user permission scope."""
+    res = await get_current_branch_id(current_user=current_user, branch_id=branch_id, x_branch_id=x_branch_id)
+    if res is not None:
+        return res
+
+    if current_user.permissions.branch_ids:
+        return next(iter(current_user.permissions.branch_ids))
+
+    return 1
+
+
 BranchIdDep = Annotated[int | None, Depends(get_current_branch_id)]
+RequiredBranchIdDep = Annotated[int, Depends(get_required_branch_id)]

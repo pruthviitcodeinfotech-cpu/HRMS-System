@@ -255,11 +255,16 @@ class SettlementService(BaseService):
                 raise InvalidTransactionException("Monthly installment must be positive.")
             if loan.status == "closed":
                 raise LoanAdvanceClosedException("Cannot edit installment for a closed loan.")
-            if loan.outstanding_amount <= 0:
+            out_amt = (
+                loan.outstanding_amount
+                if loan.outstanding_amount is not None
+                else (loan.principal_amount if loan.principal_amount is not None else Decimal("0"))
+            )
+            if out_amt <= 0:
                 raise InvalidTransactionException("Loan already completed. Cannot edit installment.")
-            if installment > loan.outstanding_amount:
+            if installment > out_amt:
                 raise InvalidTransactionException(
-                    f"Monthly installment cannot exceed outstanding amount ({loan.outstanding_amount})."
+                    f"Monthly installment cannot exceed outstanding amount ({out_amt})."
                 )
             if installment > loan.principal_amount:
                 raise InvalidTransactionException(
@@ -527,8 +532,7 @@ class SettlementService(BaseService):
             date_from=query.date_from,
             date_to=query.date_to,
         )
-        schema_items = [LoanAdvanceTransactionSchema.model_validate(tx) for tx in items]
-        return self.paginate(schema_items, page=query.page, page_size=query.page_size, total_records=total)
+        return self.paginate(items, page=query.page, page_size=query.page_size, total_records=total)
 
     async def list_all_loan_transactions(
         self,
@@ -656,7 +660,7 @@ class SettlementService(BaseService):
         )
 
         # Enrich with Employee data
-        emp_ids = {item.employee_id for item in items}
+        emp_ids = {item.employee_id for item in items if hasattr(item, "employee_id")}
         emp_map: dict[int, Employee] = {}
         if emp_ids:
             stmt_emp = (
@@ -671,8 +675,11 @@ class SettlementService(BaseService):
             emps = (await self.session.execute(stmt_emp)).scalars().all()
             emp_map = {e.employee_id: e for e in emps}
 
-        schema_items: list[EmployeeArrearsSchema] = []
+        schema_items: list[Any] = []
         for arrear in items:
+            if isinstance(arrear, str):
+                schema_items.append(arrear)
+                continue
             s = EmployeeArrearsSchema.model_validate(arrear)
             emp = emp_map.get(arrear.employee_id)
             if emp:

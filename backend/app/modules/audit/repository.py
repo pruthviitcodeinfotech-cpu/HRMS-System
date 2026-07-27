@@ -42,12 +42,16 @@ class ActivityLogRepository(BaseRepository[ActivityLog]):
 
     # --- Lookups -------------------------------------------------------------
 
-    async def get_by_id_in_org(self, org_id: int, log_id: int) -> ActivityLog | None:
-        """Retrieve a single audit row by id, scoped to a specific organization."""
+    async def get_by_id_in_org(
+        self, org_id: int, log_id: int, branch_id: int | None = None
+    ) -> ActivityLog | None:
+        """Retrieve a single audit row by id, scoped to a specific organization and optional branch."""
         stmt = select(ActivityLog).where(
             ActivityLog.id == log_id,
             ActivityLog.org_id == org_id,
         )
+        if branch_id is not None:
+            stmt = stmt.where(ActivityLog.branch_id == branch_id)
         result = await self.session.execute(stmt.limit(1))
         return result.scalar_one_or_none()
 
@@ -66,10 +70,13 @@ class ActivityLogRepository(BaseRepository[ActivityLog]):
         date_from: datetime.date | None = None,
         date_to: datetime.date | None = None,
         search: str | None = None,
+        branch_id: int | None = None,
     ) -> list[Any]:
         """Build the org-scoped SQLAlchemy filter list for a log query."""
         conds: list[Any] = [ActivityLog.org_id == org_id]
 
+        if branch_id is not None:
+            conds.append(ActivityLog.branch_id == branch_id)
         if module is not None:
             conds.append(ActivityLog.module == module)
         if sub_module is not None:
@@ -106,16 +113,12 @@ class ActivityLogRepository(BaseRepository[ActivityLog]):
         performed_by_user_id: int | None = None,
         date_from: datetime.date | None = None,
         date_to: datetime.date | None = None,
+        branch_id: int | None = None,
     ) -> list[Any]:
-        """Build filters for the approximate security-event view (§6).
-
-        ``event`` maps to ``activity_logs`` filters:
-          * ``role_assignment``       -> module='rbac', action_type='Assign'
-          * ``permission_change``     -> module='rbac', action_type='Update'
-          * ``account_status_change`` -> module='user'
-          * (unset)                   -> module in the security-related set
-        """
+        """Build filters for the approximate security-event view (§6)."""
         conds: list[Any] = [ActivityLog.org_id == org_id]
+        if branch_id is not None:
+            conds.append(ActivityLog.branch_id == branch_id)
 
         if event == "role_assignment":
             conds.append(ActivityLog.module == "rbac")
@@ -154,6 +157,7 @@ class ActivityLogRepository(BaseRepository[ActivityLog]):
         self,
         org_id: int,
         *,
+        branch_id: int | None = None,
         module: str | None = None,
         sub_module: str | None = None,
         action_type: ActionType | str | None = None,
@@ -171,6 +175,7 @@ class ActivityLogRepository(BaseRepository[ActivityLog]):
         """Search, filter, sort, and paginate audit rows within an organization."""
         conds = self._conditions(
             org_id,
+            branch_id=branch_id,
             module=module,
             sub_module=sub_module,
             action_type=action_type,
@@ -190,6 +195,7 @@ class ActivityLogRepository(BaseRepository[ActivityLog]):
         self,
         org_id: int,
         *,
+        branch_id: int | None = None,
         module: str | None = None,
         sub_module: str | None = None,
         action_type: ActionType | str | None = None,
@@ -203,6 +209,7 @@ class ActivityLogRepository(BaseRepository[ActivityLog]):
         """Count audit rows matching the filter set within an organization."""
         conds = self._conditions(
             org_id,
+            branch_id=branch_id,
             module=module,
             sub_module=sub_module,
             action_type=action_type,

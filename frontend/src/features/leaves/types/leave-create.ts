@@ -43,6 +43,7 @@ export interface LeaveTypeListParams {
   page?: number;
   page_size?: number;
   search?: string;
+  branch_id?: number;
   is_active?: boolean;
   sort_by?: string;
   sort_order?: "asc" | "desc";

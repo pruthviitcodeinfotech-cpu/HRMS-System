@@ -1,4 +1,5 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useBranchContext } from "@/context/branch-context";
 import { holidayService } from "../services";
 import {
   HolidayTemplateCreateRequest,
@@ -26,10 +27,15 @@ export const holidayKeys = {
  * Paginated holiday templates list (GET /leave/holiday-templates).
  */
 export const useHolidayTemplates = (params: HolidayTemplateListParams = {}) => {
+  const { selectedBranchId } = useBranchContext();
+  const effectiveParams = {
+    ...params,
+    branch_id: params.branch_id || selectedBranchId || undefined,
+  };
   return useQuery({
-    queryKey: holidayKeys.templateList(params),
+    queryKey: holidayKeys.templateList(effectiveParams),
     queryFn: async () => {
-      const response = await holidayService.getHolidayTemplates(params);
+      const response = await holidayService.getHolidayTemplates(effectiveParams);
       return response.data;
     },
     placeholderData: keepPreviousData,

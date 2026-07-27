@@ -25,7 +25,7 @@ from app.core.dependencies.auth import (
     get_current_active_user,
     require_permission,
 )
-from app.core.dependencies.branch import BranchIdDep
+from app.core.dependencies.branch import BranchIdDep, RequiredBranchIdDep
 from app.core.exceptions.base import AppException
 from app.core.middleware.request_context import get_request_id
 from app.modules.audit.constants import ActionFrom, ActionType
@@ -88,6 +88,7 @@ def _branch_scope(current_user: CurrentUser) -> list[int] | None:
 async def list_activity_logs(
     service: AuditServiceDep,
     org_id: OrgIdDep,
+    branch_id: RequiredBranchIdDep,
     page: Annotated[int, Query(ge=1, description="1-based page number.")] = 1,
     page_size: Annotated[int, Query(ge=1, le=100, description="Items per page.")] = 25,
     module: Annotated[str | None, Query(description="Filter by module.")] = None,
@@ -98,7 +99,6 @@ async def list_activity_logs(
     performed_by_user_id: Annotated[int | None, Query(description="Filter by acting user.")] = None,
     date_from: Annotated[datetime.date | None, Query(description="log_date lower bound.")] = None,
     date_to: Annotated[datetime.date | None, Query(description="log_date upper bound.")] = None,
-    branch_id: BranchIdDep = None,
     search: Annotated[str | None, Query(description="Free-text on title/description.")] = None,
     sort_by: Annotated[str | None, Query(description="logged_at (default) | log_date.")] = None,
     sort_order: Annotated[SortOrder, Query(description="asc | desc.")] = SortOrder.DESC,

@@ -27,6 +27,7 @@ from app.core.dependencies.auth import (
     get_current_active_user,
     require_permission,
 )
+from app.core.dependencies.branch import BranchIdDep
 from app.core.exceptions.base import AppException
 from app.core.middleware.request_context import get_request_id
 from app.modules.settings.dependencies import SettingsServiceDep
@@ -58,24 +59,29 @@ CurrentUserDep = Annotated[CurrentUser, Depends(get_current_active_user)]
 def get_org_id(
     current_user: Annotated[CurrentUser, Depends(get_current_active_user)],
 ) -> int:
-    """Return caller's tenant org_id or raise 400 TENANT_UNRESOLVED."""
+    """Extract ``org_id`` from current principal; raise 401 if missing."""
     if current_user.org_id is None:
-        exc = AppException("Organization context is required.", code="TENANT_UNRESOLVED")
-        exc.status_code = status.HTTP_400_BAD_REQUEST
-        raise exc
+        raise AppException(
+            message="User has no assigned organisation context.",
+            status_code=status.HTTP_401_UNAUTHORIZED,
+        )
     return current_user.org_id
 
 
 OrgIdDep = Annotated[int, Depends(get_org_id)]
 
 
-def _ok(data: Any, message: str = "OK") -> dict[str, Any]:
-    """Wrap response data in the shared SuccessResponse envelope."""
-    return success_response(data=data, message=message, request_id=get_request_id())
+def _ok(data: Any, message: str = "Operation successful.") -> dict[str, Any]:
+    """Wrap ``data`` in standard SuccessResponse dict envelope with request_id."""
+    return success_response(
+        data=data,
+        message=message,
+        request_id=get_request_id(),
+    )
 
 
 # ===========================================================================
-# 1. GET /settings  — Combined Configuration View
+# 1. GET /settings  — View Configuration (Combined)
 # ===========================================================================
 
 
@@ -92,9 +98,10 @@ def _ok(data: Any, message: str = "OK") -> dict[str, Any]:
 async def view_configuration(
     service: SettingsServiceDep,
     org_id: OrgIdDep,
+    branch_id: BranchIdDep = None,
 ) -> dict[str, Any]:
-    """Return the full combined settings configuration view for the organization."""
-    raw = await service.get_configuration_view(org_id)
+    """Return the full combined settings configuration view for the organization and branch."""
+    raw = await service.get_configuration_view(org_id, branch_id=branch_id)
 
     # Build typed DTO — either value may be None (row not yet initialized)
     org_dto = (
@@ -127,9 +134,10 @@ async def view_configuration(
 async def get_org_settings(
     service: SettingsServiceDep,
     org_id: OrgIdDep,
+    branch_id: BranchIdDep = None,
 ) -> dict[str, Any]:
     """Return org_settings for the tenant; 404 if not yet initialized."""
-    settings = await service.get_org_settings(org_id)
+    settings = await service.get_org_settings(org_id, branch_id=branch_id)
     return _ok(OrgSettingsResponse.model_validate(settings))
 
 
@@ -153,12 +161,14 @@ async def update_org_settings(
     service: SettingsServiceDep,
     current_user: CurrentUserDep,
     org_id: OrgIdDep,
+    branch_id: BranchIdDep = None,
 ) -> dict[str, Any]:
     """Apply partial updates to the org settings; upserts if row is absent."""
     settings = await service.update_org_settings(
         org_id=org_id,
         caller_user_id=current_user.user_id,
         caller_name=str(current_user.user_id),
+        branch_id=branch_id,
         advance_shift_enabled=payload.advance_shift_enabled,
         enable_regularization=payload.enable_regularization,
         enable_photo_punch=payload.enable_photo_punch,
@@ -188,12 +198,14 @@ async def reset_org_settings(
     service: SettingsServiceDep,
     current_user: CurrentUserDep,
     org_id: OrgIdDep,
+    branch_id: BranchIdDep = None,
 ) -> dict[str, Any]:
     """Reset toggle/time fields to defaults; sync_code/pass_code are untouched."""
     settings = await service.reset_org_settings(
         org_id=org_id,
         caller_user_id=current_user.user_id,
         caller_name=str(current_user.user_id),
+        branch_id=branch_id,
     )
     return _ok(OrgSettingsResponse.model_validate(settings), "Settings reset to defaults.")
 
@@ -213,9 +225,10 @@ async def reset_org_settings(
 async def get_salary_slip_settings(
     service: SettingsServiceDep,
     org_id: OrgIdDep,
+    branch_id: BranchIdDep = None,
 ) -> dict[str, Any]:
     """Return org_salary_slip_settings for the tenant; 404 if not initialized."""
-    slip = await service.get_salary_slip_settings(org_id)
+    slip = await service.get_salary_slip_settings(org_id, branch_id=branch_id)
     return _ok(OrgSalarySlipResponse.model_validate(slip))
 
 
@@ -239,12 +252,14 @@ async def update_salary_slip_settings(
     service: SettingsServiceDep,
     current_user: CurrentUserDep,
     org_id: OrgIdDep,
+    branch_id: BranchIdDep = None,
 ) -> dict[str, Any]:
     """Apply partial updates to salary-slip settings; upserts if row is absent."""
     slip = await service.update_salary_slip_settings(
         org_id=org_id,
         caller_user_id=current_user.user_id,
         caller_name=str(current_user.user_id),
+        branch_id=branch_id,
         company_logo_url=payload.company_logo_url,
         company_name=payload.company_name,
         company_address=payload.company_address,

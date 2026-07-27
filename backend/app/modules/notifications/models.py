@@ -37,6 +37,15 @@ class Notification(Base):
         ),
         nullable=False,
     )
+    branch_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "branches.branch_id",
+            name="fk_notifications_branch_id_branches",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+    )
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     message: Mapped[str] = mapped_column(Text, nullable=False)
     notification_type: Mapped[str] = mapped_column(String(50), nullable=False)
@@ -59,6 +68,7 @@ class Notification(Base):
 
     __table_args__ = (
         Index("ix_notifications_org_id_created_at", "org_id", "created_at"),
+        Index("ix_notifications_branch_id_created_at", "branch_id", "created_at"),
         Index(
             "ix_notifications_org_source_module_entity_type_entity_id",
             "org_id",
@@ -93,6 +103,15 @@ class NotificationRecipient(Base):
         ForeignKey(
             "organizations.org_id",
             name="fk_notification_recipients_org_id_organizations",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+    )
+    branch_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "branches.branch_id",
+            name="fk_notification_recipients_branch_id_branches",
             ondelete="RESTRICT",
         ),
         nullable=False,

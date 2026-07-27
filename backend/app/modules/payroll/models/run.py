@@ -40,6 +40,11 @@ class FinalizedPayrollRun(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     org_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    branch_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("branches.branch_id", name="fk_finalized_payroll_runs_branch_id_branches"),
+        nullable=False,
+    )
     payroll_group_id: Mapped[int] = mapped_column(
         BigInteger,
         ForeignKey(
@@ -88,6 +93,7 @@ class FinalizedPayrollRun(Base):
             "payroll_group_id",
             "cycle_from",
         ),
+        Index("ix_finalized_payroll_runs_branch_id_cycle_from", "branch_id", "cycle_from"),
         CheckConstraint(
             "payment_status IN ('pending', 'paid', 'partial')",
             name="ck_finalized_payroll_runs_payment_status",
@@ -104,6 +110,11 @@ class PayrollComputedRow(Base):
     __tablename__ = "payroll_computed_rows"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    branch_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("branches.branch_id", name="fk_payroll_computed_rows_branch_id_branches"),
+        nullable=False,
+    )
     payroll_group_id: Mapped[int] = mapped_column(
         BigInteger,
         ForeignKey(

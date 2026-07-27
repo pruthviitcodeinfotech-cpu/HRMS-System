@@ -22,10 +22,15 @@ export const leaveKeys = {
  * Paginated / filtered / sorted leave types list (GET /leave-types).
  */
 export const useLeaveTypes = (params: LeaveTypeListParams = {}) => {
+  const { selectedBranchId } = useBranchContext();
+  const effectiveParams = {
+    ...params,
+    branch_id: params.branch_id || selectedBranchId || undefined,
+  };
   return useQuery({
-    queryKey: leaveKeys.list(params),
+    queryKey: leaveKeys.list(effectiveParams),
     queryFn: async () => {
-      const response = await leaveService.getLeaveTypes(params);
+      const response = await leaveService.getLeaveTypes(effectiveParams);
       return response.data;
     },
     placeholderData: keepPreviousData,

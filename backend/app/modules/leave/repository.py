@@ -514,10 +514,11 @@ class HolidayTemplateRepository(BaseRepository[HolidayTemplate]):
     def __init__(self, session: AsyncSession) -> None:
         super().__init__(session, HolidayTemplate)
 
-    async def name_exists(self, org_id: int, name: str, exclude_id: int | None = None) -> bool:
-        """Return whether a template with the same name exists (non-deleted)."""
+    async def name_exists(self, org_id: int, branch_id: int, name: str, exclude_id: int | None = None) -> bool:
+        """Return whether a template with the same name exists in the branch (non-deleted)."""
         stmt = select(HolidayTemplate.id).where(
             HolidayTemplate.org_id == org_id,
+            HolidayTemplate.branch_id == branch_id,
             func.lower(HolidayTemplate.name) == func.lower(name),
             HolidayTemplate.is_deleted.is_(False),
         )
@@ -525,13 +526,14 @@ class HolidayTemplateRepository(BaseRepository[HolidayTemplate]):
             stmt = stmt.where(HolidayTemplate.id != exclude_id)
         return (await self.session.execute(stmt.limit(1))).first() is not None
 
-    async def get_by_id_in_org(self, org_id: int, template_id: int) -> HolidayTemplate | None:
-        """Return a template by ID in org, eager-loading its items."""
+    async def get_by_id_in_org(self, org_id: int, branch_id: int, template_id: int) -> HolidayTemplate | None:
+        """Return a template by ID in org and branch, eager-loading its items."""
         stmt = (
             select(HolidayTemplate)
             .where(
                 HolidayTemplate.id == template_id,
                 HolidayTemplate.org_id == org_id,
+                HolidayTemplate.branch_id == branch_id,
                 HolidayTemplate.is_deleted.is_(False),
             )
             .options(selectinload(HolidayTemplate.items))
@@ -539,18 +541,23 @@ class HolidayTemplateRepository(BaseRepository[HolidayTemplate]):
         return (await self.session.execute(stmt.limit(1))).scalar_one_or_none()
 
     @staticmethod
-    def _search_conditions(org_id: int) -> list:
-        return [HolidayTemplate.org_id == org_id, HolidayTemplate.is_deleted.is_(False)]
+    def _search_conditions(org_id: int, branch_id: int) -> list:
+        return [
+            HolidayTemplate.org_id == org_id,
+            HolidayTemplate.branch_id == branch_id,
+            HolidayTemplate.is_deleted.is_(False),
+        ]
 
     async def search(
         self,
         org_id: int,
+        branch_id: int,
         *,
         page: int = 1,
         page_size: int = 25,
     ) -> list[HolidayTemplate]:
-        """Return a sorted, paginated list of non-deleted holiday templates."""
-        conds = self._search_conditions(org_id)
+        """Return a sorted, paginated list of non-deleted holiday templates for the branch."""
+        conds = self._search_conditions(org_id, branch_id)
         stmt = select(HolidayTemplate).where(and_(*conds)).options(selectinload(HolidayTemplate.items))
         stmt = apply_sorting(
             stmt,
@@ -563,9 +570,9 @@ class HolidayTemplateRepository(BaseRepository[HolidayTemplate]):
         stmt = stmt.limit(page_size).offset((page - 1) * page_size)
         return list((await self.session.execute(stmt)).scalars().all())
 
-    async def search_count(self, org_id: int) -> int:
-        """Return the count of holiday templates in the organization."""
-        conds = self._search_conditions(org_id)
+    async def search_count(self, org_id: int, branch_id: int) -> int:
+        """Return the count of holiday templates in the branch."""
+        conds = self._search_conditions(org_id, branch_id)
         stmt = select(func.count()).select_from(HolidayTemplate).where(and_(*conds))
         return int((await self.session.execute(stmt)).scalar_one())
 

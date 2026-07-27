@@ -118,6 +118,11 @@ class Department(Base):
         ForeignKey("organizations.org_id", name="fk_departments_org_id_organizations"),
         nullable=False,
     )
+    branch_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("branches.branch_id", name="fk_departments_branch_id_branches"),
+        nullable=False,
+    )
     dept_name: Mapped[str] = mapped_column(String(150), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
     is_deleted: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
@@ -132,12 +137,13 @@ class Department(Base):
 
     __table_args__ = (
         Index(
-            "uq_departments_org_id_dept_name",
-            "org_id",
+            "uq_departments_branch_id_dept_name",
+            "branch_id",
             "dept_name",
             unique=True,
             postgresql_where=text("is_deleted = false"),
         ),
+        Index("ix_departments_branch_id", "branch_id"),
     )
 
     organization: Mapped["Organization"] = relationship(back_populates="departments")
@@ -151,6 +157,11 @@ class Designation(Base):
     org_id: Mapped[int] = mapped_column(
         BigInteger,
         ForeignKey("organizations.org_id", name="fk_designations_org_id_organizations"),
+        nullable=False,
+    )
+    branch_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("branches.branch_id", name="fk_designations_branch_id_branches"),
         nullable=False,
     )
     designation_name: Mapped[str] = mapped_column(String(150), nullable=False)
@@ -167,12 +178,13 @@ class Designation(Base):
 
     __table_args__ = (
         Index(
-            "uq_designations_org_id_designation_name",
-            "org_id",
+            "uq_designations_branch_id_designation_name",
+            "branch_id",
             "designation_name",
             unique=True,
             postgresql_where=text("is_deleted = false"),
         ),
+        Index("ix_designations_branch_id", "branch_id"),
     )
 
     organization: Mapped["Organization"] = relationship(back_populates="designations")

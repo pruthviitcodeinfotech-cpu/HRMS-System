@@ -65,8 +65,9 @@ export const handleApiError = (error: unknown): ApiError => {
             errorResponse.code = nestedError.code;
           }
           const details = nestedError.details;
-          if (Array.isArray(details)) {
+          if (Array.isArray(details) && details.length > 0) {
             const mappedErrors: Record<string, string[]> = {};
+            const detailMsgs: string[] = [];
             for (const err of details) {
               if (err && typeof err === "object") {
                 const errObj = err as Record<string, unknown>;
@@ -78,10 +79,16 @@ export const handleApiError = (error: unknown): ApiError => {
                     mappedErrors[field] = [];
                   }
                   mappedErrors[field].push(message);
+                  detailMsgs.push(`${field}: ${message}`);
+                } else {
+                  detailMsgs.push(message);
                 }
               }
             }
             errorResponse.errors = mappedErrors;
+            if (detailMsgs.length > 0) {
+              errorResponse.message = detailMsgs.join("; ");
+            }
           }
         }
         // 3. Simple message or string detail

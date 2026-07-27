@@ -20,7 +20,7 @@ from app.core.dependencies.auth import (
     get_current_active_user,
     require_permission,
 )
-from app.core.dependencies.branch import BranchIdDep
+from app.core.dependencies.branch import BranchIdDep, RequiredBranchIdDep
 from app.core.dependencies.pagination import PaginationParams, pagination_params
 from app.core.exceptions.base import AppException
 from app.core.middleware.request_context import get_request_id
@@ -123,9 +123,12 @@ async def create_leave_type(
     service: LeaveServiceDep,
     current_user: CurrentUserDep,
     org_id: OrgIdDep,
+    branch_id: RequiredBranchIdDep,
 ) -> dict[str, Any]:
     """Create a new leave type (with embedded allocation/carry-forward/encashment policy)."""
-    result = await service.create_leave_type(org_id, payload.model_dump(), current_user.user_id)
+    data = payload.model_dump()
+    data["branch_id"] = branch_id
+    result = await service.create_leave_type(org_id, data, current_user.user_id, branch_id=branch_id)
     return _ok(result, "Leave type created successfully.")
 
 
@@ -138,6 +141,7 @@ async def create_leave_type(
 async def list_leave_types(
     service: LeaveServiceDep,
     org_id: OrgIdDep,
+    branch_id: RequiredBranchIdDep,
     pagination: Annotated[PaginationParams, Depends(pagination_params)],
     search: Annotated[str | None, Query(description="Search by name or alias.")] = None,
     is_active: Annotated[bool | None, Query(description="Filter by active state.")] = None,
@@ -147,6 +151,7 @@ async def list_leave_types(
     """Search, filter, and paginate leave types within the organization."""
     result = await service.list_leave_types(
         org_id,
+        branch_id=branch_id,
         search=search,
         is_active=is_active,
         sort_by=sort_by,
@@ -261,10 +266,10 @@ async def list_leave_balances(
     service: LeaveServiceDep,
     org_id: OrgIdDep,
     pagination: Annotated[PaginationParams, Depends(pagination_params)],
+    branch_id: RequiredBranchIdDep,
     leave_type_id: Annotated[int | None, Query(description="Filter by leave type.")] = None,
     cycle_year: Annotated[int | None, Query(description="Filter by cycle year.")] = None,
     employee_id: Annotated[int | None, Query(description="Filter by employee.")] = None,
-    branch_id: BranchIdDep = None,
     dept_id: Annotated[int | None, Query(description="Filter by department.")] = None,
 ) -> dict[str, Any]:
     """Search and paginate employee leave balances (org-scoped)."""
@@ -469,6 +474,7 @@ async def list_leave_requests(
     service: LeaveServiceDep,
     org_id: OrgIdDep,
     pagination: Annotated[PaginationParams, Depends(pagination_params)],
+    branch_id: RequiredBranchIdDep,
     employee_id: Annotated[int | None, Query(description="Filter by employee.")] = None,
     leave_type_id: Annotated[int | None, Query(description="Filter by leave type.")] = None,
     request_status: Annotated[
@@ -476,7 +482,6 @@ async def list_leave_requests(
     ] = None,
     date_from: Annotated[datetime.date | None, Query(description="Overlap range start.")] = None,
     date_to: Annotated[datetime.date | None, Query(description="Overlap range end.")] = None,
-    branch_id: BranchIdDep = None,
     dept_id: Annotated[int | None, Query(description="Filter by department.")] = None,
     sort_by: Annotated[str | None, Query(description="Sort field.")] = "applied_on",
     sort_dir: Annotated[SortOrder, Query(description="Sort direction.")] = SortOrder.DESC,
@@ -568,9 +573,12 @@ async def create_holiday_group(
     service: LeaveServiceDep,
     current_user: CurrentUserDep,
     org_id: OrgIdDep,
+    branch_id: RequiredBranchIdDep,
 ) -> dict[str, Any]:
     """Create a new holiday group/template with all its items atomically."""
-    result = await service.create_holiday_group(org_id, payload.model_dump(), current_user.user_id)
+    result = await service.create_holiday_group(
+        org_id, branch_id, payload.model_dump(), current_user.user_id
+    )
     return _ok(result, "Holiday group created successfully.")
 
 
@@ -583,11 +591,12 @@ async def create_holiday_group(
 async def list_holiday_groups(
     service: LeaveServiceDep,
     org_id: OrgIdDep,
+    branch_id: RequiredBranchIdDep,
     pagination: Annotated[PaginationParams, Depends(pagination_params)],
 ) -> dict[str, Any]:
     """List and paginate holiday groups/templates."""
     result = await service.list_holiday_groups(
-        org_id, page=pagination.page, page_size=pagination.page_size
+        org_id, branch_id, page=pagination.page, page_size=pagination.page_size
     )
     return _ok(result)
 
@@ -602,9 +611,10 @@ async def get_holiday_group(
     template_id: int,
     service: LeaveServiceDep,
     org_id: OrgIdDep,
+    branch_id: RequiredBranchIdDep,
 ) -> dict[str, Any]:
     """Retrieve a holiday group/template together with its items."""
-    result = await service.get_holiday_group(org_id, template_id)
+    result = await service.get_holiday_group(org_id, branch_id, template_id)
     return _ok(result)
 
 
@@ -620,10 +630,11 @@ async def update_holiday_group(
     service: LeaveServiceDep,
     current_user: CurrentUserDep,
     org_id: OrgIdDep,
+    branch_id: RequiredBranchIdDep,
 ) -> dict[str, Any]:
     """Update a holiday group/template name."""
     result = await service.update_holiday_group(
-        org_id, template_id, payload.model_dump(), current_user.user_id
+        org_id, branch_id, template_id, payload.model_dump(), current_user.user_id
     )
     return _ok(result, "Holiday group updated successfully.")
 
@@ -639,9 +650,10 @@ async def delete_holiday_group(
     service: LeaveServiceDep,
     current_user: CurrentUserDep,
     org_id: OrgIdDep,
+    branch_id: RequiredBranchIdDep,
 ) -> Response:
     """Soft-delete a holiday group/template."""
-    await service.delete_holiday_group(org_id, template_id, current_user.user_id)
+    await service.delete_holiday_group(org_id, branch_id, template_id, current_user.user_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

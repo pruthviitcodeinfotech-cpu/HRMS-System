@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, Query, status
 
 from app.core.constants.enums import PermissionAction as A
 from app.core.dependencies.auth import require_permission
+from app.core.dependencies.branch import RequiredBranchIdDep
 from app.core.exceptions.base import AuthorizationException
 from app.core.middleware.request_context import get_request_id
 from app.modules.organization.constants import (
@@ -387,6 +388,7 @@ async def create_department(
 async def list_departments(
     service: DepartmentServiceDep,
     org_id: OrgIdDep,
+    branch_id: RequiredBranchIdDep,
     page: Annotated[int, Query(ge=1, description="1-based page number.")] = 1,
     page_size: Annotated[int, Query(ge=1, le=200, description="Items per page.")] = 25,
     search: Annotated[str | None, Query(description="Search by department name.")] = None,
@@ -405,7 +407,7 @@ async def list_departments(
         sort_by=sort_by,
         sort_order=sort_order,
     )
-    result = await service.list_departments(org_id=org_id, query=query)
+    result = await service.list_departments(org_id=org_id, query=query, branch_id=branch_id)
     return _ok(result)
 
 
@@ -536,6 +538,7 @@ async def create_designation(
 async def list_designations(
     service: DesignationServiceDep,
     org_id: OrgIdDep,
+    branch_id: RequiredBranchIdDep,
     page: Annotated[int, Query(ge=1, description="1-based page number.")] = 1,
     page_size: Annotated[int, Query(ge=1, le=200, description="Items per page.")] = 25,
     search: Annotated[str | None, Query(description="Search by designation name.")] = None,
@@ -556,7 +559,7 @@ async def list_designations(
         sort_by=sort_by,
         sort_order=sort_order,
     )
-    result = await service.list_designations(org_id=org_id, query=query)
+    result = await service.list_designations(org_id=org_id, query=query, branch_id=branch_id)
     return _ok(result)
 
 

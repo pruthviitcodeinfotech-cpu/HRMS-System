@@ -351,7 +351,7 @@ def payroll_service():
 async def test_get_settings_existing(payroll_service) -> None:
     res = await payroll_service.get_settings(org_id=1)
     assert res.org_id == 1
-    payroll_service.settings.get_by_org.assert_awaited_once_with(1)
+    payroll_service.settings.get_by_org.assert_awaited_once_with(1, branch_id=None)
 
 
 async def test_get_settings_create_default(payroll_service) -> None:

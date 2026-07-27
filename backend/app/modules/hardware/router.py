@@ -18,7 +18,7 @@ from app.core.dependencies.auth import (
     get_current_active_user,
     require_permission,
 )
-from app.core.dependencies.branch import BranchIdDep
+from app.core.dependencies.branch import BranchIdDep, RequiredBranchIdDep
 from app.core.dependencies.pagination import PaginationParams, pagination_params
 from app.core.exceptions.base import AppException
 from app.core.middleware.request_context import get_request_id
@@ -90,8 +90,11 @@ async def register_device(
     service: HardwareServiceDep,
     current_user: CurrentUserDep,
     org_id: OrgIdDep,
+    branch_id: RequiredBranchIdDep,
 ) -> dict[str, Any]:
     """Register a new biometric device within the organization's tenant context."""
+    if payload.branch_id is None:
+        payload.branch_id = branch_id
     result = await service.register_device(
         org_id=org_id, actor_id=current_user.user_id, data=payload
     )
@@ -108,11 +111,11 @@ async def list_devices(
     service: HardwareServiceDep,
     current_user: CurrentUserDep,
     org_id: OrgIdDep,
+    branch_id: RequiredBranchIdDep,
     pagination: Annotated[PaginationParams, Depends(pagination_params)],
     search: Annotated[str | None, Query(description="Search by name, code or serial number.")] = None,
     status: Annotated[DeviceStatus | None, Query(description="Filter by connectivity status.")] = None,
     protocol: Annotated[DeviceProtocol | None, Query(description="Filter by communication protocol.")] = None,
-    branch_id: BranchIdDep = None,
     is_active: Annotated[bool | None, Query(description="Filter by administrative active state.")] = None,
     adms_enabled: Annotated[bool | None, Query(description="Filter by ADMS enabled mode.")] = None,
     sort_by: Annotated[str | None, Query(description="Field to sort by (device_name, created_at, last_seen_at).")] = None,
@@ -132,7 +135,7 @@ async def list_devices(
         sort_order=sort_order,
     )
     result = await service.list_devices(
-        org_id=org_id, query=query, allowed_branch_ids=_branch_scope(current_user)
+        org_id=org_id, query=query, allowed_branch_ids=[branch_id]
     )
     return _ok(result)
 

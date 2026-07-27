@@ -73,6 +73,11 @@ class LeaveType(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     org_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    branch_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("branches.branch_id", name="fk_leave_types_branch_id_branches"),
+        nullable=False,
+    )
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     alias: Mapped[str] = mapped_column(String(50), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
@@ -110,7 +115,8 @@ class LeaveType(Base):
     )
 
     __table_args__ = (
-        UniqueConstraint("org_id", "alias", name="uq_leave_types_org_id_alias"),
+        UniqueConstraint("branch_id", "alias", name="uq_leave_types_branch_id_alias"),
+        Index("ix_leave_types_branch_id", "branch_id"),
         CheckConstraint(
             "allocation_frequency IN ('monthly', 'yearly')",
             name="ck_leave_types_allocation_frequency",
@@ -181,6 +187,11 @@ class EmployeeLeaveBalance(Base):
     __tablename__ = "employee_leave_balances"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    branch_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("branches.branch_id", name="fk_employee_leave_balances_branch_id_branches"),
+        nullable=False,
+    )
     # DEFERRED cross-module FK -> employees
     employee_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     leave_type_id: Mapped[int] = mapped_column(
@@ -224,10 +235,8 @@ class EmployeeLeaveBalance(Base):
             "cycle_year",
             name="uq_employee_leave_balances_employee_id_leave_type_id_cycle_year",
         ),
-        # leave/repository.py:82 probes `WHERE leave_type_id = ?` alone (the
-        # leave-type in-use guard). The uq above leads with employee_id and so
-        # cannot serve a leave_type_id-only lookup.
         Index("ix_employee_leave_balances_leave_type_id", "leave_type_id"),
+        Index("ix_employee_leave_balances_branch_id_employee_id", "branch_id", "employee_id"),
     )
 
     leave_type: Mapped["LeaveType"] = relationship(back_populates="balances")
@@ -274,6 +283,11 @@ class LeaveRequest(Base):
     __tablename__ = "leave_requests"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    branch_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("branches.branch_id", name="fk_leave_requests_branch_id_branches"),
+        nullable=False,
+    )
     # DEFERRED cross-module FK -> employees
     employee_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     leave_type_id: Mapped[int] = mapped_column(
@@ -308,6 +322,7 @@ class LeaveRequest(Base):
     __table_args__ = (
         Index("ix_leave_requests_employee_id_status", "employee_id", "status"),
         Index("ix_leave_requests_leave_type_id_status", "leave_type_id", "status"),
+        Index("ix_leave_requests_branch_id_status", "branch_id", "status"),
         CheckConstraint(
             "status IN ('pending', 'approved', 'rejected')", name="ck_leave_requests_status"
         ),

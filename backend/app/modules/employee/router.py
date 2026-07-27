@@ -36,7 +36,7 @@ from app.core.dependencies.auth import (
     get_current_active_user,
     require_permission,
 )
-from app.core.dependencies.branch import BranchIdDep
+from app.core.dependencies.branch import BranchIdDep, RequiredBranchIdDep
 from app.core.dependencies.db import get_db
 from app.core.dependencies.pagination import PaginationParams, pagination_params
 from app.core.exceptions.base import AppException
@@ -128,12 +128,10 @@ def _can_view_bank_details(current_user: CurrentUser) -> bool:
     return current_user.permissions.has_permission(_EMPLOYEE_SALARY, A.READ)
 
 
-def _branch_scope(current_user: CurrentUser) -> list[int] | None:
-    """Resolve the caller's branch data scope for list queries.
-
-    ``None`` means org-wide access (super admin or an unrestricted role such as HR
-    Manager); a populated list confines a Branch Admin to their permitted branches.
-    """
+def _branch_scope(current_user: CurrentUser, branch_id: int | None = None) -> list[int] | None:
+    """Resolve the caller's branch data scope for list queries."""
+    if branch_id is not None:
+        return [branch_id]
     branch_ids = current_user.permissions.branch_ids
     if current_user.is_super_admin or not branch_ids:
         return None
@@ -155,8 +153,8 @@ async def list_employees(
     service: ServiceDep,
     current_user: CurrentUserDep,
     org_id: OrgIdDep,
+    branch_id: RequiredBranchIdDep,
     pagination: Annotated[PaginationParams, Depends(pagination_params)],
-    branch_id: BranchIdDep = None,
     department_id: Annotated[int | None, Query(description="Filter by department.")] = None,
     designation_id: Annotated[int | None, Query(description="Filter by designation.")] = None,
     employee_status: Annotated[
@@ -189,7 +187,7 @@ async def list_employees(
         sort_order=sort_order,
     )
     result = await service.list_employees(
-        org_id=org_id, query=query, branch_scope=_branch_scope(current_user)
+        org_id=org_id, query=query, branch_scope=_branch_scope(current_user, branch_id=branch_id)
     )
     return _ok(result)
 

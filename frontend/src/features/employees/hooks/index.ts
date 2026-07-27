@@ -69,20 +69,26 @@ export const useBranchOptions = () => {
 };
 
 export const useDepartmentOptions = () => {
+  const { selectedBranchId } = useBranchContext();
   return useQuery({
-    queryKey: employeeKeys.lookup("departments"),
+    queryKey: [...employeeKeys.lookup("departments"), selectedBranchId],
     queryFn: async () => {
-      const response = await employeeService.getDepartmentOptions();
+      const response = await employeeService.getDepartmentOptions(
+        selectedBranchId ? { branch_id: selectedBranchId } : undefined
+      );
       return response.data.items;
     },
   });
 };
 
 export const useDesignationOptions = () => {
+  const { selectedBranchId } = useBranchContext();
   return useQuery({
-    queryKey: employeeKeys.lookup("designations"),
+    queryKey: [...employeeKeys.lookup("designations"), selectedBranchId],
     queryFn: async () => {
-      const response = await employeeService.getDesignationOptions();
+      const response = await employeeService.getDesignationOptions(
+        selectedBranchId ? { branch_id: selectedBranchId } : undefined
+      );
       return response.data.items;
     },
   });
@@ -99,10 +105,15 @@ export const useDebouncedValue = <T>(value: T, delayMs = 400): T => {
 };
 
 export const useDepartments = (params: DepartmentListParams) => {
+  const { selectedBranchId } = useBranchContext();
+  const effectiveParams = {
+    ...params,
+    branch_id: params.branch_id || selectedBranchId || undefined,
+  };
   return useQuery({
-    queryKey: departmentKeys.list(params),
+    queryKey: departmentKeys.list(effectiveParams),
     queryFn: async () => {
-      const response = await employeeService.getDepartments(params);
+      const response = await employeeService.getDepartments(effectiveParams);
       return response.data;
     },
     placeholderData: keepPreviousData,
@@ -185,10 +196,15 @@ export const designationKeys = {
 };
 
 export const useDesignations = (params: DesignationListParams) => {
+  const { selectedBranchId } = useBranchContext();
+  const effectiveParams = {
+    ...params,
+    branch_id: params.branch_id || selectedBranchId || undefined,
+  };
   return useQuery({
-    queryKey: designationKeys.list(params),
+    queryKey: designationKeys.list(effectiveParams),
     queryFn: async () => {
-      const response = await employeeService.getDesignations(params);
+      const response = await employeeService.getDesignations(effectiveParams);
       return response.data;
     },
     placeholderData: keepPreviousData,

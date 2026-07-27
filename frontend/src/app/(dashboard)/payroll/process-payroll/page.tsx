@@ -26,6 +26,7 @@ import {
   FileText,
 } from "lucide-react";
 import { ProtectedRoute } from "@/features/auth";
+import { useBranchContext } from "@/context/branch-context";
 import {
   usePayrollGroups,
   useProcessPayrollMatrix,
@@ -33,11 +34,11 @@ import {
   useFinalizedPayroll,
 } from "@/features/payroll";
 import {
-  useBranchOptions,
   useDepartmentOptions,
+  useEmployees,
 } from "@/features/employees/hooks";
 import { downloadGlobalPayslipPdf } from "@/features/payroll/utils/generate-payslip-pdf";
-import { BranchOption, DepartmentOption } from "@/features/employees/types";
+import { DepartmentOption } from "@/features/employees/types";
 
 // Payroll Employee Record Interface
 export interface PayrollMatrixRecord {
@@ -47,6 +48,7 @@ export interface PayrollMatrixRecord {
   employee_name: string;
   department: string;
   designation: string;
+  branch_id?: number;
   branch_name: string;
   archetype: string;
   full_days: number;
@@ -223,6 +225,7 @@ const generate120QAPayrollRecords = (): PayrollMatrixRecord[] => {
       employee_name: fullName,
       department: deptDesig.dept,
       designation: deptDesig.desig,
+      branch_id: branch.id,
       branch_name: branch.name,
       archetype,
       full_days,
@@ -249,6 +252,7 @@ const generate120QAPayrollRecords = (): PayrollMatrixRecord[] => {
 };
 
 function ProcessPayrollContent() {
+  const { selectedBranchId: activeBranchId, setSelectedBranchId: setActiveBranchId, availableBranches } = useBranchContext();
   const router = useRouter();
   const searchParams = useSearchParams();
   const paramFrom = searchParams.get("from");
@@ -260,6 +264,8 @@ function ProcessPayrollContent() {
   const [selectedDeptId, setSelectedDeptId] = useState<number | undefined>(undefined);
   const [fromDate, setFromDate] = useState<string>("2026-07-01");
   const [toDate, setToDate] = useState<string>("2026-07-22");
+
+  const effectiveBranchId = selectedBranchId ?? (activeBranchId || undefined);
 
   // Applied Filter States
   const [appliedSearch, setAppliedSearch] = useState<string>("");
@@ -304,7 +310,6 @@ function ProcessPayrollContent() {
   const qaArchetypeFilter = "all";
 
   // 1. MASTER DATA REUSE (Golden Rule Enforcement)
-  // 1. MASTER DATA REUSE (Golden Rule Enforcement)
   // Payroll Groups from Payroll Module
   const { data: groupsData } = usePayrollGroups();
   const payrollGroups = useMemo(() => groupsData?.items || [], [groupsData?.items]);
@@ -312,9 +317,6 @@ function ProcessPayrollContent() {
   const availablePayrollGroups = useMemo(() => {
     return payrollGroups.map((g) => ({ id: g.id, name: g.name }));
   }, [payrollGroups]);
-
-  // Branch Lookup Options from Employee Module
-  const { data: branchOptions = [] } = useBranchOptions();
 
   // Department Lookup Options from Employee Module
   const { data: departmentOptions = [] } = useDepartmentOptions();
@@ -332,7 +334,7 @@ function ProcessPayrollContent() {
     date_from: fromDate,
     date_to: toDate,
     payroll_group_id: effectivePayrollGroupId,
-    branch_id: selectedBranchId,
+    branch_id: effectiveBranchId,
     dept_id: selectedDeptId,
     search: appliedSearch,
     page: currentPage,
@@ -391,10 +393,60 @@ function ProcessPayrollContent() {
     return diffDays;
   }, [fromDate, toDate]);
 
-  // Fallback Deterministic QA Dataset
-  const fallbackQaRecords = useMemo(() => generate120QAPayrollRecords(), []);
+  // Fetch real employees for branch isolation fallback
+  const employeesQuery = useEmployees({
+    branch_id: effectiveBranchId,
+    page_size: 100,
+  });
 
-  // Consolidate Data Matrix Records (Live API or QA Fallback)
+  const realEmployeeFallbackRecords = useMemo<PayrollMatrixRecord[]>(() => {
+    const rawEmps = employeesQuery.data?.items || [];
+    if (rawEmps.length === 0) return generate120QAPayrollRecords();
+
+    return rawEmps.map((emp) => {
+      const daily_wage = 2000 + (emp.employee_id % 5) * 500;
+      const full_days = 18;
+      const half_days = 0;
+      const off_days = 4;
+      const paid_days = 22;
+      const unpaid_days = 0;
+      const gross_wages = Math.round(daily_wage * paid_days);
+      const overtime = (emp.employee_id % 4) === 0 ? 3000 : 0;
+      const penalties = (emp.employee_id % 6) === 0 ? 1000 : 0;
+      const gross_earnings = gross_wages + overtime - penalties;
+
+      return {
+        id: emp.employee_id,
+        payroll_group_id: effectivePayrollGroupId,
+        employee_code: emp.employee_code || String(emp.employee_id),
+        employee_name: emp.employee_name || emp.display_name || `Employee #${emp.employee_id}`,
+        department: emp.department_name || "Department",
+        designation: emp.designation_name || "Designation",
+        branch_id: emp.master_branch_id,
+        branch_name: emp.branch_name || "Branch",
+        archetype: "real_employee",
+        full_days,
+        half_days,
+        off_days,
+        paid_leaves: 0,
+        paid_days,
+        unpaid_days,
+        daily_wage,
+        gross_wages,
+        overtime,
+        penalties,
+        extras: 0,
+        gross_earnings,
+        loan_advance: 0,
+        arrears: 0,
+        net_payable: gross_earnings,
+        balance_arrears: 0,
+        payment_method: "Bank Transfer",
+      };
+    });
+  }, [employeesQuery.data, effectivePayrollGroupId]);
+
+  // Consolidate Data Matrix Records (Live API or Real Employee Fallback)
   const mergedRecords = useMemo<PayrollMatrixRecord[]>(() => {
     if (simulateEmpty) return [];
 
@@ -408,6 +460,7 @@ function ProcessPayrollContent() {
           employee_name: (row.employee_name as string) || `Employee #${row.employee_id}`,
           department: (row.department_name as string) || "Engineering",
           designation: (row.designation_name as string) || "Developer",
+          branch_id: (row.master_branch_id as number) || (row.branch_id as number) || effectiveBranchId,
           branch_name: (row.branch_name as string) || "Main HQ",
           archetype: "api_live",
           full_days: (row.full_day_count as number) || 0,
@@ -431,12 +484,17 @@ function ProcessPayrollContent() {
       });
     }
 
-    return fallbackQaRecords;
-  }, [apiProcessMatrix, fallbackQaRecords, useLiveApi, simulateEmpty, effectivePayrollGroupId]);
+    return realEmployeeFallbackRecords;
+  }, [apiProcessMatrix, realEmployeeFallbackRecords, useLiveApi, simulateEmpty, effectivePayrollGroupId, effectiveBranchId]);
 
   // Filtered & Sorted Records
   const filteredRecords = useMemo(() => {
     let result = mergedRecords.filter((emp) => {
+      // Branch Filter
+      if (effectiveBranchId && emp.branch_id) {
+        if (emp.branch_id !== effectiveBranchId) return false;
+      }
+
       // QA Archetype Filter
       if (qaArchetypeFilter !== "all" && emp.archetype !== qaArchetypeFilter) {
         return false;
@@ -840,16 +898,20 @@ function ProcessPayrollContent() {
               )}
             </div>
 
-            {/* Branch Filter Dropdown — Golden Rule: Reuses useBranchOptions */}
-            {branchOptions.length > 0 && (
+            {/* Branch Filter Dropdown — Golden Rule: Reuses availableBranches & BranchContext */}
+            {availableBranches.length > 0 && (
               <div className="relative min-w-[150px]">
                 <select
-                  value={selectedBranchId || ""}
-                  onChange={(e) => setSelectedBranchId(Number(e.target.value) || undefined)}
+                  value={selectedBranchId || (activeBranchId || "")}
+                  onChange={(e) => {
+                    const val = Number(e.target.value) || undefined;
+                    setSelectedBranchId(val);
+                    if (val) setActiveBranchId(val);
+                  }}
                   className="w-full appearance-none bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-1.5 pr-8 text-xs font-semibold text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
                 >
                   <option value="">All Branches</option>
-                  {branchOptions.map((b: BranchOption) => (
+                  {availableBranches.map((b) => (
                     <option key={b.branch_id} value={b.branch_id}>
                       {b.branch_name}
                     </option>

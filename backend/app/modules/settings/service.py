@@ -67,14 +67,15 @@ class SettingsService(BaseService):
     async def get_configuration_view(
         self,
         org_id: int,
+        branch_id: int | None = None,
     ) -> dict[str, Any]:
         """Return both owned settings blocks plus read-only cross-module pointers.
 
         Endpoint: GET /api/v1/settings
         Permission: settings:read
         """
-        org = await self.org_settings.get_by_org_id(org_id)
-        slip = await self.salary_slip.get_by_org_id(org_id)
+        org = await self.org_settings.get_by_org_id(org_id, branch_id=branch_id)
+        slip = await self.salary_slip.get_by_org_id(org_id, branch_id=branch_id)
 
         return {
             "organization": org,
@@ -86,14 +87,16 @@ class SettingsService(BaseService):
     # 2. Organization / System Settings
     # =========================================================================
 
-    async def get_org_settings(self, org_id: int) -> OrgSettings:
-        """Return the org_settings row for this organization.
+    async def get_org_settings(
+        self, org_id: int, branch_id: int | None = None
+    ) -> OrgSettings:
+        """Return the org_settings row for this organization and branch.
 
         Endpoint: GET /api/v1/settings/organization
         Permission: settings:read
         Raises SettingsNotFoundException if the row has not been initialized.
         """
-        settings = await self.org_settings.get_by_org_id(org_id)
+        settings = await self.org_settings.get_by_org_id(org_id, branch_id=branch_id)
         if settings is None:
             raise SettingsNotFoundException(
                 "Organization settings have not been initialized for this tenant."
@@ -106,6 +109,7 @@ class SettingsService(BaseService):
         caller_user_id: int,
         caller_name: str,
         *,
+        branch_id: int | None = None,
         advance_shift_enabled: bool | None = None,
         enable_regularization: bool | None = None,
         enable_photo_punch: bool | None = None,
@@ -113,24 +117,13 @@ class SettingsService(BaseService):
         sync_code: str | None = None,
         pass_code: str | None = None,
     ) -> OrgSettings:
-        """Patch (upsert) the org_settings row.
-
-        Endpoint: PATCH /api/v1/settings/organization
-        Permission: settings:edit
-
-        Business rules:
-        - sync_code max 50 chars; pass_code max 20 chars.
-        - device_sync_time must be a valid time value.
-        - updated_by is always set to the caller.
-        - Upsert: creates the row if absent; updates otherwise.
-        """
-        # --- Validation -------------------------------------------------------
+        """Patch (upsert) the org_settings row for a branch."""
         if sync_code is not None and len(sync_code) > 50:
             raise SettingsValidationException("sync_code must not exceed 50 characters.")
         if pass_code is not None and len(pass_code) > 20:
             raise SettingsValidationException("pass_code must not exceed 20 characters.")
 
-        existing = await self.org_settings.get_by_org_id(org_id)
+        existing = await self.org_settings.get_by_org_id(org_id, branch_id=branch_id)
 
         # Build update payload (only non-None fields)
         update_data: dict[str, Any] = {
@@ -152,7 +145,7 @@ class SettingsService(BaseService):
 
         async with self.transaction():
             if existing is None:
-                # Upsert — create the row; required fields must be present
+                # Upsert — create initial org settings; required fields must be present
                 if not update_data.get("sync_code"):
                     raise SettingsValidationException(
                         "sync_code is required when creating organization settings."
@@ -162,6 +155,25 @@ class SettingsService(BaseService):
                         "pass_code is required when creating organization settings."
                     )
                 update_data["org_id"] = org_id
+                update_data["branch_id"] = branch_id
+                settings = await self.org_settings.create(update_data)
+            elif branch_id is not None and existing.branch_id != branch_id:
+                # Upsert — create new branch setting row based on existing org row defaults
+                if not update_data.get("sync_code"):
+                    update_data["sync_code"] = existing.sync_code
+                if not update_data.get("pass_code"):
+                    update_data["pass_code"] = existing.pass_code
+                if "advance_shift_enabled" not in update_data:
+                    update_data["advance_shift_enabled"] = existing.advance_shift_enabled
+                if "enable_regularization" not in update_data:
+                    update_data["enable_regularization"] = existing.enable_regularization
+                if "enable_photo_punch" not in update_data:
+                    update_data["enable_photo_punch"] = existing.enable_photo_punch
+                if "device_sync_time" not in update_data:
+                    update_data["device_sync_time"] = existing.device_sync_time
+
+                update_data["org_id"] = org_id
+                update_data["branch_id"] = branch_id
                 settings = await self.org_settings.create(update_data)
             else:
                 settings = await self.org_settings.update(existing, update_data)
@@ -173,7 +185,7 @@ class SettingsService(BaseService):
                 action_type=ActionType.UPDATE,
                 title="Organization Settings Updated",
                 description=(
-                    f"Organization settings updated. Fields changed: {list(update_data.keys())}"
+                    f"Organization settings updated for branch {branch_id}. Fields changed: {list(update_data.keys())}"
                 ),
                 performed_by_user_id=caller_user_id,
                 performed_by_name=caller_name,
@@ -186,25 +198,19 @@ class SettingsService(BaseService):
         org_id: int,
         caller_user_id: int,
         caller_name: str,
+        branch_id: int | None = None,
     ) -> OrgSettings:
-        """Re-apply schema defaults to toggle/time fields only.
-
-        Endpoint: POST /api/v1/settings/organization/reset
-        Permission: settings:edit
-
-        Business rules:
-        - Only boolean toggle fields and device_sync_time are reset.
-        - sync_code and pass_code are NEVER reset (required, no defaults).
-        - Raises SettingsNotFoundException if no row exists.
-        """
-        settings = await self.org_settings.get_by_org_id(org_id)
+        """Re-apply schema defaults to toggle/time fields only."""
+        settings = await self.org_settings.get_by_org_id(org_id, branch_id=branch_id)
         if settings is None:
             raise SettingsNotFoundException(
                 "Organization settings have not been initialized for this tenant."
             )
 
         async with self.transaction():
-            settings = await self.org_settings.reset_to_defaults(org_id, updated_by=caller_user_id)
+            settings = await self.org_settings.reset_to_defaults(
+                org_id, updated_by=caller_user_id, branch_id=branch_id
+            )
             await self.audit.record(
                 org_id=org_id,
                 module="settings",
@@ -225,14 +231,11 @@ class SettingsService(BaseService):
     # 3. Salary-Slip (Payslip) Settings
     # =========================================================================
 
-    async def get_salary_slip_settings(self, org_id: int) -> OrgSalarySlipSettings:
-        """Return the org_salary_slip_settings row for this organization.
-
-        Endpoint: GET /api/v1/settings/salary-slip
-        Permission: settings:read
-        Raises SettingsNotFoundException if the row has not been initialized.
-        """
-        slip = await self.salary_slip.get_by_org_id(org_id)
+    async def get_salary_slip_settings(
+        self, org_id: int, branch_id: int | None = None
+    ) -> OrgSalarySlipSettings:
+        """Return the org_salary_slip_settings row for this organization and branch."""
+        slip = await self.salary_slip.get_by_org_id(org_id, branch_id=branch_id)
         if slip is None:
             raise SettingsNotFoundException(
                 "Salary slip settings have not been initialized for this tenant."
@@ -245,6 +248,7 @@ class SettingsService(BaseService):
         caller_user_id: int,
         caller_name: str,
         *,
+        branch_id: int | None = None,
         company_logo_url: str | None = None,
         company_name: str | None = None,
         company_address: str | None = None,
@@ -259,17 +263,7 @@ class SettingsService(BaseService):
         show_pan: bool | None = None,
         show_uan: bool | None = None,
     ) -> OrgSalarySlipSettings:
-        """Patch (upsert) the org_salary_slip_settings row.
-
-        Endpoint: PATCH /api/v1/settings/salary-slip
-        Permission: settings:edit
-
-        Business rules:
-        - company_name max 200, company_contact max 100, company_website_email max 200.
-        - company_website_email validated as email if '@' is present.
-        - Upsert: creates the row if absent; all required fields must be present.
-        - updated_by is always set to caller.
-        """
+        """Patch (upsert) the org_salary_slip_settings row for a branch."""
         # --- Validation -------------------------------------------------------
         if company_name is not None and len(company_name.strip()) == 0:
             raise SettingsValidationException("company_name cannot be blank.")
@@ -291,7 +285,7 @@ class SettingsService(BaseService):
             if not is_valid_email(company_website_email.strip().lower()):
                 raise SettingsValidationException("company_website_email is not a valid email.")
 
-        existing = await self.salary_slip.get_by_org_id(org_id)
+        existing = await self.salary_slip.get_by_org_id(org_id, branch_id=branch_id)
 
         # Build update payload (only non-None fields)
         update_data: dict[str, Any] = {
@@ -327,13 +321,25 @@ class SettingsService(BaseService):
 
         async with self.transaction():
             if existing is None:
-                # Upsert — create; required fields must be present
+                # Upsert — create initial salary slip settings; required fields must be present
                 for required in ("company_name", "company_address", "company_contact"):
                     if not update_data.get(required):
                         raise SettingsValidationException(
                             f"{required} is required when creating salary slip settings."
                         )
                 update_data["org_id"] = org_id
+                update_data["branch_id"] = branch_id
+                slip = await self.salary_slip.create(update_data)
+            elif branch_id is not None and existing.branch_id != branch_id:
+                # Copy missing required fields from fallback existing row
+                if "company_name" not in update_data:
+                    update_data["company_name"] = existing.company_name
+                if "company_address" not in update_data:
+                    update_data["company_address"] = existing.company_address
+                if "company_contact" not in update_data:
+                    update_data["company_contact"] = existing.company_contact
+                update_data["org_id"] = org_id
+                update_data["branch_id"] = branch_id
                 slip = await self.salary_slip.create(update_data)
             else:
                 slip = await self.salary_slip.update(existing, update_data)

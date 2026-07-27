@@ -7,6 +7,7 @@ import {
   PayrollSettingUpdateRequest,
 } from "../types";
 import { toast } from "sonner";
+import { useBranchContext } from "@/context/branch-context";
 
 export const SETTINGS_QUERY_KEY = ["settings"];
 export const PAYROLL_SETTINGS_QUERY_KEY = ["payroll-settings"];
@@ -15,8 +16,9 @@ export const PAYROLL_SETTINGS_QUERY_KEY = ["payroll-settings"];
  * React Query hook to load combined settings (GET /settings).
  */
 export function useSettings() {
+  const { selectedBranchId } = useBranchContext();
   return useQuery({
-    queryKey: SETTINGS_QUERY_KEY,
+    queryKey: ["settings", selectedBranchId],
     queryFn: async () => {
       const res = await settingsService.getSettings();
       return res.data;
@@ -29,8 +31,9 @@ export function useSettings() {
  * React Query hook to load payroll calculation settings (GET /payroll/settings).
  */
 export function usePayrollSettings() {
+  const { selectedBranchId } = useBranchContext();
   return useQuery({
-    queryKey: PAYROLL_SETTINGS_QUERY_KEY,
+    queryKey: ["payroll-settings", selectedBranchId],
     queryFn: async () => {
       const res = await settingsService.getPayrollSettings();
       return res.data;

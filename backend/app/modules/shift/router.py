@@ -29,7 +29,7 @@ from app.core.dependencies.auth import (
     get_current_active_user,
     require_permission,
 )
-from app.core.dependencies.branch import BranchIdDep
+from app.core.dependencies.branch import BranchIdDep, RequiredBranchIdDep
 from app.core.dependencies.db import get_db
 from app.core.dependencies.pagination import PaginationParams, pagination_params
 from app.core.exceptions.base import AppException
@@ -124,6 +124,7 @@ def _ok(data: Any, message: str = "OK") -> dict[str, Any]:
 async def list_shifts(
     service: ServiceDep,
     org_id: OrgIdDep,
+    branch_id: RequiredBranchIdDep,
     pagination: Annotated[PaginationParams, Depends(pagination_params)],
     q: Annotated[str | None, Query(description="Free-text search on shift name.")] = None,
     shift_type: Annotated[ShiftType | None, Query(description="Filter by shift type.")] = None,
@@ -133,6 +134,7 @@ async def list_shifts(
     """Return a filtered, searched, paginated list of shift definitions."""
     result = await service.list_shifts(
         org_id=org_id,
+        branch_id=branch_id,
         search=q,
         shift_type=shift_type.value if shift_type is not None else None,
         is_default=is_default,
@@ -155,10 +157,12 @@ async def create_shift(
     service: ServiceDep,
     current_user: CurrentUserDep,
     org_id: OrgIdDep,
+    branch_id: RequiredBranchIdDep,
 ) -> dict[str, Any]:
     """Define a shift and its day timings."""
+    payload.branch_id = branch_id
     result = await service.create_shift(
-        org_id=org_id, actor_id=current_user.user_id, data=payload
+        org_id=org_id, actor_id=current_user.user_id, data=payload, branch_id=branch_id
     )
     return _ok(result, "Shift created.")
 
@@ -382,8 +386,8 @@ async def list_shift_assignments(
     service: ServiceDep,
     org_id: OrgIdDep,
     pagination: Annotated[PaginationParams, Depends(pagination_params)],
+    branch_id: RequiredBranchIdDep,
     employee_id: Annotated[int | None, Query(description="Filter by employee.")] = None,
-    branch_id: BranchIdDep = None,
     shift_id: Annotated[int | None, Query(description="Filter by shift.")] = None,
     active_on: Annotated[
         date | None, Query(description="Assignments whose effective range covers this date.")
@@ -583,10 +587,10 @@ async def get_roster(
     service: ServiceDep,
     org_id: OrgIdDep,
     pagination: Annotated[PaginationParams, Depends(pagination_params)],
+    branch_id: RequiredBranchIdDep,
     date_from: Annotated[date | None, Query(description="Range start (with date_to).")] = None,
     date_to: Annotated[date | None, Query(description="Range end (with date_from).")] = None,
     month: Annotated[str | None, Query(description="Calendar month (YYYY-MM).")] = None,
-    branch_id: BranchIdDep = None,
     department_id: Annotated[
         int | None, Query(alias="dept_id", description="Filter by department.")
     ] = None,

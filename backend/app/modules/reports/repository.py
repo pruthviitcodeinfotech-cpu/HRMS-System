@@ -3423,6 +3423,7 @@ class ReportsRepository(BaseRepository[Employee]):
         org_id: int,
         date_from: datetime.date,
         date_to: datetime.date,
+        branch_ids: list[int] | None = None,
         dept_ids: list[int] | None = None,
         designation_id: int | None = None,
         sort_by: str | None = None,
@@ -3456,6 +3457,8 @@ class ReportsRepository(BaseRepository[Employee]):
             )
         )
 
+        if branch_ids:
+            emp_stmt = emp_stmt.where(Employee.master_branch_id.in_(branch_ids))
         if dept_ids:
             emp_stmt = emp_stmt.where(Employee.dept_id.in_(dept_ids))
         if designation_id:

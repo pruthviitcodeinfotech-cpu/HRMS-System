@@ -62,6 +62,7 @@ class AuditService:
         title: str,
         description: str,
         performed_by_name: str,
+        branch_id: int | None = None,
         performed_by_user_id: int | None = None,
         employee_id: int | None = None,
         employee_name: str | None = None,
@@ -75,9 +76,24 @@ class AuditService:
         accept either the enum member or its string value.
         """
         now = utcnow()
+        resolved_branch_id = branch_id
+        if resolved_branch_id is None and employee_id is not None:
+            emp = await self.employees.get_active_by_id(employee_id, org_id)
+            if emp:
+                resolved_branch_id = emp.master_branch_id
+        if resolved_branch_id is None:
+            # Fall back to org default branch if available
+            from sqlalchemy import select, text
+            res = await self.session.execute(
+                select(text("branch_id")).select_from(text("branches")).where(text("org_id = :org_id")).order_by(text("branch_id ASC")).limit(1),
+                {"org_id": org_id}
+            )
+            resolved_branch_id = res.scalar() or 1
+
         return await self.logs.create(
             {
                 "org_id": org_id,
+                "branch_id": resolved_branch_id,
                 "module": module,
                 "sub_module": sub_module,
                 "employee_id": employee_id,
@@ -108,13 +124,15 @@ class AuditService:
             )
 
     async def list_logs(
-        self, *, org_id: int, query: ActivityLogSearchQuery
+        self, *, org_id: int, query: ActivityLogSearchQuery, branch_id: int | None = None
     ) -> ActivityLogListResponse:
-        """List / search / filter audit rows within the tenant (§4.1, §4.3)."""
+        """List / search / filter audit rows within the tenant and branch (§4.1, §4.3)."""
         self._validate_sort(query.sort_by)
+        effective_branch_id = query.branch_id if query.branch_id is not None else branch_id
 
         rows = await self.activity.search(
             org_id,
+            branch_id=effective_branch_id,
             module=query.module,
             sub_module=query.sub_module,
             action_type=query.action_type,
@@ -131,6 +149,7 @@ class AuditService:
         )
         total = await self.activity.search_count(
             org_id,
+            branch_id=effective_branch_id,
             module=query.module,
             sub_module=query.sub_module,
             action_type=query.action_type,
@@ -143,9 +162,11 @@ class AuditService:
         )
         return self._to_list_response(rows, query.page, query.page_size, total)
 
-    async def get_log(self, *, org_id: int, log_id: int) -> ActivityLogDetail:
+    async def get_log(
+        self, *, org_id: int, log_id: int, branch_id: int | None = None
+    ) -> ActivityLogDetail:
         """Return a full audit row or raise ACTIVITY_LOG_NOT_FOUND (§4.2)."""
-        row = await self.activity.get_by_id_in_org(org_id, log_id)
+        row = await self.activity.get_by_id_in_org(org_id, log_id, branch_id=branch_id)
         if row is None:
             raise NotFoundException(
                 "Activity log not found.", code="ACTIVITY_LOG_NOT_FOUND"

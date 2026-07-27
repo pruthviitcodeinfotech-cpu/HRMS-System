@@ -210,23 +210,20 @@ export function SettingsPage() {
       : "normal";
 
   // Helper to format 12h or 24h time strings to ISO 24h format HH:MM:SS for backend Pydantic validation
-  const formatTimeTo24h = (timeStr: string): string => {
-    if (!timeStr) return "16:51:00";
+  const formatTimeTo24h = (timeStr: string, defaultVal = "00:00:00"): string => {
+    if (!timeStr) return defaultVal;
     const trimmed = timeStr.trim();
-    if (/^\d{1,2}:\d{2}(:\d{2})?$/.test(trimmed)) {
-      const parts = trimmed.split(":");
-      return `${parts[0].padStart(2, "0")}:${parts[1].padStart(2, "0")}:${parts[2] ? parts[2].padStart(2, "0") : "00"}`;
-    }
-    const match = trimmed.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i);
+    const match = trimmed.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?$/i);
     if (match) {
       let hours = parseInt(match[1], 10);
-      const minutes = match[2];
-      const period = (match[3] || "").toUpperCase();
+      const minutes = match[2].padStart(2, "0");
+      const seconds = match[3] ? match[3].padStart(2, "0") : "00";
+      const period = (match[4] || "").toUpperCase();
       if (period === "PM" && hours < 12) hours += 12;
       if (period === "AM" && hours === 12) hours = 0;
-      return `${hours.toString().padStart(2, "0")}:${minutes}:00`;
+      return `${hours.toString().padStart(2, "0")}:${minutes}:${seconds}`;
     }
-    return "16:51:00";
+    return defaultVal;
   };
 
   const handleSave = async () => {
@@ -242,7 +239,7 @@ export function SettingsPage() {
           ? syncCode.trim()
           : undefined;
 
-      const formattedTime = formatTimeTo24h(deviceSyncTime);
+      const formattedTime = formatTimeTo24h(deviceSyncTime, "16:51:00");
 
       // State values are already raw backend enum strings — send directly
       await updateSettingsMutation.mutateAsync({
@@ -268,20 +265,20 @@ export function SettingsPage() {
         },
         payrollSettings: {
           working_hour_type: workingHourType,
-          full_day_working_hours: fullDayWorkingHours.length === 5 ? `${fullDayWorkingHours}:00` : fullDayWorkingHours,
-          half_day_working_hours: halfDayWorkingHours.length === 5 ? `${halfDayWorkingHours}:00` : halfDayWorkingHours,
+          full_day_working_hours: formatTimeTo24h(fullDayWorkingHours, "09:00:00"),
+          half_day_working_hours: formatTimeTo24h(halfDayWorkingHours, "04:30:00"),
           attendance_mode: attendanceMode,
           off_day_compensation: offDayCompensation,
           off_day_wage_multiplier: parseFloat(weekOffMultiplier) || 1,
           daily_wage_formula: dailyWageCalculation,
           overtime_type: overtimeType,
           overtime_hourly_multiplier: parseFloat(overtimeMultiplier) || 0,
-          overtime_buffer_period: overtimeBufferPeriod.length === 5 ? `${overtimeBufferPeriod}:00` : overtimeBufferPeriod,
+          overtime_buffer_period: formatTimeTo24h(overtimeBufferPeriod, "00:30:00"),
           overtime_period_interval: overtimePeriod,
           full_day_penalty_enabled: fullDayPenalty,
           half_day_penalty_enabled: halfDayPenalty,
           late_coming_penalty_enabled: lateComingPenalty,
-          grace_time: graceTime.length === 5 ? `${graceTime}:00` : graceTime,
+          grace_time: formatTimeTo24h(graceTime, "00:15:00"),
         },
       });
       setIsDirty(false);

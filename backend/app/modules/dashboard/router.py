@@ -18,7 +18,7 @@ from app.core.dependencies.auth import (
     get_current_active_user,
     require_permission,
 )
-from app.core.dependencies.branch import BranchIdDep
+from app.core.dependencies.branch import BranchIdDep, RequiredBranchIdDep
 from app.core.exceptions.base import AppException
 from app.core.middleware.request_context import get_request_id
 from app.modules.dashboard.dependencies import DashboardServiceDep
@@ -85,12 +85,10 @@ async def get_summary(
     service: DashboardServiceDep,
     org_id: OrgIdDep,
     current_user: CurrentUserDep,
+    branch_id: RequiredBranchIdDep,
     date: Annotated[
         datetime.date | None,
         Query(description="Target date for the summary metrics. Defaults to today."),
-    ] = None,
-    branch_id: Annotated[
-        int | None, Query(description="Filter by specific branch ID.")
     ] = None,
 ) -> dict[str, Any]:
     """Retrieve summarized dashboard metrics across all modules."""
@@ -126,11 +124,9 @@ async def get_kpis(
     service: DashboardServiceDep,
     org_id: OrgIdDep,
     current_user: CurrentUserDep,
+    branch_id: RequiredBranchIdDep,
     date: Annotated[
         datetime.date | None, Query(description="Target date for the KPIs. Defaults to today.")
-    ] = None,
-    branch_id: Annotated[
-        int | None, Query(description="Filter by specific branch ID.")
     ] = None,
 ) -> dict[str, Any]:
     """Retrieve flat metrics set across all modules."""
@@ -394,9 +390,9 @@ async def get_notification_dashboard(
     org_id: OrgIdDep,
     current_user: CurrentUserDep,
     limit: Annotated[
+    branch_id: RequiredBranchIdDep,
         int, Query(description="Maximum notification logs to retrieve in list.", ge=1)
     ] = 5,
-    branch_id: BranchIdDep = None,
 ) -> dict[str, Any]:
     """Retrieve active notification count and recent inbox items for the caller."""
     res = await service.get_notification_dashboard(org_id=org_id, user=current_user, limit=limit, branch_id=branch_id)
@@ -414,8 +410,8 @@ async def get_recent_activity(
     service: DashboardServiceDep,
     org_id: OrgIdDep,
     current_user: CurrentUserDep,
+    branch_id: RequiredBranchIdDep,
     limit: Annotated[int, Query(description="Maximum activity audit logs to retrieve.", ge=1)] = 10,
-    branch_id: BranchIdDep = None,
 ) -> dict[str, Any]:
     """Retrieve recent tenant audit log activities."""
     res = await service.get_recent_activity(org_id=org_id, user=current_user, limit=limit, branch_id=branch_id)

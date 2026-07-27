@@ -48,6 +48,11 @@ class ApprovalRequest(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     org_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    branch_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("branches.branch_id", name="fk_approval_requests_branch_id_branches"),
+        nullable=False,
+    )
     request_type: Mapped[str] = mapped_column(String(20), nullable=False)
     request_subtype: Mapped[str | None] = mapped_column(String(50))
     # Polymorphic logical FK (no DB constraint) -> source table by request_type
@@ -79,6 +84,7 @@ class ApprovalRequest(Base):
             "status",
             "request_type",
         ),
+        Index("ix_approval_requests_branch_id_status", "branch_id", "status"),
         Index("ix_approval_requests_employee_id_status", "employee_id", "status"),
         CheckConstraint(
             "request_type IN ('attendance', 'leave', 'login_reset')",
@@ -95,6 +101,11 @@ class AttendanceRegularizationRequest(Base):
     __tablename__ = "attendance_regularization_requests"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    branch_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("branches.branch_id", name="fk_attendance_regularization_requests_branch_id_branches"),
+        nullable=False,
+    )
     # DEFERRED cross-module FK -> employees
     employee_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     attendance_date: Mapped[date] = mapped_column(Date, nullable=False)
@@ -121,6 +132,7 @@ class AttendanceRegularizationRequest(Base):
             "attendance_date",
         ),
         Index("ix_attendance_regularization_requests_status", "status"),
+        Index("ix_att_regularization_reqs_branch_id_status", "branch_id", "status"),
         CheckConstraint(
             "status IN ('pending', 'approved', 'rejected')",
             name="ck_attendance_regularization_requests_status",
@@ -132,6 +144,11 @@ class LoginResetRequest(Base):
     __tablename__ = "login_reset_requests"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    branch_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("branches.branch_id", name="fk_login_reset_requests_branch_id_branches"),
+        nullable=False,
+    )
     # DEFERRED cross-module FK -> employees
     employee_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     request_subtype: Mapped[str | None] = mapped_column(String(50))
@@ -160,6 +177,8 @@ class LoginResetRequest(Base):
 
     __table_args__ = (
         Index("ix_login_reset_requests_employee_id_status", "employee_id", "status"),
+        Index("ix_login_reset_requests_status", "status"),
+        Index("ix_login_reset_requests_branch_id_status", "branch_id", "status"),
         CheckConstraint(
             "status IN ('pending', 'approved', 'rejected')",
             name="ck_login_reset_requests_status",

@@ -51,15 +51,17 @@ export const employeeService = {
     );
   },
 
-  getDepartmentOptions: async (): Promise<ApiResponse<LookupListResponse<DepartmentOption>>> => {
+  getDepartmentOptions: async (params?: { branch_id?: number }): Promise<ApiResponse<LookupListResponse<DepartmentOption>>> => {
+    const branchParam = params?.branch_id ? `&branch_id=${params.branch_id}` : "";
     return apiClient.get<ApiResponse<LookupListResponse<DepartmentOption>>>(
-      "/departments?page_size=200&is_active=true&sort_by=dept_name&sort_order=asc"
+      `/departments?page_size=200&is_active=true&sort_by=dept_name&sort_order=asc${branchParam}`
     );
   },
 
-  getDesignationOptions: async (): Promise<ApiResponse<LookupListResponse<DesignationOption>>> => {
+  getDesignationOptions: async (params?: { branch_id?: number }): Promise<ApiResponse<LookupListResponse<DesignationOption>>> => {
+    const branchParam = params?.branch_id ? `&branch_id=${params.branch_id}` : "";
     return apiClient.get<ApiResponse<LookupListResponse<DesignationOption>>>(
-      "/designations?page_size=200&is_active=true&sort_by=designation_name&sort_order=asc"
+      `/designations?page_size=200&is_active=true&sort_by=designation_name&sort_order=asc${branchParam}`
     );
   },
 

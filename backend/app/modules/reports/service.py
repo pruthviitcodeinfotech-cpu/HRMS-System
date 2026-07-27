@@ -148,14 +148,24 @@ class ReportsService(BaseService):
             super().__init__(session_or_repo)
             self.repo = ReportsRepository(session_or_repo)
 
-    def _resolve_data_scopes(self, user: CurrentUser) -> tuple[list[int] | None, list[int] | None]:
+    def _resolve_data_scopes(
+        self, user: CurrentUser, override_branch_id: int | None = None
+    ) -> tuple[list[int] | None, list[int] | None]:
         """Resolve branch and department list scopes for the user.
 
         Super admins have unrestricted access, yielding (None, None).
+        If override_branch_id is provided, validates permissions and scopes to [override_branch_id].
         """
-        if user.is_super_admin:
-            return None, None
-        return list(user.permissions.branch_ids), list(user.permissions.department_ids)
+        dept_ids = None if user.is_super_admin else list(user.permissions.department_ids)
+
+        if override_branch_id is not None:
+            if not user.is_super_admin and user.permissions.branch_ids:
+                if override_branch_id not in user.permissions.branch_ids:
+                    raise AuthorizationException("Access denied for requested branch.")
+            return [override_branch_id], dept_ids
+
+        branch_ids = None if user.is_super_admin else list(user.permissions.branch_ids)
+        return branch_ids, dept_ids
 
     def _enforce_permissions(self, user: CurrentUser, source_features: list[str]) -> None:
         """Enforce that the user has 'reports:read' and the source-module read permission."""
@@ -1747,7 +1757,7 @@ class ReportsService(BaseService):
     ) -> EmployeeDayWiseMasterReportResponse | dict[str, Any] | bytes:
         """Fetch multi-day day-wise master report grouped by employee."""
         self._enforce_permissions(user, ["attendance"])
-        branch_ids, dept_ids = self._resolve_data_scopes(user)
+        branch_ids, dept_ids = self._resolve_data_scopes(user, query.branch_id)
         effective_dept_ids = [query.dept_id] if query.dept_id is not None else dept_ids
 
         today = datetime.date.today()
@@ -1758,6 +1768,7 @@ class ReportsService(BaseService):
             org_id=org_id,
             date_from=d_from,
             date_to=d_to,
+            branch_ids=branch_ids,
             dept_ids=effective_dept_ids,
             designation_id=query.designation_id,
             sort_by=query.sort_by,

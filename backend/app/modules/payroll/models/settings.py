@@ -41,6 +41,15 @@ class PayrollSetting(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     org_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    branch_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "branches.branch_id",
+            name="fk_payroll_settings_branch_id_branches",
+            ondelete="RESTRICT",
+        ),
+        nullable=True,
+    )
     working_hour_type: Mapped[str] = mapped_column(
         String(20), nullable=False, server_default=text("'fixed'")
     )
@@ -96,7 +105,9 @@ class PayrollSetting(Base):
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
 
-    __table_args__ = (UniqueConstraint("org_id", name="uq_payroll_settings_org_id"),)
+    __table_args__ = (
+        Index("ix_payroll_settings_org_id_branch_id", "org_id", "branch_id"),
+    )
 
 
 class PayrollGroup(Base):
@@ -104,6 +115,11 @@ class PayrollGroup(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     org_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    branch_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("branches.branch_id", name="fk_payroll_groups_branch_id_branches"),
+        nullable=False,
+    )
     name: Mapped[str] = mapped_column(String(150), nullable=False)
     payroll_type: Mapped[str] = mapped_column(String(30), nullable=False)
     is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
@@ -126,12 +142,13 @@ class PayrollGroup(Base):
 
     __table_args__ = (
         Index(
-            "uq_payroll_groups_org_id_name",
-            "org_id",
+            "uq_payroll_groups_branch_id_name",
+            "branch_id",
             "name",
             unique=True,
             postgresql_where=text("is_deleted = false"),
         ),
+        Index("ix_payroll_groups_branch_id", "branch_id"),
         CheckConstraint(
             "payroll_type IN ('monthly_without_compliance', 'monthly_with_compliance', "
             "'hourly_payroll')",

@@ -58,10 +58,26 @@ class PayrollSettingRepository(BaseRepository[PayrollSetting]):
     def __init__(self, session: AsyncSession) -> None:
         super().__init__(session, PayrollSetting)
 
-    async def get_by_org(self, org_id: int) -> PayrollSetting | None:
-        """Retrieve the single settings row scoped to the organization ID."""
-        stmt = select(PayrollSetting).where(PayrollSetting.org_id == org_id)
-        return (await self.session.execute(stmt.limit(1))).scalar_one_or_none()
+    async def get_by_org(self, org_id: int, branch_id: int | None = None) -> PayrollSetting | None:
+        """Retrieve the settings row scoped to the organization ID and branch ID (with fallback)."""
+        if branch_id is not None:
+            stmt = select(PayrollSetting).where(
+                PayrollSetting.org_id == org_id, PayrollSetting.branch_id == branch_id
+            )
+            res = await self.session.execute(stmt)
+            row = res.scalar_one_or_none()
+            if row is not None:
+                return row
+        stmt = select(PayrollSetting).where(
+            PayrollSetting.org_id == org_id, PayrollSetting.branch_id.is_(None)
+        )
+        res = await self.session.execute(stmt)
+        row = res.scalar_one_or_none()
+        if row is None:
+            stmt = select(PayrollSetting).where(PayrollSetting.org_id == org_id).limit(1)
+            res = await self.session.execute(stmt)
+            row = res.scalar_one_or_none()
+        return row
 
 
 # ===========================================================================
@@ -134,6 +150,7 @@ class PayrollGroupRepository(BaseRepository[PayrollGroup]):
         self,
         org_id: int,
         *,
+        branch_id: int | None = None,
         search: str | None = None,
         payroll_type: str | None = None,
         is_default: bool | None = None,
@@ -147,6 +164,8 @@ class PayrollGroupRepository(BaseRepository[PayrollGroup]):
             PayrollGroup.org_id == org_id,
             PayrollGroup.is_deleted.is_(False),
         )
+        if branch_id is not None:
+            stmt = stmt.where(PayrollGroup.branch_id == branch_id)
         if search:
             stmt = stmt.where(PayrollGroup.name.ilike(f"%{search.strip()}%"))
         if payroll_type:
@@ -168,6 +187,7 @@ class PayrollGroupRepository(BaseRepository[PayrollGroup]):
         self,
         org_id: int,
         *,
+        branch_id: int | None = None,
         search: str | None = None,
         payroll_type: str | None = None,
         is_default: bool | None = None,
@@ -177,6 +197,8 @@ class PayrollGroupRepository(BaseRepository[PayrollGroup]):
             PayrollGroup.org_id == org_id,
             PayrollGroup.is_deleted.is_(False),
         )
+        if branch_id is not None:
+            stmt = stmt.where(PayrollGroup.branch_id == branch_id)
         if search:
             stmt = stmt.where(PayrollGroup.name.ilike(f"%{search.strip()}%"))
         if payroll_type:
@@ -533,6 +555,7 @@ class PayrollFinalizationRepository(BaseRepository[PayrollFinalization]):
         org_id: int,
         *,
         payroll_group_id: int | None = None,
+        branch_id: int | None = None,
         status: str | None = None,
         from_date: date | None = None,
         to_date: date | None = None,
@@ -550,10 +573,13 @@ class PayrollFinalizationRepository(BaseRepository[PayrollFinalization]):
         if to_date is not None:
             conds.append(PayrollFinalization.to_date <= to_date)
 
+        stmt = select(PayrollFinalization).options(joinedload(PayrollFinalization.payroll_group))
+        if branch_id is not None:
+            stmt = stmt.join(PayrollGroup, PayrollFinalization.payroll_group_id == PayrollGroup.id)
+            conds.append(PayrollGroup.branch_id == branch_id)
+
         stmt = (
-            select(PayrollFinalization)
-            .options(joinedload(PayrollFinalization.payroll_group))
-            .where(and_(*conds))
+            stmt.where(and_(*conds))
             .order_by(desc(PayrollFinalization.from_date), desc(PayrollFinalization.id))
         )
         stmt = apply_pagination(stmt, page=page, page_size=page_size)
@@ -564,6 +590,7 @@ class PayrollFinalizationRepository(BaseRepository[PayrollFinalization]):
         org_id: int,
         *,
         payroll_group_id: int | None = None,
+        branch_id: int | None = None,
         status: str | None = None,
         from_date: date | None = None,
         to_date: date | None = None,
@@ -579,7 +606,12 @@ class PayrollFinalizationRepository(BaseRepository[PayrollFinalization]):
         if to_date is not None:
             conds.append(PayrollFinalization.to_date <= to_date)
 
-        stmt = select(func.count()).select_from(PayrollFinalization).where(and_(*conds))
+        stmt = select(func.count()).select_from(PayrollFinalization)
+        if branch_id is not None:
+            stmt = stmt.join(PayrollGroup, PayrollFinalization.payroll_group_id == PayrollGroup.id)
+            conds.append(PayrollGroup.branch_id == branch_id)
+
+        stmt = stmt.where(and_(*conds))
         return int((await self.session.execute(stmt)).scalar_one())
 
 

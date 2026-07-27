@@ -46,7 +46,7 @@ class CurrentUser(BaseModel):
     org_id: int | None = None
     is_super_admin: bool = False
     is_active: bool = True
-    session_id: str | None = None
+    session_id: str | int | None = None
     roles: frozenset[str] = frozenset()
     permissions: EffectivePermissions = Field(default_factory=EffectivePermissions)
 
@@ -74,12 +74,13 @@ def _principal_from_claims(claims: dict[str, Any]) -> CurrentUser:
         department_ids=claims.get("department_ids"),
     )
     org_id = claims.get("org_id")
+    sid = claims.get("sid")
     return CurrentUser(
         user_id=user_id,
         org_id=int(org_id) if org_id is not None else None,
         is_super_admin=is_super_admin,
         is_active=bool(claims.get("is_active", True)),
-        session_id=claims.get("sid"),
+        session_id=str(sid) if sid is not None else None,
         roles=frozenset(claims.get("roles", [])),
         permissions=permissions,
     )

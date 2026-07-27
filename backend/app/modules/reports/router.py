@@ -17,7 +17,7 @@ from app.core.dependencies.auth import (
     get_current_active_user,
     require_permission,
 )
-from app.core.dependencies.branch import BranchIdDep
+from app.core.dependencies.branch import BranchIdDep, RequiredBranchIdDep
 from app.core.exceptions.base import AppException
 from app.core.middleware.request_context import get_request_id
 from app.modules.reports.dependencies import ReportsServiceDep
@@ -52,10 +52,9 @@ CurrentUserDep = Annotated[CurrentUser, Depends(get_current_active_user)]
 
 async def get_report_query(
     query: Annotated[ReportQueryRequest, Depends()],
-    branch_id: BranchIdDep = None,
+    branch_id: RequiredBranchIdDep,
 ) -> ReportQueryRequest:
-    if query.branch_id is None and branch_id is not None:
-        query.branch_id = branch_id
+    query.branch_id = branch_id
     return query
 
 

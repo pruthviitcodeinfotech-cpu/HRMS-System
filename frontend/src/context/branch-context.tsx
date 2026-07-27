@@ -87,7 +87,15 @@ export const BranchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       const url = new URL(window.location.href);
       url.searchParams.set("branch_id", String(id));
       window.history.replaceState({}, "", url.toString());
+
+      // Dispatch custom event for forms/components requiring local resets
+      window.dispatchEvent(new CustomEvent("branch-changed", { detail: { branchId: id } }));
     }
+
+    // Immediately invalidate and refetch all branch-dependent React Query caches
+    import("@/lib/query-client").then(({ queryClient }) => {
+      queryClient.invalidateQueries();
+    });
   };
 
   const selectedBranchName = useMemo(() => {

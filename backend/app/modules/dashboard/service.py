@@ -693,19 +693,21 @@ class DashboardService(BaseService):
         return response_obj
 
     async def get_payroll_dashboard(
-        self, org_id: int, user: CurrentUser
+        self, org_id: int, user: CurrentUser, branch_id: int | None = None
     ) -> PayrollDashboardResponse:
         """Fetch current payroll run cost breakdown and execution state."""
         if not user.permissions.has_permission(PAYROLL_FEATURE, PermissionAction.READ):
             raise AuthorizationException("Missing permission 'payroll_record:read'.")
 
-        cache_key = f"dashboard:{org_id}:widget:payroll"
+        branch_ids, _ = self._resolve_data_scopes(user, branch_id)
+        branch_part = ",".join(map(str, sorted(branch_ids))) if branch_ids else "all"
+        cache_key = f"dashboard:{org_id}:widget:payroll:b_{branch_part}"
 
         cached = await cache_get_json(cache_key)
         if cached:
             return PayrollDashboardResponse.model_validate(cached)
 
-        res = await self.repo.get_payroll_summary(org_id)
+        res = await self.repo.get_payroll_summary(org_id, branch_ids=branch_ids)
 
         response_obj = PayrollDashboardResponse(
             current_cycle_id=res["current_cycle_id"],
@@ -722,19 +724,21 @@ class DashboardService(BaseService):
         return response_obj
 
     async def get_settlement_dashboard(
-        self, org_id: int, user: CurrentUser
+        self, org_id: int, user: CurrentUser, branch_id: int | None = None
     ) -> SettlementDashboardResponse:
         """Fetch outstanding loan balances and closed settlements summary."""
         if not user.permissions.has_permission(SETTLEMENT_FEATURE, PermissionAction.READ):
             raise AuthorizationException("Missing permission 'settlement:read'.")
 
-        cache_key = f"dashboard:{org_id}:widget:settlement"
+        branch_ids, _ = self._resolve_data_scopes(user, branch_id)
+        branch_part = ",".join(map(str, sorted(branch_ids))) if branch_ids else "all"
+        cache_key = f"dashboard:{org_id}:widget:settlement:b_{branch_part}"
 
         cached = await cache_get_json(cache_key)
         if cached:
             return SettlementDashboardResponse.model_validate(cached)
 
-        res = await self.repo.get_settlement_summary(org_id)
+        res = await self.repo.get_settlement_summary(org_id, branch_ids=branch_ids)
 
         response_obj = SettlementDashboardResponse(
             active_loans_advances=res["active_loans_advances"],
@@ -748,19 +752,21 @@ class DashboardService(BaseService):
         return response_obj
 
     async def get_hardware_dashboard(
-        self, org_id: int, user: CurrentUser
+        self, org_id: int, user: CurrentUser, branch_id: int | None = None
     ) -> HardwareDashboardResponse:
         """Fetch biometric device connection statuses and last sync logs."""
         if not user.permissions.has_permission(DEVICE_FEATURE, PermissionAction.READ):
             raise AuthorizationException("Missing permission 'device:read'.")
 
-        cache_key = f"dashboard:{org_id}:widget:hardware"
+        branch_ids, _ = self._resolve_data_scopes(user, branch_id)
+        branch_part = ",".join(map(str, sorted(branch_ids))) if branch_ids else "all"
+        cache_key = f"dashboard:{org_id}:widget:hardware:b_{branch_part}"
 
         cached = await cache_get_json(cache_key)
         if cached:
             return HardwareDashboardResponse.model_validate(cached)
 
-        res = await self.repo.get_hardware_dashboard(org_id)
+        res = await self.repo.get_hardware_dashboard(org_id, branch_ids=branch_ids)
 
         response_obj = HardwareDashboardResponse(
             online_devices=res["online_devices"],

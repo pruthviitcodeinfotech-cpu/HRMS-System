@@ -67,6 +67,7 @@ export interface ShiftListParams {
   page?: number;
   page_size?: number;
   q?: string;
+  branch_id?: number;
   shift_type?: ShiftType;
   is_default?: boolean;
   is_open_shift?: boolean;

@@ -24,10 +24,15 @@ export const shiftKeys = {
  * keepPreviousData keeps the last page visible during navigation.
  */
 export const useShifts = (params: ShiftListParams) => {
+  const { selectedBranchId } = useBranchContext();
+  const effectiveParams = {
+    ...params,
+    branch_id: params.branch_id || selectedBranchId || undefined,
+  };
   return useQuery({
-    queryKey: shiftKeys.list(params),
+    queryKey: shiftKeys.list(effectiveParams),
     queryFn: async () => {
-      const response = await shiftService.getShifts(params);
+      const response = await shiftService.getShifts(effectiveParams);
       return response.data;
     },
     placeholderData: keepPreviousData,

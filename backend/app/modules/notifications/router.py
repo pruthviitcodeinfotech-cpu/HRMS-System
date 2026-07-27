@@ -19,7 +19,7 @@ from app.core.dependencies.auth import (
     get_current_active_user,
     require_permission,
 )
-from app.core.dependencies.pagination import PaginationParams, pagination_params
+from app.core.dependencies.branch import BranchIdDep, RequiredBranchIdDep
 from app.core.exceptions.base import AppException
 from app.core.middleware.request_context import get_request_id
 from app.modules.notifications.dependencies import NotificationServiceDep
@@ -90,10 +90,12 @@ async def create_notification(
     service: NotificationServiceDep,
     current_user: CurrentUserDep,
     org_id: OrgIdDep,
+    branch_id: RequiredBranchIdDep,
 ) -> dict[str, Any]:
     """Create a new manual/broadcast notification and optionally assign target recipients."""
     result = await service.create_notification(
         org_id=org_id,
+        branch_id=branch_id,
         caller_user_id=current_user.user_id,
         title=payload.title,
         message=payload.message,
@@ -117,6 +119,7 @@ async def create_notification(
 async def list_notifications(
     service: NotificationServiceDep,
     org_id: OrgIdDep,
+    branch_id: RequiredBranchIdDep,
     pagination: Annotated[PaginationParams, Depends(pagination_params)],
     notification_type: Annotated[str | None, Query(description="Filter by category.")] = None,
     priority: Annotated[str | None, Query(description="Filter by priority.")] = None,
