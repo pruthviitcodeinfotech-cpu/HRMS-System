@@ -93,6 +93,13 @@ class Branch(Base):
     )
 
     __table_args__ = (
+        Index(
+            "uq_branches_org_id_branch_name",
+            "org_id",
+            "branch_name",
+            unique=True,
+            postgresql_where=text("is_deleted = false"),
+        ),
         # Tenant scoping: every branch list query filters on org_id.
         Index("ix_branches_org_id", "org_id"),
     )

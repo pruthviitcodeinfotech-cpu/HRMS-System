@@ -29,11 +29,12 @@ def department_service(mock_session) -> DepartmentService:
     return svc
 
 
-def _dept(dept_id: int = 1, name: str = "Engineering", is_active: bool = True, is_deleted: bool = False, employee_count: int = 0) -> SimpleNamespace:
+def _dept(dept_id: int = 1, name: str = "Engineering", is_active: bool = True, is_deleted: bool = False, employee_count: int = 0, branch_id: int = 1) -> SimpleNamespace:
     now = datetime(2026, 1, 1, tzinfo=timezone.utc)
     return SimpleNamespace(
         dept_id=dept_id,
         org_id=1,
+        branch_id=branch_id,
         dept_name=name,
         is_active=is_active,
         is_deleted=is_deleted,

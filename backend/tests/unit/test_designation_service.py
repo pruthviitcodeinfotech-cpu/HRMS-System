@@ -42,11 +42,13 @@ def _desig(
     is_active: bool = True,
     is_deleted: bool = False,
     employee_count: int = 0,
+    branch_id: int = 1,
 ) -> SimpleNamespace:
     now = datetime(2026, 1, 1, tzinfo=timezone.utc)
     return SimpleNamespace(
         designation_id=designation_id,
         org_id=1,
+        branch_id=branch_id,
         designation_name=name,
         is_active=is_active,
         is_deleted=is_deleted,

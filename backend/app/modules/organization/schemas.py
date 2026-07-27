@@ -214,7 +214,10 @@ class BranchSearchQuery(PaginationRequest):
 class DepartmentCreateRequest(BaseSchema):
     """Payload for creating a department."""
 
-    dept_name: str = Field(..., min_length=1, max_length=150, description="Name (unique per org).")
+    branch_id: int | None = Field(
+        default=None, gt=0, description="Owning branch id (mandatory via body or query/header)."
+    )
+    dept_name: str = Field(..., min_length=1, max_length=150, description="Name (unique per branch).")
 
 
 class DepartmentUpdateRequest(BaseSchema):
@@ -230,7 +233,7 @@ class DepartmentSchema(BaseSchema):
 
     dept_id: int = Field(..., description="Department PK.")
     org_id: int = Field(..., description="Owning organization id.")
-    branch_id: int | None = Field(default=None, description="Owning branch id.")
+    branch_id: int = Field(..., description="Owning branch id.")
     dept_name: str = Field(..., description="Department name.")
     is_active: bool = Field(..., description="Whether the department is active.")
     is_deleted: bool = Field(..., description="Soft-delete flag.")
@@ -264,8 +267,11 @@ class DepartmentSearchQuery(PaginationRequest):
 class DesignationCreateRequest(BaseSchema):
     """Payload for creating a designation."""
 
+    branch_id: int | None = Field(
+        default=None, gt=0, description="Owning branch id (mandatory via body or query/header)."
+    )
     designation_name: str = Field(
-        ..., min_length=1, max_length=150, description="Name (unique per org)."
+        ..., min_length=1, max_length=150, description="Name (unique per branch)."
     )
 
 
@@ -282,7 +288,7 @@ class DesignationSchema(BaseSchema):
 
     designation_id: int = Field(..., description="Designation PK.")
     org_id: int = Field(..., description="Owning organization id.")
-    branch_id: int | None = Field(default=None, description="Owning branch id.")
+    branch_id: int = Field(..., description="Owning branch id.")
     designation_name: str = Field(..., description="Designation name.")
     is_active: bool = Field(..., description="Whether the designation is active.")
     is_deleted: bool = Field(..., description="Soft-delete flag.")

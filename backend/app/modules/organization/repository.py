@@ -157,6 +157,19 @@ class BranchRepository(BaseRepository[Branch]):
         branch.employee_count = count
         return branch
 
+    async def name_exists(
+        self, org_id: int, branch_name: str, *, exclude_branch_id: int | None = None
+    ) -> bool:
+        """Return whether a non-deleted branch already uses ``branch_name`` in ``org_id``."""
+        stmt = select(Branch.branch_id).where(
+            Branch.org_id == org_id,
+            func.lower(Branch.branch_name) == branch_name.strip().lower(),
+            Branch.is_deleted.is_(False),
+        )
+        if exclude_branch_id is not None:
+            stmt = stmt.where(Branch.branch_id != exclude_branch_id)
+        return (await self.session.execute(stmt.limit(1))).first() is not None
+
     async def has_active_employees(self, org_id: int, branch_id: int) -> bool:
         """Return whether any active, non-deleted employee references this branch."""
         stmt = select(Employee.employee_id).where(
@@ -295,14 +308,14 @@ class DepartmentRepository(BaseRepository[Department]):
         return dept
 
     async def name_exists(
-        self, org_id: int, dept_name: str, *, exclude_dept_id: int | None = None
+        self, branch_id: int, dept_name: str, *, exclude_dept_id: int | None = None
     ) -> bool:
-        """Return whether a non-deleted department already uses ``dept_name`` in ``org_id``.
+        """Return whether a non-deleted department already uses ``dept_name`` in ``branch_id``.
 
-        Mirrors the partial unique index ``uq_departments_org_id_dept_name``.
+        Mirrors the partial unique index ``uq_departments_branch_id_dept_name``.
         """
         stmt = select(Department.dept_id).where(
-            Department.org_id == org_id,
+            Department.branch_id == branch_id,
             func.lower(Department.dept_name) == dept_name.strip().lower(),
             Department.is_deleted.is_(False),
         )
@@ -435,14 +448,14 @@ class DesignationRepository(BaseRepository[Designation]):
         return designation
 
     async def name_exists(
-        self, org_id: int, designation_name: str, *, exclude_designation_id: int | None = None
+        self, branch_id: int, designation_name: str, *, exclude_designation_id: int | None = None
     ) -> bool:
-        """Return whether a non-deleted designation already uses ``designation_name``.
+        """Return whether a non-deleted designation already uses ``designation_name`` in ``branch_id``.
 
-        Mirrors the partial unique index ``uq_designations_org_id_designation_name``.
+        Mirrors the partial unique index ``uq_designations_branch_id_designation_name``.
         """
         stmt = select(Designation.designation_id).where(
-            Designation.org_id == org_id,
+            Designation.branch_id == branch_id,
             func.lower(Designation.designation_name) == designation_name.strip().lower(),
             Designation.is_deleted.is_(False),
         )

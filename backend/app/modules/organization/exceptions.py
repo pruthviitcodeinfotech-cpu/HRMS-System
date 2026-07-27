@@ -8,7 +8,7 @@ machine-readable ``code`` (API Contract §12) without any router-level
 
 from __future__ import annotations
 
-from app.core.exceptions.base import ConflictException, NotFoundException
+from app.core.exceptions.base import ConflictException, NotFoundException, ValidationException
 
 
 class OrganizationNotFoundException(NotFoundException):
@@ -39,6 +39,20 @@ class BranchInUseException(ConflictException):
     message = "This branch is referenced by active employees and cannot be deactivated."
 
 
+class BranchNameExistsException(ConflictException):
+    """A non-deleted branch with the same name already exists in the organization."""
+
+    code = "BRANCH_NAME_EXISTS"
+    message = "A branch with this name already exists in this organization."
+
+
+class BranchRequiredException(ValidationException):
+    """``branch_id`` is mandatory for this operation."""
+
+    code = "BRANCH_ID_REQUIRED"
+    message = "branch_id is required."
+
+
 class DepartmentNotFoundException(NotFoundException):
     """The referenced department does not exist in the caller's organization."""
 
@@ -47,10 +61,10 @@ class DepartmentNotFoundException(NotFoundException):
 
 
 class DepartmentNameExistsException(ConflictException):
-    """A non-deleted department with the same name already exists in the organization."""
+    """A non-deleted department with the same name already exists in the branch."""
 
     code = "DEPARTMENT_NAME_EXISTS"
-    message = "A department with this name already exists."
+    message = "A department with this name already exists in this branch."
 
 
 class DepartmentInUseException(ConflictException):
@@ -68,10 +82,10 @@ class DesignationNotFoundException(NotFoundException):
 
 
 class DesignationNameExistsException(ConflictException):
-    """A non-deleted designation with the same name already exists in the organization."""
+    """A non-deleted designation with the same name already exists in the branch."""
 
     code = "DESIGNATION_NAME_EXISTS"
-    message = "A designation with this name already exists."
+    message = "A designation with this name already exists in this branch."
 
 
 class DesignationInUseException(ConflictException):
@@ -86,6 +100,8 @@ __all__ = [
     "OrganizationCodeExistsException",
     "BranchNotFoundException",
     "BranchInUseException",
+    "BranchNameExistsException",
+    "BranchRequiredException",
     "DepartmentNotFoundException",
     "DepartmentNameExistsException",
     "DepartmentInUseException",
@@ -93,3 +109,4 @@ __all__ = [
     "DesignationNameExistsException",
     "DesignationInUseException",
 ]
+

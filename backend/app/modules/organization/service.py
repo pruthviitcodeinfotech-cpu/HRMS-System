@@ -26,7 +26,9 @@ from app.modules.employee.models.organization import (
 from app.modules.organization.constants import AUDIT_MODULE
 from app.modules.organization.exceptions import (
     BranchInUseException,
+    BranchNameExistsException,
     BranchNotFoundException,
+    BranchRequiredException,
     DepartmentInUseException,
     DepartmentNameExistsException,
     DepartmentNotFoundException,
@@ -226,7 +228,10 @@ class BranchService(_OrgBaseService):
     async def create_branch(
         self, *, org_id: int, actor_id: int, data: BranchCreateRequest
     ) -> BranchSchema:
-        """Create a branch. ``branch_name`` has no DB uniqueness (Contract §5.1)."""
+        """Create a branch. Enforces per-org name uniqueness (non-deleted)."""
+        if await self.branches.name_exists(org_id, data.branch_name):
+            raise BranchNameExistsException()
+
         payload = data.model_dump()
         payload["org_id"] = org_id
 
@@ -284,6 +289,10 @@ class BranchService(_OrgBaseService):
         """Update a branch's master attributes."""
         branch = await self._get_or_404(org_id, branch_id)
         updates = data.model_dump(exclude_unset=True)
+
+        if "branch_name" in updates and updates["branch_name"] != branch.branch_name:
+            if await self.branches.name_exists(org_id, updates["branch_name"], exclude_branch_id=branch_id):
+                raise BranchNameExistsException()
 
         async with self.transaction():
             branch = await self.branches.update(branch, updates)
@@ -358,18 +367,26 @@ class DepartmentService(_OrgBaseService):
     def __init__(self, session: AsyncSession) -> None:
         super().__init__(session)
         self.departments = DepartmentRepository(session)
+        self.branches = BranchRepository(session)
 
     async def create_department(
         self, *, org_id: int, actor_id: int, data: DepartmentCreateRequest, branch_id: int | None = None
     ) -> DepartmentSchema:
-        """Create a department. Enforces per-org name uniqueness (non-deleted)."""
-        if await self.departments.name_exists(org_id, data.dept_name):
+        """Create a department. Enforces branch_id requirement and per-branch name uniqueness."""
+        target_branch_id = data.branch_id if getattr(data, "branch_id", None) is not None else branch_id
+        if not target_branch_id or target_branch_id <= 0:
+            raise BranchRequiredException()
+
+        branch = await self.branches.get_by_id_in_org(org_id, target_branch_id)
+        if branch is None:
+            raise BranchNotFoundException()
+
+        if await self.departments.name_exists(target_branch_id, data.dept_name):
             raise DepartmentNameExistsException()
 
         payload = data.model_dump()
         payload["org_id"] = org_id
-        if branch_id is not None:
-            payload["branch_id"] = branch_id
+        payload["branch_id"] = target_branch_id
         payload["created_by"] = actor_id
 
         async with self.transaction():
@@ -419,13 +436,13 @@ class DepartmentService(_OrgBaseService):
     async def update_department(
         self, *, org_id: int, actor_id: int, dept_id: int, data: DepartmentUpdateRequest
     ) -> DepartmentSchema:
-        """Update a department. Re-checks name uniqueness on change."""
+        """Update a department. Re-checks name uniqueness per-branch on change."""
         dept = await self._get_or_404(org_id, dept_id)
         updates = data.model_dump(exclude_unset=True)
 
         if "dept_name" in updates and updates["dept_name"] != dept.dept_name:
             if await self.departments.name_exists(
-                org_id, updates["dept_name"], exclude_dept_id=dept_id
+                dept.branch_id, updates["dept_name"], exclude_dept_id=dept_id
             ):
                 raise DepartmentNameExistsException()
 
@@ -502,18 +519,26 @@ class DesignationService(_OrgBaseService):
     def __init__(self, session: AsyncSession) -> None:
         super().__init__(session)
         self.designations = DesignationRepository(session)
+        self.branches = BranchRepository(session)
 
     async def create_designation(
         self, *, org_id: int, actor_id: int, data: DesignationCreateRequest, branch_id: int | None = None
     ) -> DesignationSchema:
-        """Create a designation. Enforces per-org name uniqueness (non-deleted)."""
-        if await self.designations.name_exists(org_id, data.designation_name):
+        """Create a designation. Enforces branch_id requirement and per-branch name uniqueness."""
+        target_branch_id = data.branch_id if getattr(data, "branch_id", None) is not None else branch_id
+        if not target_branch_id or target_branch_id <= 0:
+            raise BranchRequiredException()
+
+        branch = await self.branches.get_by_id_in_org(org_id, target_branch_id)
+        if branch is None:
+            raise BranchNotFoundException()
+
+        if await self.designations.name_exists(target_branch_id, data.designation_name):
             raise DesignationNameExistsException()
 
         payload = data.model_dump()
         payload["org_id"] = org_id
-        if branch_id is not None:
-            payload["branch_id"] = branch_id
+        payload["branch_id"] = target_branch_id
         payload["created_by"] = actor_id
 
         async with self.transaction():
@@ -568,7 +593,7 @@ class DesignationService(_OrgBaseService):
         designation_id: int,
         data: DesignationUpdateRequest,
     ) -> DesignationSchema:
-        """Update a designation. Re-checks name uniqueness on change."""
+        """Update a designation. Re-checks name uniqueness per-branch on change."""
         designation = await self._get_or_404(org_id, designation_id)
         updates = data.model_dump(exclude_unset=True)
 
@@ -577,7 +602,7 @@ class DesignationService(_OrgBaseService):
             and updates["designation_name"] != designation.designation_name
         ):
             if await self.designations.name_exists(
-                org_id, updates["designation_name"], exclude_designation_id=designation_id
+                designation.branch_id, updates["designation_name"], exclude_designation_id=designation_id
             ):
                 raise DesignationNameExistsException()
 
