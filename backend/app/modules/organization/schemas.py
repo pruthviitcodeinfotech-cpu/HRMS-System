@@ -230,6 +230,7 @@ class DepartmentSchema(BaseSchema):
 
     dept_id: int = Field(..., description="Department PK.")
     org_id: int = Field(..., description="Owning organization id.")
+    branch_id: int | None = Field(default=None, description="Owning branch id.")
     dept_name: str = Field(..., description="Department name.")
     is_active: bool = Field(..., description="Whether the department is active.")
     is_deleted: bool = Field(..., description="Soft-delete flag.")
@@ -281,6 +282,7 @@ class DesignationSchema(BaseSchema):
 
     designation_id: int = Field(..., description="Designation PK.")
     org_id: int = Field(..., description="Owning organization id.")
+    branch_id: int | None = Field(default=None, description="Owning branch id.")
     designation_name: str = Field(..., description="Designation name.")
     is_active: bool = Field(..., description="Whether the designation is active.")
     is_deleted: bool = Field(..., description="Soft-delete flag.")

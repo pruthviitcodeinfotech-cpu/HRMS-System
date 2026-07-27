@@ -389,8 +389,8 @@ async def get_notification_dashboard(
     service: DashboardServiceDep,
     org_id: OrgIdDep,
     current_user: CurrentUserDep,
+    branch_id: BranchIdDep = None,
     limit: Annotated[
-    branch_id: RequiredBranchIdDep,
         int, Query(description="Maximum notification logs to retrieve in list.", ge=1)
     ] = 5,
 ) -> dict[str, Any]:

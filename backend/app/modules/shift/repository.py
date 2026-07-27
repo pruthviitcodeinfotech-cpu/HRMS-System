@@ -126,6 +126,7 @@ class ShiftRepository(BaseRepository[Shift]):
     def _conditions(
         org_id: int,
         *,
+        branch_id: int | None = None,
         search: str | None,
         shift_type: str | None,
         is_default: bool | None,
@@ -134,6 +135,8 @@ class ShiftRepository(BaseRepository[Shift]):
     ) -> list:
         """Build the WHERE conditions shared by :meth:`search` and :meth:`search_count`."""
         conds: list = [Shift.org_id == org_id]
+        if branch_id is not None:
+            conds.append(Shift.branch_id == branch_id)
         if not include_deleted:
             conds.append(Shift.is_deleted.is_(False))
         if shift_type is not None:
@@ -150,6 +153,7 @@ class ShiftRepository(BaseRepository[Shift]):
         self,
         org_id: int,
         *,
+        branch_id: int | None = None,
         search: str | None = None,
         shift_type: str | None = None,
         is_default: bool | None = None,
@@ -163,6 +167,7 @@ class ShiftRepository(BaseRepository[Shift]):
         """Return a filtered, sorted, paginated page of shifts in ``org_id``."""
         conds = self._conditions(
             org_id,
+            branch_id=branch_id,
             search=search,
             shift_type=shift_type,
             is_default=is_default,
@@ -180,6 +185,7 @@ class ShiftRepository(BaseRepository[Shift]):
         self,
         org_id: int,
         *,
+        branch_id: int | None = None,
         search: str | None = None,
         shift_type: str | None = None,
         is_default: bool | None = None,
@@ -189,6 +195,7 @@ class ShiftRepository(BaseRepository[Shift]):
         """Return the total number of shifts matching the same filters as :meth:`search`."""
         conds = self._conditions(
             org_id,
+            branch_id=branch_id,
             search=search,
             shift_type=shift_type,
             is_default=is_default,

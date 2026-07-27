@@ -26,6 +26,7 @@ from app.modules.leave.router import router as leave_router
 from app.modules.notifications.router import router as notifications_router
 from app.modules.organization.router import router as organization_router
 from app.modules.payroll.router import router as payroll_router
+from app.modules.profile.router import router as profile_router
 from app.modules.rbac.router import router as rbac_router
 from app.modules.reports.router import router as reports_router
 from app.modules.settings.router import router as settings_router
@@ -36,6 +37,7 @@ api_router = APIRouter()
 api_router.include_router(auth_router)
 api_router.include_router(rbac_router)
 api_router.include_router(organization_router)
+api_router.include_router(profile_router)
 api_router.include_router(employee_router)
 api_router.include_router(shift_router)
 api_router.include_router(attendance_router)

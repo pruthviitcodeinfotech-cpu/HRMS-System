@@ -360,7 +360,7 @@ class DepartmentService(_OrgBaseService):
         self.departments = DepartmentRepository(session)
 
     async def create_department(
-        self, *, org_id: int, actor_id: int, data: DepartmentCreateRequest
+        self, *, org_id: int, actor_id: int, data: DepartmentCreateRequest, branch_id: int | None = None
     ) -> DepartmentSchema:
         """Create a department. Enforces per-org name uniqueness (non-deleted)."""
         if await self.departments.name_exists(org_id, data.dept_name):
@@ -368,6 +368,8 @@ class DepartmentService(_OrgBaseService):
 
         payload = data.model_dump()
         payload["org_id"] = org_id
+        if branch_id is not None:
+            payload["branch_id"] = branch_id
         payload["created_by"] = actor_id
 
         async with self.transaction():
@@ -383,11 +385,12 @@ class DepartmentService(_OrgBaseService):
         return DepartmentSchema.model_validate(dept)
 
     async def list_departments(
-        self, *, org_id: int, query: DepartmentSearchQuery
+        self, *, org_id: int, query: DepartmentSearchQuery, branch_id: int | None = None
     ) -> DepartmentListResponse:
         """List departments with search / filter / sort / pagination."""
         rows = await self.departments.search(
             org_id,
+            branch_id=branch_id,
             search=query.search,
             is_active=query.is_active,
             include_deleted=query.include_deleted,
@@ -398,6 +401,7 @@ class DepartmentService(_OrgBaseService):
         )
         total = await self.departments.search_count(
             org_id,
+            branch_id=branch_id,
             search=query.search,
             is_active=query.is_active,
             include_deleted=query.include_deleted,
@@ -500,7 +504,7 @@ class DesignationService(_OrgBaseService):
         self.designations = DesignationRepository(session)
 
     async def create_designation(
-        self, *, org_id: int, actor_id: int, data: DesignationCreateRequest
+        self, *, org_id: int, actor_id: int, data: DesignationCreateRequest, branch_id: int | None = None
     ) -> DesignationSchema:
         """Create a designation. Enforces per-org name uniqueness (non-deleted)."""
         if await self.designations.name_exists(org_id, data.designation_name):
@@ -508,6 +512,8 @@ class DesignationService(_OrgBaseService):
 
         payload = data.model_dump()
         payload["org_id"] = org_id
+        if branch_id is not None:
+            payload["branch_id"] = branch_id
         payload["created_by"] = actor_id
 
         async with self.transaction():
@@ -523,11 +529,12 @@ class DesignationService(_OrgBaseService):
         return DesignationSchema.model_validate(designation)
 
     async def list_designations(
-        self, *, org_id: int, query: DesignationSearchQuery
+        self, *, org_id: int, query: DesignationSearchQuery, branch_id: int | None = None
     ) -> DesignationListResponse:
         """List designations with search / filter / sort / pagination."""
         rows = await self.designations.search(
             org_id,
+            branch_id=branch_id,
             search=query.search,
             is_active=query.is_active,
             include_deleted=query.include_deleted,
@@ -538,6 +545,7 @@ class DesignationService(_OrgBaseService):
         )
         total = await self.designations.search_count(
             org_id,
+            branch_id=branch_id,
             search=query.search,
             is_active=query.is_active,
             include_deleted=query.include_deleted,

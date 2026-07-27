@@ -124,8 +124,8 @@ def _ok(data: Any, message: str = "OK") -> dict[str, Any]:
 async def list_shifts(
     service: ServiceDep,
     org_id: OrgIdDep,
-    branch_id: RequiredBranchIdDep,
     pagination: Annotated[PaginationParams, Depends(pagination_params)],
+    branch_id: BranchIdDep = None,
     q: Annotated[str | None, Query(description="Free-text search on shift name.")] = None,
     shift_type: Annotated[ShiftType | None, Query(description="Filter by shift type.")] = None,
     is_default: Annotated[bool | None, Query(description="Filter by default flag.")] = None,

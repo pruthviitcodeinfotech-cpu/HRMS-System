@@ -324,11 +324,14 @@ class DepartmentRepository(BaseRepository[Department]):
     def _conditions(
         org_id: int,
         *,
+        branch_id: int | None = None,
         search: str | None,
         is_active: bool | None,
         include_deleted: bool,
     ) -> list[Any]:
         conds: list[Any] = [Department.org_id == org_id]
+        if branch_id is not None:
+            conds.append(Department.branch_id == branch_id)
         if not include_deleted:
             conds.append(Department.is_deleted.is_(False))
         if is_active is not None:
@@ -342,6 +345,7 @@ class DepartmentRepository(BaseRepository[Department]):
         self,
         org_id: int,
         *,
+        branch_id: int | None = None,
         search: str | None = None,
         is_active: bool | None = None,
         include_deleted: bool = False,
@@ -352,7 +356,7 @@ class DepartmentRepository(BaseRepository[Department]):
     ) -> list[Department]:
         """Return a filtered, sorted, paginated page of departments in ``org_id``."""
         conds = self._conditions(
-            org_id, search=search, is_active=is_active, include_deleted=include_deleted
+            org_id, branch_id=branch_id, search=search, is_active=is_active, include_deleted=include_deleted
         )
         active_emp_sub = (
             select(func.count(Employee.employee_id))
@@ -386,13 +390,14 @@ class DepartmentRepository(BaseRepository[Department]):
         self,
         org_id: int,
         *,
+        branch_id: int | None = None,
         search: str | None = None,
         is_active: bool | None = None,
         include_deleted: bool = False,
     ) -> int:
         """Return the total number of departments matching :meth:`search` filters."""
         conds = self._conditions(
-            org_id, search=search, is_active=is_active, include_deleted=include_deleted
+            org_id, branch_id=branch_id, search=search, is_active=is_active, include_deleted=include_deleted
         )
         stmt = select(func.count()).select_from(Department).where(and_(*conds))
         return int((await self.session.execute(stmt)).scalar_one())
@@ -459,11 +464,14 @@ class DesignationRepository(BaseRepository[Designation]):
     def _conditions(
         org_id: int,
         *,
+        branch_id: int | None = None,
         search: str | None,
         is_active: bool | None,
         include_deleted: bool,
     ) -> list[Any]:
         conds: list[Any] = [Designation.org_id == org_id]
+        if branch_id is not None:
+            conds.append(Designation.branch_id == branch_id)
         if not include_deleted:
             conds.append(Designation.is_deleted.is_(False))
         if is_active is not None:
@@ -477,6 +485,7 @@ class DesignationRepository(BaseRepository[Designation]):
         self,
         org_id: int,
         *,
+        branch_id: int | None = None,
         search: str | None = None,
         is_active: bool | None = None,
         include_deleted: bool = False,
@@ -487,7 +496,7 @@ class DesignationRepository(BaseRepository[Designation]):
     ) -> list[Designation]:
         """Return a filtered, sorted, paginated page of designations in ``org_id``."""
         conds = self._conditions(
-            org_id, search=search, is_active=is_active, include_deleted=include_deleted
+            org_id, branch_id=branch_id, search=search, is_active=is_active, include_deleted=include_deleted
         )
         active_emp_sub = (
             select(func.count(Employee.employee_id))
@@ -521,13 +530,14 @@ class DesignationRepository(BaseRepository[Designation]):
         self,
         org_id: int,
         *,
+        branch_id: int | None = None,
         search: str | None = None,
         is_active: bool | None = None,
         include_deleted: bool = False,
     ) -> int:
         """Return the total number of designations matching :meth:`search` filters."""
         conds = self._conditions(
-            org_id, search=search, is_active=is_active, include_deleted=include_deleted
+            org_id, branch_id=branch_id, search=search, is_active=is_active, include_deleted=include_deleted
         )
         stmt = select(func.count()).select_from(Designation).where(and_(*conds))
         return int((await self.session.execute(stmt)).scalar_one())

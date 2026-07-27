@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import Link from "next/link";
 import { useSidebarStore } from "@/lib/stores/sidebar-store";
 import { useThemeStore } from "@/lib/stores/theme-store";
 import { Menu, Bell, ChevronDown, User, ShieldCheck, Sun, Moon, LogOut, Building2, Check } from "lucide-react";
@@ -175,6 +176,14 @@ export const Header = () => {
               </div>
               
               <div className="py-1">
+                <Link
+                  href="/profile"
+                  onClick={() => setIsProfileOpen(false)}
+                  className="w-full flex items-center space-x-2.5 px-4 py-2.5 text-xs text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors text-left font-medium cursor-pointer"
+                >
+                  <User className="h-4 w-4" />
+                  <span>User Profile</span>
+                </Link>
                 <button
                   onClick={handleLogout}
                   className="w-full flex items-center space-x-2.5 px-4 py-2.5 text-xs text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors text-left font-medium cursor-pointer"

@@ -141,8 +141,8 @@ async def create_leave_type(
 async def list_leave_types(
     service: LeaveServiceDep,
     org_id: OrgIdDep,
-    branch_id: RequiredBranchIdDep,
     pagination: Annotated[PaginationParams, Depends(pagination_params)],
+    branch_id: BranchIdDep = None,
     search: Annotated[str | None, Query(description="Search by name or alias.")] = None,
     is_active: Annotated[bool | None, Query(description="Filter by active state.")] = None,
     sort_by: Annotated[str | None, Query(description="Sort field (name, created_at).")] = "name",

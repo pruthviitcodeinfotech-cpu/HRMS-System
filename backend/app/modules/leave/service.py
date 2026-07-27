@@ -173,6 +173,7 @@ class LeaveService(BaseService):
         self,
         org_id: int,
         *,
+        branch_id: int | None = None,
         search: str | None = None,
         is_active: bool | None = None,
         sort_by: str | None = "name",
@@ -183,6 +184,7 @@ class LeaveService(BaseService):
         """Search and paginate leave types."""
         items = await self.leave_types.search(
             org_id,
+            branch_id=branch_id,
             search=search,
             is_active=is_active,
             sort_by=sort_by,
@@ -190,7 +192,7 @@ class LeaveService(BaseService):
             page=page,
             page_size=page_size,
         )
-        total = await self.leave_types.search_count(org_id, search=search, is_active=is_active)
+        total = await self.leave_types.search_count(org_id, branch_id=branch_id, search=search, is_active=is_active)
         return self.paginate(items, page=page, page_size=page_size, total_records=total)
 
     async def update_leave_type(

@@ -93,10 +93,13 @@ class LeaveTypeRepository(BaseRepository[LeaveType]):
     @staticmethod
     def _search_conditions(
         org_id: int,
+        branch_id: int | None = None,
         search: str | None = None,
         is_active: bool | None = None,
     ) -> list:
         conds = [LeaveType.org_id == org_id, LeaveType.is_deleted.is_(False)]
+        if branch_id is not None:
+            conds.append(LeaveType.branch_id == branch_id)
         if is_active is not None:
             conds.append(LeaveType.is_active.is_(is_active))
         if search:
@@ -107,6 +110,7 @@ class LeaveTypeRepository(BaseRepository[LeaveType]):
         self,
         org_id: int,
         *,
+        branch_id: int | None = None,
         search: str | None = None,
         is_active: bool | None = None,
         sort_by: str | None = "name",
@@ -115,7 +119,7 @@ class LeaveTypeRepository(BaseRepository[LeaveType]):
         page_size: int = 25,
     ) -> list[LeaveType]:
         """Return a filtered, sorted, paginated page of leave types."""
-        conds = self._search_conditions(org_id, search=search, is_active=is_active)
+        conds = self._search_conditions(org_id, branch_id=branch_id, search=search, is_active=is_active)
         stmt = select(LeaveType).where(and_(*conds))
         stmt = apply_sorting(
             stmt,
@@ -132,11 +136,12 @@ class LeaveTypeRepository(BaseRepository[LeaveType]):
         self,
         org_id: int,
         *,
+        branch_id: int | None = None,
         search: str | None = None,
         is_active: bool | None = None,
     ) -> int:
         """Return the count of leave types matching the search criteria."""
-        conds = self._search_conditions(org_id, search=search, is_active=is_active)
+        conds = self._search_conditions(org_id, branch_id=branch_id, search=search, is_active=is_active)
         stmt = select(func.count()).select_from(LeaveType).where(and_(*conds))
         return int((await self.session.execute(stmt)).scalar_one())
 

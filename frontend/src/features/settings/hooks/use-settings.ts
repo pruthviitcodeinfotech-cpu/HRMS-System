@@ -15,7 +15,7 @@ export const PAYROLL_SETTINGS_QUERY_KEY = ["payroll-settings"];
 /**
  * React Query hook to load combined settings (GET /settings).
  */
-export function useSettings() {
+export function useSettings(options?: { enabled?: boolean }) {
   const { selectedBranchId } = useBranchContext();
   return useQuery({
     queryKey: ["settings", selectedBranchId],
@@ -24,6 +24,7 @@ export function useSettings() {
       return res.data;
     },
     staleTime: 1000 * 60 * 5, // 5 minutes stale time
+    enabled: options?.enabled ?? true,
   });
 }
 

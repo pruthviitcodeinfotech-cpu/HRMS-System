@@ -221,6 +221,7 @@ class ShiftService(BaseService):
         self,
         *,
         org_id: int,
+        branch_id: int | None = None,
         search: str | None = None,
         shift_type: str | None = None,
         is_default: bool | None = None,
@@ -231,6 +232,7 @@ class ShiftService(BaseService):
         """Return a filtered, searched, paginated page of shift definitions."""
         rows = await self.shifts.search(
             org_id,
+            branch_id=branch_id,
             search=search,
             shift_type=shift_type,
             is_default=is_default,
@@ -240,6 +242,7 @@ class ShiftService(BaseService):
         )
         total = await self.shifts.search_count(
             org_id,
+            branch_id=branch_id,
             search=search,
             shift_type=shift_type,
             is_default=is_default,

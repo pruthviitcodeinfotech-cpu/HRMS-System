@@ -20,6 +20,7 @@ from app.core.dependencies.auth import (
     require_permission,
 )
 from app.core.dependencies.branch import BranchIdDep, RequiredBranchIdDep
+from app.core.dependencies.pagination import PaginationParams, pagination_params
 from app.core.exceptions.base import AppException
 from app.core.middleware.request_context import get_request_id
 from app.modules.notifications.dependencies import NotificationServiceDep

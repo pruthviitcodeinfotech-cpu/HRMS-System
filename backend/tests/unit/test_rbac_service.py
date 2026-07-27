@@ -7,7 +7,8 @@ conflict/authorization/validation failure paths.
 
 from __future__ import annotations
 
-from datetime import UTC
+from datetime import timezone
+UTC = timezone.utc
 from types import SimpleNamespace
 
 import pytest
