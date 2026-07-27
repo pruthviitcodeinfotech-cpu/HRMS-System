@@ -59,6 +59,10 @@ export interface ChangePasswordResult {
   revoked_session_count: number;
 }
 
+export interface ProfilePhotoResponse {
+  profile_photo_url: string;
+}
+
 export interface ApiResponse<T> {
   success: boolean;
   data: T;

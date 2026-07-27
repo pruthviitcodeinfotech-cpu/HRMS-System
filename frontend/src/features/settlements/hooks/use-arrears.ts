@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { arrearsService } from "../services/arrears";
 import {
   ArrearsCreatePayload,
@@ -43,6 +43,7 @@ export const useArrears = (params: ArrearsListParams = {}) => {
         }
       );
     },
+    placeholderData: keepPreviousData,
     staleTime: 1000 * 30, // 30 seconds
   });
 };
@@ -83,6 +84,7 @@ export const useArrearsLogs = (params: ArrearsLogsParams = {}, enabled = true) =
         }
       );
     },
+    placeholderData: keepPreviousData,
     enabled,
   });
 };

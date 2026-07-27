@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, time
+from datetime import date, datetime, time, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -41,7 +41,7 @@ from app.modules.payroll.schemas import (
     RecordPaymentRequestSchema,
 )
 
-_NOW = datetime(2026, 1, 1, tzinfo=UTC)
+_NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
 
 # ---------------------------------------------------------------------------

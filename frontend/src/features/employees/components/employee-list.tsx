@@ -454,6 +454,11 @@ export const EmployeeList = () => {
     return () => document.removeEventListener("mousedown", handleOutsideClick);
   }, []);
 
+  // Reset page to 1 on search change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [debouncedSearch]);
+
   // Derived page UI state (React Query drives loading / error / empty / normal)
   const uiState: "normal" | "loading" | "empty" | "error" = employeesQuery.isError
     ? "error"

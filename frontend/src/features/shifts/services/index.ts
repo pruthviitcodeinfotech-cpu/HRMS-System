@@ -12,6 +12,7 @@ const buildShiftQuery = (params: ShiftListParams): string => {
   const query = new URLSearchParams();
   if (params.page) query.append("page", String(params.page));
   if (params.page_size) query.append("page_size", String(params.page_size));
+  if (params.branch_id) query.append("branch_id", String(params.branch_id));
   if (params.q) query.append("q", params.q);
   if (params.shift_type) query.append("shift_type", params.shift_type);
   if (params.is_default !== undefined)
@@ -97,6 +98,7 @@ export const shiftService = {
     const query = new URLSearchParams();
     if (params.page) query.append("page", String(params.page));
     if (params.page_size) query.append("page_size", String(params.page_size));
+    if (params.branch_id) query.append("branch_id", String(params.branch_id));
     if (params.employee_id) query.append("employee_id", String(params.employee_id));
     if (params.shift_id) query.append("shift_id", String(params.shift_id));
     if (params.active_on) query.append("active_on", params.active_on);

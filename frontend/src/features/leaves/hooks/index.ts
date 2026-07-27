@@ -192,3 +192,21 @@ export const useAdjustLeaveBalance = () => {
     },
   });
 };
+
+export const useLeaveRequests = (
+  params: { page?: number; page_size?: number; employee_id?: number; status?: string; branch_id?: number } = {}
+) => {
+  const { selectedBranchId } = useBranchContext();
+  const effectiveParams = {
+    ...params,
+    branch_id: params.branch_id || selectedBranchId || undefined,
+  };
+  return useQuery({
+    queryKey: [...leaveKeys.all, "requests", effectiveParams] as const,
+    queryFn: async () => {
+      const response = await leaveService.getLeaveRequests(effectiveParams);
+      return response.data;
+    },
+    placeholderData: keepPreviousData,
+  });
+};

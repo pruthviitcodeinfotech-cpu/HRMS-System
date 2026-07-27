@@ -24,4 +24,13 @@ export const profileService = {
   ): Promise<ApiResponse<ChangePasswordResult>> => {
     return apiClient.put<ApiResponse<ChangePasswordResult>>("/profile/change-password", data);
   },
+
+  /** PUT /profile/photo — Upload a new profile photo (multipart/form-data) */
+  updateProfilePhoto: async (file: File): Promise<ApiResponse<import("../types").ProfilePhotoResponse>> => {
+    const formData = new FormData();
+    formData.append("file", file);
+    return apiClient.put<ApiResponse<import("../types").ProfilePhotoResponse>>("/profile/photo", formData, {
+      headers: { "Content-Type": "multipart/form-data" },
+    });
+  },
 };

@@ -6,6 +6,7 @@ import {
   DesignationOption,
   EmployeeListParams,
   EmployeeListResponse,
+  EmployeeDetailSchema,
   LookupListResponse,
   DepartmentListParams,
   DepartmentListResponse,
@@ -71,6 +72,7 @@ export const employeeService = {
     const query = new URLSearchParams();
     if (params.page) query.append("page", String(params.page));
     if (params.page_size) query.append("page_size", String(params.page_size));
+    if (params.branch_id) query.append("branch_id", String(params.branch_id));
     if (params.search) query.append("search", params.search);
     if (params.is_active !== undefined) query.append("is_active", String(params.is_active));
     if (params.include_deleted !== undefined) query.append("include_deleted", String(params.include_deleted));
@@ -111,6 +113,7 @@ export const employeeService = {
     const query = new URLSearchParams();
     if (params.page) query.append("page", String(params.page));
     if (params.page_size) query.append("page_size", String(params.page_size));
+    if (params.branch_id) query.append("branch_id", String(params.branch_id));
     if (params.search) query.append("search", params.search);
     if (params.is_active !== undefined) query.append("is_active", String(params.is_active));
     if (params.include_deleted !== undefined)
@@ -202,5 +205,9 @@ export const employeeService = {
 
   deleteBranch: async (branchId: number): Promise<ApiResponse<BranchSchema>> => {
     return apiClient.delete<ApiResponse<BranchSchema>>(`/branches/${branchId}`);
+  },
+
+  getEmployee: async (employeeId: number): Promise<ApiResponse<EmployeeDetailSchema>> => {
+    return apiClient.get<ApiResponse<EmployeeDetailSchema>>(`/employees/${employeeId}`);
   },
 };

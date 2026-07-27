@@ -60,3 +60,21 @@ export function useChangePassword() {
     },
   });
 }
+
+/**
+ * React Query mutation hook to upload a new profile photo (PUT /profile/photo).
+ */
+export function useUploadProfilePhoto() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (file: File) => profileService.updateProfilePhoto(file),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: PROFILE_QUERY_KEY });
+      toast.success("Profile photo updated successfully");
+    },
+    onError: (err: ApiError) => {
+      toast.error(err?.message || "Failed to update profile photo");
+    },
+  });
+}

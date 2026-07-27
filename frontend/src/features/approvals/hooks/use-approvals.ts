@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { approvalService } from "../services/approvals";
 import {
   ApprovalQueryParams,
@@ -23,6 +23,7 @@ export const useApprovalsList = (params: ApprovalQueryParams = {}) => {
       const response = await approvalService.getApprovals(effectiveParams);
       return response.data;
     },
+    placeholderData: keepPreviousData,
   });
 };
 
@@ -152,10 +153,15 @@ export const useApprovalTimeline = (id: number | null) => {
 };
 
 export const usePendingApprovalCount = (params?: { branch_id?: number; dept_id?: number }) => {
+  const { selectedBranchId } = useBranchContext();
+  const effectiveParams = {
+    ...(params || {}),
+    branch_id: params?.branch_id || selectedBranchId || undefined,
+  };
   return useQuery({
-    queryKey: ["approvals", "pending-count", params || {}],
+    queryKey: ["approvals", "pending-count", effectiveParams],
     queryFn: async () => {
-      const response = await approvalService.getPendingCount(params);
+      const response = await approvalService.getPendingCount(effectiveParams);
       return response.data;
     },
   });

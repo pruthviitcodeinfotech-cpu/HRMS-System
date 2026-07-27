@@ -21,6 +21,7 @@ export const payrollService = {
     search?: string;
     payroll_type?: string;
     is_default?: boolean;
+    branch_id?: number;
     sort_by?: string;
     sort_order?: string;
     page?: number;
@@ -30,6 +31,7 @@ export const payrollService = {
     if (params?.search) query.append("search", params.search);
     if (params?.payroll_type) query.append("payroll_type", params.payroll_type);
     if (params?.is_default !== undefined) query.append("is_default", String(params.is_default));
+    if (params?.branch_id) query.append("branch_id", params.branch_id.toString());
     if (params?.sort_by) query.append("sort_by", params.sort_by);
     if (params?.sort_order) query.append("sort_order", params.sort_order);
     if (params?.page) query.append("page", params.page.toString());
@@ -75,10 +77,11 @@ export const payrollService = {
   },
 
   // 3. Payroll Cycles
-  getCycles: async (params?: { group_id?: number; is_finalized?: boolean; page?: number; page_size?: number }) => {
+  getCycles: async (params?: { group_id?: number; is_finalized?: boolean; branch_id?: number; page?: number; page_size?: number }) => {
     const query = new URLSearchParams();
     if (params?.group_id) query.append("payroll_group_id", params.group_id.toString());
     if (params?.is_finalized !== undefined) query.append("is_finalized", String(params.is_finalized));
+    if (params?.branch_id) query.append("branch_id", params.branch_id.toString());
     if (params?.page) query.append("page", params.page.toString());
     if (params?.page_size) query.append("page_size", params.page_size.toString());
     return apiClient.get<ApiResponse<{ items: PayrollCycle[]; pagination: Record<string, unknown> }>>(

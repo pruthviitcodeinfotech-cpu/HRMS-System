@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
 import {
@@ -65,6 +65,11 @@ export default function AssignPayrollGroupPage() {
   // Pagination State
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
+
+  // Reset page when filter changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [selectedPayrollType]);
 
   // Drawer Modal State
   const [showAssignDrawer, setShowAssignDrawer] = useState(false);

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
 import {
@@ -35,6 +35,11 @@ export default function PayrollGroupManagementPage() {
   // Pagination State
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
+
+  // Reset page when search query changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery]);
 
   // Action Menu Popover State
   const [activeActionId, setActiveActionId] = useState<number | null>(null);

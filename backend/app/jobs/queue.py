@@ -117,7 +117,7 @@ async def enqueue(job_name: JobName | str, **kwargs: Any) -> str:
     """
     import json
     import datetime
-    name = str(job_name)
+    name = job_name.value if hasattr(job_name, "value") else str(job_name)
     pool = await get_queue_pool()
     try:
         job = await pool.enqueue_job(name, **kwargs)

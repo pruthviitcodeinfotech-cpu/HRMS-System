@@ -41,6 +41,17 @@ export const useEmployees = (params: EmployeeListParams) => {
   });
 };
 
+export const useEmployee = (id: number, enabled = true) => {
+  return useQuery({
+    queryKey: [...employeeKeys.all, "detail", id] as const,
+    queryFn: async () => {
+      const response = await employeeService.getEmployee(id);
+      return response.data;
+    },
+    enabled: enabled && Boolean(id) && !isNaN(id),
+  });
+};
+
 /** Org-wide active-employee total for the page heading (1-row page, count only). */
 export const useActiveEmployeeCount = () => {
   const { selectedBranchId } = useBranchContext();

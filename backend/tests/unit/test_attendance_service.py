@@ -17,7 +17,7 @@ from app.modules.attendance.service import AttendanceService
 
 _ORG_ID = 10
 _USER_ID = 99
-_NOW = datetime.datetime(2026, 7, 10, 10, 0, 0, tzinfo=datetime.UTC)
+_NOW = datetime.datetime(2026, 7, 10, 10, 0, 0, tzinfo=datetime.timezone.utc)
 
 
 def _make_service() -> AttendanceService:

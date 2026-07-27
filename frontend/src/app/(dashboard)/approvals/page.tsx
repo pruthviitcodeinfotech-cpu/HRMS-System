@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { toast } from "sonner";
 import { ProtectedRoute } from "@/features/auth";
 import { useEmployees, EmployeeSummary } from "@/features/employees";
@@ -29,6 +29,11 @@ export default function ApprovalsPage() {
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [pageSize, setPageSize] = useState<number>(10);
+
+  // Reset page when tab or type filter changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [activeTab, typeFilter, searchQuery]);
 
   // Drawer state
   const [selectedDrawerRequest, setSelectedDrawerRequest] = useState<ApprovalRequest | null>(null);
@@ -302,7 +307,7 @@ export default function ApprovalsPage() {
   };
 
   return (
-    <ProtectedRoute requiredPermission={{ feature: "approvals", action: "read" }}>
+    <ProtectedRoute requiredPermission={{ feature: "approval", action: "read" }}>
       <div className="space-y-6 p-6 w-full">
         {/* Page Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-slate-200 dark:border-slate-800">

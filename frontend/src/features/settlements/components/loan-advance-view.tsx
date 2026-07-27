@@ -58,6 +58,11 @@ export const LoanAdvanceView: React.FC = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
 
+  // Reset page when filter or search changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [statusFilter, searchQuery]);
+
   // Active Row 3-Dots Action Popover ID
   const [actionMenuOpenId, setActionMenuOpenId] = useState<number | null>(null);
 

@@ -14,7 +14,7 @@ from app.core.security.permissions import build_effective_permissions
 from app.modules.dashboard.dependencies import get_dashboard_service
 from app.modules.dashboard.service import DashboardService
 
-_NOW = datetime.datetime(2026, 7, 10, 10, 0, 0, tzinfo=datetime.UTC)
+_NOW = datetime.datetime(2026, 7, 10, 10, 0, 0, tzinfo=datetime.timezone.utc)
 
 
 def _principal(

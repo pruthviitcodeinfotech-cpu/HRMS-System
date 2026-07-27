@@ -56,6 +56,11 @@ export default function ShiftsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const debouncedSearch = useDebouncedValue(searchQuery, 400);
 
+  // Reset page when search changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [debouncedSearch]);
+
   // View modes
   const [isAdvancedMode, setIsAdvancedMode] = useState(false);
   const [showSwitchModal, setShowSwitchModal] = useState(false);

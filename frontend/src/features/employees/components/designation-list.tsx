@@ -125,6 +125,11 @@ export function DesignationList() {
   const totalRecords = paginationMeta?.total_records ?? 0;
   const totalPages = paginationMeta?.total_pages ?? 1;
 
+  // Reset page when search or status filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [debouncedSearch, selectedStatuses]);
+
   // Handle click outside to close dropdowns/popovers
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {

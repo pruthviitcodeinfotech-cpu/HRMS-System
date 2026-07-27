@@ -228,7 +228,7 @@ export default function ShiftAssignmentsPage() {
   }, [shiftsData, selectedShiftId]);
 
   return (
-    <ProtectedRoute requiredPermission={{ feature: "shift_assignment", action: "create" }}>
+    <ProtectedRoute requiredPermission={{ feature: "shift_assignment", action: "read" }}>
       <div className="p-6 space-y-6 bg-slate-50/40 min-h-screen">
 
         {/* Page Header */}

@@ -5,7 +5,7 @@ import { DesignationList } from "@/features/employees/components/designation-lis
 
 export default function DesignationsPage() {
   return (
-    <ProtectedRoute requiredPermission={{ feature: "employee", action: "read" }}>
+    <ProtectedRoute requiredPermission={{ feature: "designation", action: "read" }}>
       <DesignationList />
     </ProtectedRoute>
   );

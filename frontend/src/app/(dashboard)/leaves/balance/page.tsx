@@ -36,97 +36,6 @@ const saveBalances = (data: Record<string, Record<string, number | "Not Assigned
   }
 };
 
-const LEAVE_BALANCE_EMPLOYEES_DATA: LeaveBalanceEmployee[] = [
-  {
-    id: "1",
-    employeeId: "58",
-    name: "Savan Ramani",
-    department: "Marketing",
-    designation: "marketing",
-    leaveBalances: { "Comp Off": "Not Assigned" },
-  },
-  {
-    id: "2",
-    employeeId: "57",
-    name: "Tulsi Baledhiya",
-    department: "Marketing",
-    designation: "Graphic Designer",
-    leaveBalances: { "Comp Off": "Not Assigned" },
-  },
-  {
-    id: "3",
-    employeeId: "56",
-    name: "Hetal Gohil",
-    department: "Marketing",
-    designation: "marketing",
-    leaveBalances: { "Comp Off": "Not Assigned" },
-  },
-  {
-    id: "4",
-    employeeId: "55",
-    name: "Mansi Boghra",
-    department: "Developer",
-    designation: "Python",
-    leaveBalances: { "Comp Off": "Not Assigned" },
-  },
-  {
-    id: "5",
-    employeeId: "54",
-    name: "Divyesh Pipaliya",
-    department: "Marketing",
-    designation: "marketing",
-    leaveBalances: { "Comp Off": "Not Assigned" },
-  },
-  {
-    id: "6",
-    employeeId: "53",
-    name: "Pratik Raval",
-    department: "Marketing",
-    designation: "marketing",
-    leaveBalances: { "Comp Off": "Not Assigned" },
-  },
-  {
-    id: "7",
-    employeeId: "52",
-    name: "Krishna Chodvadiya",
-    department: "BDM",
-    designation: "BDM",
-    leaveBalances: { "Comp Off": "Not Assigned" },
-  },
-  {
-    id: "8",
-    employeeId: "51",
-    name: "Kunal Kikani",
-    department: "video editing",
-    designation: "video editing",
-    leaveBalances: { "Comp Off": "Not Assigned" },
-  },
-  {
-    id: "9",
-    employeeId: "50",
-    name: "Vivek Rathod",
-    department: "Graphic Designer",
-    designation: "Graphic Designer",
-    leaveBalances: { "Comp Off": "Not Assigned" },
-  },
-  {
-    id: "10",
-    employeeId: "49",
-    name: "Rahi Patel",
-    department: "video editing",
-    designation: "video editing",
-    leaveBalances: { "Comp Off": "Not Assigned" },
-  },
-  ...Array.from({ length: 48 }).map((_, idx) => ({
-    id: String(idx + 11),
-    employeeId: String(48 - idx),
-    name: `Employee ${idx + 11}`,
-    department: idx % 2 === 0 ? "Engineering" : "Marketing",
-    designation: idx % 2 === 0 ? "Software Engineer" : "Executive",
-    leaveBalances: { "Comp Off": (idx % 4 === 0 ? 2 : "Not Assigned") as number | "Not Assigned" },
-  })),
-];
-
 const getSavedAssignments = (): Record<string, Record<string, boolean>> => {
   if (typeof window === "undefined") return {};
   try {
@@ -149,32 +58,7 @@ const saveAssignments = (data: Record<string, Record<string, boolean>>) => {
 export default function LeaveBalancePage() {
   const router = useRouter();
 
-  // Initialize state with localStorage persistence + mock fallback
-  const [employees, setEmployees] = useState<LeaveBalanceEmployee[]>(() => {
-    const savedMap = getSavedBalances();
-    const savedAssignments = getSavedAssignments();
-    return LEAVE_BALANCE_EMPLOYEES_DATA.map((emp) => {
-      const savedForEmp = savedMap[emp.id] || savedMap[emp.employeeId] || {};
-      const assignmentsForEmp = savedAssignments[emp.id] || savedAssignments[emp.employeeId] || {};
-      
-      const mergedBalances: Record<string, number | "Not Assigned"> = { ...emp.leaveBalances };
-      Object.keys(assignmentsForEmp).forEach((lt) => {
-        if (assignmentsForEmp[lt] && (savedForEmp[lt] === undefined || savedForEmp[lt] === "Not Assigned")) {
-          mergedBalances[lt] = 0;
-        } else if (!assignmentsForEmp[lt] && savedMap[emp.id]?.[lt] === undefined) {
-          mergedBalances[lt] = "Not Assigned";
-        }
-      });
-
-      return {
-        ...emp,
-        leaveBalances: {
-          ...mergedBalances,
-          ...savedForEmp,
-        },
-      };
-    });
-  });
+  const [employees, setEmployees] = useState<LeaveBalanceEmployee[]>([]);
 
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [isBulkAdjustOpen, setIsBulkAdjustOpen] = useState<boolean>(false);
@@ -238,27 +122,7 @@ export default function LeaveBalancePage() {
       });
       setEmployees(liveRows);
     } else {
-      setEmployees((prev) =>
-        prev.map((emp) => {
-          const savedForEmp = savedMap[emp.id] || savedMap[emp.employeeId] || {};
-          const assignmentsForEmp = savedAssignments[emp.id] || savedAssignments[emp.employeeId] || {};
-          const mergedAssignmentsMap: Record<string, number | "Not Assigned"> = {};
-          Object.keys(assignmentsForEmp).forEach((lt) => {
-            if (assignmentsForEmp[lt] && savedForEmp[lt] === undefined) {
-              mergedAssignmentsMap[lt] = 0;
-            }
-          });
-
-          return {
-            ...emp,
-            leaveBalances: {
-              ...mergedAssignmentsMap,
-              ...emp.leaveBalances,
-              ...savedForEmp,
-            },
-          };
-        })
-      );
+      setEmployees([]);
     }
   }, [employeeData, balancesResponse]);
 

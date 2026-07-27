@@ -273,3 +273,25 @@ export interface BranchUpdatePayload {
   allowed_radius_meters?: number | null;
 }
 
+export interface EmployeeDetailSchema extends EmployeeSummary {
+  employee_uid?: string | null;
+  address?: string | null;
+  door_lock_permission?: boolean;
+  pf_account_number?: string | null;
+  uan_number?: string | null;
+  esic_ip_number?: string | null;
+  date_of_birth?: string | null;
+  date_of_leaving?: string | null;
+  is_deleted?: boolean;
+  created_by?: number | null;
+  updated_at?: string;
+  branch?: BranchOption | null;
+  department?: DepartmentOption | null;
+  designation?: DesignationOption | null;
+  salary?: {
+    salary_type?: string | null;
+    monthly_salary?: number | null;
+    payroll_group_id?: number | null;
+  } | null;
+}
+

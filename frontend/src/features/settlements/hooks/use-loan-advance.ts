@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { loanAdvanceService } from "../services/loan-advance";
 import {
   LoanAdvanceCreatePayload,
@@ -34,6 +34,7 @@ export const useLoansAdvances = (params: LoanAdvanceListParams = {}) => {
       const res = await loanAdvanceService.getLoansAdvances(effectiveParams);
       return res.data;
     },
+    placeholderData: keepPreviousData,
     staleTime: 1000 * 30, // 30 seconds
   });
 };
@@ -62,6 +63,7 @@ export const useLoanAdvanceLogs = (params: LoanAdvanceLogsParams = {}, enabled =
       const res = await loanAdvanceService.getLoanAdvanceLogs(effectiveParams);
       return res.data;
     },
+    placeholderData: keepPreviousData,
     enabled,
   });
 };

@@ -5,7 +5,7 @@ import { LoanArrearsLogView } from "@/features/settlements/components/loan-arrea
 
 export default function LoanArrearsLogPage() {
   return (
-    <ProtectedRoute requiredPermission={{ feature: "settlements", action: "read" }}>
+    <ProtectedRoute requiredPermission={{ feature: "settlement", action: "read" }}>
       <LoanArrearsLogView />
     </ProtectedRoute>
   );

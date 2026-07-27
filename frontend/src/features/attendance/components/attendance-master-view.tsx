@@ -95,6 +95,11 @@ export const AttendanceMasterView: React.FC = () => {
     }
   }, [isError, error]);
 
+  // Reset page to 1 when filter parameters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [filter]);
+
   // Map live backend items to UI attendance records
   const rawRecords: AttendanceRecord[] = useMemo(() => {
     if (!data?.items) return [];

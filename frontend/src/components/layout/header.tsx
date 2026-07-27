@@ -4,9 +4,10 @@ import { useState, useRef, useEffect } from "react";
 import Link from "next/link";
 import { useSidebarStore } from "@/lib/stores/sidebar-store";
 import { useThemeStore } from "@/lib/stores/theme-store";
-import { Menu, Bell, ChevronDown, User, ShieldCheck, Sun, Moon, LogOut, Building2, Check } from "lucide-react";
+import { Menu, ChevronDown, User, ShieldCheck, Sun, Moon, LogOut, Building2, Check } from "lucide-react";
 import { useAuth } from "@/features/auth/hooks";
 import { useBranchContext } from "@/context/branch-context";
+import { NotificationDropdown } from "@/features/notifications/components/notification-dropdown";
 
 export const Header = () => {
   const { toggle } = useSidebarStore();
@@ -132,14 +133,8 @@ export const Header = () => {
           )}
         </button>
 
-        {/* Notifications Bell */}
-        <button
-          className="p-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-100 transition-colors cursor-pointer relative"
-          aria-label="Notifications"
-        >
-          <Bell className="h-5 w-5" />
-          <span className="absolute top-1.5 right-1.5 h-2 w-2 bg-rose-500 rounded-full ring-2 ring-white" />
-        </button>
+        {/* Notifications Bell Dropdown */}
+        <NotificationDropdown />
 
         {/* Divider */}
         <div className="h-6 w-px bg-border" />

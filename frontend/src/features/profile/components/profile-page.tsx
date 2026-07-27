@@ -20,6 +20,7 @@ import {
   KeyRound,
   Eye,
   EyeOff,
+  Camera,
   User as UserIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -27,7 +28,7 @@ import { Input } from "@/components/ui/input";
 import { usePermission } from "@/features/auth/hooks";
 import { useSettings } from "@/features/settings";
 import { ChangePasswordDialog } from "./change-password-dialog";
-import { useProfile, useUpdateProfile } from "../hooks/use-profile";
+import { useProfile, useUpdateProfile, useUploadProfilePhoto } from "../hooks/use-profile";
 
 type TabId = "user" | "organization" | "roles";
 
@@ -96,6 +97,7 @@ function MaskedFieldCard({
 export function ProfilePage() {
   const { data: profile, isLoading, isError, refetch } = useProfile();
   const updateProfileMutation = useUpdateProfile();
+  const uploadPhotoMutation = useUploadProfilePhoto();
   const canReadSettings = usePermission("settings", "read");
   const { data: orgSettings } = useSettings({ enabled: canReadSettings });
 
@@ -104,6 +106,13 @@ export function ProfilePage() {
   const [isChangePasswordOpen, setIsChangePasswordOpen] = useState(false);
   const [mobileCountryCode, setMobileCountryCode] = useState("+91");
   const [mobileNumber, setMobileNumber] = useState("");
+
+  const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      uploadPhotoMutation.mutate(file);
+    }
+  };
 
   const handleEdit = () => {
     if (profile) {
@@ -184,15 +193,49 @@ export function ProfilePage() {
   return (
     <div className="w-full space-y-4">
       {/* Header Banner */}
-      <div className="relative overflow-hidden rounded-xl bg-linear-to-r from-slate-700 to-blue-500 text-white p-6">
-        <h1 className="text-xl font-bold">{org.org_name}</h1>
-        {(branch?.address || branch?.city) && (
-          <p className="text-sm text-white/80 mt-1">
-            {[branch?.address, branch?.city, branch?.state, branch?.country]
-              .filter(Boolean)
-              .join(", ")}
-          </p>
-        )}
+      <div className="relative overflow-hidden rounded-xl bg-linear-to-r from-slate-700 to-blue-500 text-white p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <div className="flex items-center gap-4">
+          <div className="relative group shrink-0">
+            <div className="h-16 w-16 rounded-full bg-white/20 text-white flex items-center justify-center font-bold text-xl overflow-hidden border-2 border-white/40 shadow-inner">
+              {profile.profile_photo_url ? (
+                <img
+                  src={profile.profile_photo_url}
+                  alt={profile.name}
+                  className="h-full w-full object-cover"
+                />
+              ) : (
+                <span>{profile.name.charAt(0).toUpperCase()}</span>
+              )}
+            </div>
+            <label
+              htmlFor="profile-photo-upload"
+              className="absolute bottom-0 right-0 p-1.5 rounded-full bg-blue-600 text-white hover:bg-blue-700 cursor-pointer shadow-md transition-transform group-hover:scale-110"
+              title="Upload profile photo"
+            >
+              <Camera className="h-3.5 w-3.5" />
+              <input
+                id="profile-photo-upload"
+                type="file"
+                accept="image/png,image/jpeg,image/jpg"
+                onChange={handlePhotoChange}
+                className="hidden"
+                disabled={uploadPhotoMutation.isPending}
+              />
+            </label>
+          </div>
+
+          <div>
+            <h1 className="text-xl font-bold">{profile.name}</h1>
+            <p className="text-sm text-white/80">{org.org_name}</p>
+            {(branch?.address || branch?.city) && (
+              <p className="text-xs text-white/70 mt-0.5">
+                {[branch?.address, branch?.city, branch?.state, branch?.country]
+                  .filter(Boolean)
+                  .join(", ")}
+              </p>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Main Card */}

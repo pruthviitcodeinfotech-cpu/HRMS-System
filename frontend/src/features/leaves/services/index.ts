@@ -14,6 +14,7 @@ const buildLeaveTypeQuery = (params: LeaveTypeListParams): string => {
   const query = new URLSearchParams();
   if (params.page) query.append("page", String(params.page));
   if (params.page_size) query.append("page_size", String(params.page_size));
+  if (params.branch_id) query.append("branch_id", String(params.branch_id));
   if (params.search) query.append("search", params.search);
   if (params.is_active !== undefined) query.append("is_active", String(params.is_active));
   if (params.sort_by) query.append("sort_by", params.sort_by);
@@ -127,5 +128,20 @@ export const leaveService = {
     is_assigned?: boolean;
   }): Promise<ApiResponse<Array<{ employee_id: number; leave_type_id: number; is_assigned: boolean; cycle_year: number; allocated_days: number; closing_balance: number }>>> => {
     return apiClient.post("/leaves/assign", data);
+  },
+
+  /** GET /leave-requests — Paginated list of leave requests */
+  getLeaveRequests: async (
+    params: { page?: number; page_size?: number; employee_id?: number; status?: string; branch_id?: number } = {}
+  ): Promise<ApiResponse<{ items: Array<any>; pagination: import("../types").PaginationMeta }>> => {
+    const query = new URLSearchParams();
+    if (params.page) query.append("page", String(params.page));
+    if (params.page_size) query.append("page_size", String(params.page_size));
+    if (params.employee_id) query.append("employee_id", String(params.employee_id));
+    if (params.status) query.append("status", params.status);
+    if (params.branch_id) query.append("branch_id", String(params.branch_id));
+    const queryString = query.toString();
+    const url = queryString ? `/leave-requests?${queryString}` : "/leave-requests";
+    return apiClient.get(url);
   },
 };
