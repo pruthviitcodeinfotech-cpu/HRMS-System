@@ -152,14 +152,16 @@ class ShiftService(BaseService):
     # Shifts — CRUD
     # =====================================================================
     async def create_shift(
-        self, *, org_id: int, actor_id: int, data: ShiftCreateRequest
+        self, *, org_id: int, actor_id: int, data: ShiftCreateRequest, branch_id: int | None = None
     ) -> ShiftDetailSchema:
         """Define a shift and its day timings (409 on a duplicate name in the org)."""
         if await self.shifts.name_exists(org_id, data.shift_name):
             raise ConflictException("Shift name already in use.", code="duplicate_shift_name")
 
+        effective_branch_id = branch_id or getattr(data, "branch_id", None)
         payload = {
             "org_id": org_id,
+            "branch_id": effective_branch_id,
             "shift_name": data.shift_name,
             "shift_type": data.shift_type.value,
             "is_open_shift": data.is_open_shift,
@@ -407,7 +409,13 @@ class ShiftService(BaseService):
     # Shift assignment
     # =====================================================================
     async def assign_shift(
-        self, *, org_id: int, actor_id: int, shift_id: int, data: ShiftAssignRequest
+        self,
+        *,
+        org_id: int,
+        actor_id: int,
+        shift_id: int,
+        data: ShiftAssignRequest,
+        branch_scope: list[int] | None = None,
     ) -> ShiftAssignmentSchema:
         """Assign a shift to an employee, superseding the prior open assignment.
 
@@ -417,7 +425,9 @@ class ShiftService(BaseService):
         the day before the new one begins.
         """
         shift = await self._get_active_shift(org_id, shift_id)
-        employee = await self._get_active_employee(org_id, data.employee_id)
+        employee = await self._get_active_employee(
+            org_id, data.employee_id, branch_scope=branch_scope
+        )
 
         await self._check_attendance_locked(org_id, data.effective_from, data.employee_id)
         if data.effective_to:
@@ -443,9 +453,11 @@ class ShiftService(BaseService):
                 # The open assignment starts on/after the new range — it cannot be
                 # auto-closed, so the ranges would overlap (contract §9 guard).
                 raise AssignmentOverlapException()
+            branch_id = getattr(employee, "master_branch_id", None) or getattr(employee, "branch_id", None) or getattr(shift, "branch_id", None)
             assignment = await self.assignments.create(
                 {
                     "org_id": org_id,
+                    "branch_id": branch_id,
                     "employee_id": data.employee_id,
                     "shift_id": shift_id,
                     "effective_from": data.effective_from,
@@ -507,7 +519,12 @@ class ShiftService(BaseService):
         )
 
     async def bulk_assign_shift(
-        self, *, org_id: int, actor_id: int, data: ShiftAssignmentBulkRequest
+        self,
+        *,
+        org_id: int,
+        actor_id: int,
+        data: ShiftAssignmentBulkRequest,
+        branch_scope: list[int] | None = None,
     ) -> ShiftAssignmentBulkResponse:
         """Assign one shift to many employees with per-item results (contract #15).
 
@@ -520,7 +537,9 @@ class ShiftService(BaseService):
         created = 0
         async with self.transaction():
             for employee_id in dict.fromkeys(data.employee_ids):
-                item = await self._assign_one(org_id, actor_id, shift, employee_id, data)
+                item = await self._assign_one(
+                    org_id, actor_id, shift, employee_id, data, branch_scope=branch_scope
+                )
                 if item.status == "created":
                     created += 1
                 results.append(item)
@@ -545,6 +564,7 @@ class ShiftService(BaseService):
         shift,
         employee_id: int,
         data: ShiftAssignmentBulkRequest,
+        branch_scope: list[int] | None = None,
     ) -> ShiftAssignmentBulkItemResult:
         """Validate + create one bulk-assignment item (never raises; reports a reason)."""
 
@@ -556,6 +576,8 @@ class ShiftService(BaseService):
         employee = await self.employees.get_active_by_id(employee_id, org_id)
         if employee is None:
             return _skip("Employee not found.")
+        if branch_scope is not None and employee.master_branch_id not in branch_scope:
+            return _skip("Employee is outside your branch scope.")
         if employee.date_of_joining is not None and data.effective_from < employee.date_of_joining:
             return _skip("Assignment starts before the employee's joining date.")
         if await self.assignments.exists_on_effective_from(employee_id, data.effective_from):
@@ -569,9 +591,11 @@ class ShiftService(BaseService):
         elif prior is not None:
             return _skip("The assignment period overlaps an existing assignment.")
 
+        branch_id = getattr(employee, "master_branch_id", None) or getattr(employee, "branch_id", None) or getattr(shift, "branch_id", None)
         assignment = await self.assignments.create(
             {
                 "org_id": org_id,
+                "branch_id": branch_id,
                 "employee_id": employee_id,
                 "shift_id": shift.shift_id,
                 "effective_from": data.effective_from,
@@ -1385,11 +1409,18 @@ class ShiftService(BaseService):
             raise NotFoundException("Shift not found.", code="not_found")
         return shift
 
-    async def _get_active_employee(self, org_id: int, employee_id: int):
-        """Cross-module: return the active employee or raise ``not_found`` (404)."""
+    async def _get_active_employee(
+        self, org_id: int, employee_id: int, branch_scope: list[int] | None = None
+    ):
+        """Cross-module: return the active employee or raise ``not_found`` (404) or ``forbidden`` (403)."""
         employee = await self.employees.get_active_by_id(employee_id, org_id)
         if employee is None:
             raise NotFoundException("Employee not found.", code="not_found")
+        if branch_scope is not None and employee.master_branch_id not in branch_scope:
+            from app.core.exceptions.base import AuthorizationException
+            raise AuthorizationException(
+                "Access denied. Employee is outside your branch scope.", code="forbidden"
+            )
         return employee
 
     async def _require_department(self, org_id: int, department_id: int | None) -> None:

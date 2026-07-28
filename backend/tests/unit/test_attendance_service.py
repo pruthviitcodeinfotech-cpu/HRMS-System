@@ -238,3 +238,41 @@ def test_attendance_daily_schema_new_fields() -> None:
     assert schema_orm.break_hours == 0.5
     assert schema_orm.overtime == 0.0
 
+
+@pytest.mark.asyncio
+async def test_recompute_day_metrics_status_present_when_punched_in() -> None:
+    svc = _make_service()
+    svc.punches.get_for_day = AsyncMock(return_value=[
+        SimpleNamespace(
+            is_valid=True,
+            punch_type="in",
+            punch_time=datetime.datetime(2026, 7, 28, 9, 0, 0, tzinfo=datetime.timezone.utc),
+        )
+    ])
+    day = SimpleNamespace(
+        id=1,
+        org_id=_ORG_ID,
+        employee_id=242,
+        attendance_date=datetime.date(2026, 7, 28),
+        expected_start_time=datetime.time(9, 0),
+        expected_end_time=datetime.time(17, 0),
+        source="biometric",
+        status="absent",
+        leave_id=None,
+    )
+    svc.days.update = AsyncMock()
+
+    with pytest.MonkeyPatch.context() as m:
+        from app.modules.shift.schemas import ShiftResolveResponse
+        mock_shift_svc = AsyncMock()
+        mock_shift_svc.resolve_shift = AsyncMock(return_value=SimpleNamespace(is_weekly_off=False))
+        m.setattr("app.modules.attendance.service.ShiftService", lambda session: mock_shift_svc)
+
+        await svc._recompute_day_metrics(_ORG_ID, day)
+
+    svc.days.update.assert_called_once()
+    kwargs = svc.days.update.call_args[0][1]
+    assert kwargs["first_punch_in"] == datetime.datetime(2026, 7, 28, 9, 0, 0, tzinfo=datetime.timezone.utc)
+    assert kwargs["status"] == "present"
+
+

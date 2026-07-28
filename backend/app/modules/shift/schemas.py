@@ -158,6 +158,7 @@ class ShiftCreateRequest(BaseSchema):
 
     shift_name: str = Field(..., min_length=1, max_length=150)
     shift_type: ShiftType = ShiftType.FIXED
+    branch_id: int | None = None
     is_open_shift: bool = False
     is_default: bool = False
     is_uniform_time: bool = True

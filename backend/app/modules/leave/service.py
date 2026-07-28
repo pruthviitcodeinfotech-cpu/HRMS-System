@@ -133,14 +133,22 @@ class LeaveService(BaseService):
     # Leave Type Endpoints
     # =========================================================================
 
-    async def create_leave_type(self, org_id: int, data: dict[str, Any], user_id: int) -> LeaveType:
+    async def create_leave_type(
+        self, org_id: int, data: dict[str, Any], user_id: int, branch_id: int | None = None
+    ) -> LeaveType:
         """Create a new leave type."""
         alias = data.get("alias")
         if alias and await self.leave_types.alias_exists(org_id, alias):
             raise LeaveTypeAliasExistsException()
 
+        effective_branch_id = branch_id or data.get("branch_id")
+        if not effective_branch_id:
+            raise ValidationException("branch_id is required to create a leave type.")
+
         async with self.transaction():
-            leave_type = await self.leave_types.create({**data, "org_id": org_id, "created_by": user_id})
+            leave_type = await self.leave_types.create(
+                {**data, "org_id": org_id, "branch_id": effective_branch_id, "created_by": user_id}
+            )
             await self.audit.record(
                 org_id=org_id,
                 module="leave",
@@ -340,6 +348,7 @@ class LeaveService(BaseService):
             if not balance:
                 balance = await self.balances.create(
                     {
+                        "branch_id": emp.master_branch_id,
                         "employee_id": employee_id,
                         "leave_type_id": leave_type_id,
                         "cycle_year": cycle_year,
@@ -482,6 +491,7 @@ class LeaveService(BaseService):
             if not balance:
                 balance = await self.balances.create(
                     {
+                        "branch_id": emp.master_branch_id,
                         "employee_id": employee_id,
                         "leave_type_id": leave_type_id,
                         "cycle_year": cycle_year,
@@ -630,6 +640,7 @@ class LeaveService(BaseService):
             if not balance:
                 balance = await self.balances.create(
                     {
+                        "branch_id": emp.master_branch_id,
                         "employee_id": employee_id,
                         "leave_type_id": leave_type.id,
                         "cycle_year": cycle_year,
@@ -782,6 +793,7 @@ class LeaveService(BaseService):
                     if not balance:
                         balance = await self.balances.create(
                             {
+                                "branch_id": emp.master_branch_id,
                                 "employee_id": emp_id,
                                 "leave_type_id": lt_id,
                                 "cycle_year": target_year,
@@ -837,6 +849,24 @@ class LeaveService(BaseService):
                                     "created_by": assigned_by,
                                 }
                             )
+                    else:
+                        new_allocated = Decimal("0.00")
+                        new_closing = (
+                            balance.opening_balance
+                            + new_allocated
+                            + balance.carried_forward
+                            + balance.adjusted
+                            - balance.used
+                            - balance.encashed
+                        )
+                        await self.balances.update(
+                            balance,
+                            {
+                                "allocated": new_allocated,
+                                "closing_balance": new_closing,
+                                "updated_by": assigned_by,
+                            },
+                        )
 
                     results.append(
                         {
@@ -844,8 +874,8 @@ class LeaveService(BaseService):
                             "leave_type_id": lt_id,
                             "is_assigned": is_assigned,
                             "cycle_year": target_year,
-                            "allocated_days": balance.allocated if not is_assigned else (days_to_allocate or balance.allocated),
-                            "closing_balance": balance.closing_balance,
+                            "allocated_days": new_allocated,
+                            "closing_balance": new_closing,
                         }
                     )
 
@@ -1152,8 +1182,15 @@ class LeaveService(BaseService):
         return self.paginate(items, page=page, page_size=page_size, total_records=total)
 
     async def get_holiday_group(self, org_id: int, branch_id: int, template_id: int) -> HolidayTemplate:
-        """Get holiday group template details with its items."""
+        """Get holiday group template details with its items (branch-scoped)."""
         template = await self.templates.get_by_id_in_org(org_id, branch_id, template_id)
+        if not template:
+            raise HolidayTemplateNotFoundException()
+        return template
+
+    async def get_holiday_group_by_id(self, org_id: int, template_id: int) -> HolidayTemplate:
+        """Get holiday group by ID scoped to org only. Used when branch_id is not available."""
+        template = await self.templates.get_by_id_in_org_only(org_id, template_id)
         if not template:
             raise HolidayTemplateNotFoundException()
         return template
@@ -1204,10 +1241,12 @@ class LeaveService(BaseService):
     ) -> EmployeeHolidayAssignment:
         """Assign holiday group template mapping to employee."""
         emp = await self._validate_employee(org_id, employee_id)
-        await self.get_holiday_group(org_id, template_id)
+        await self.get_holiday_group_by_id(org_id, template_id)
 
         async with self.transaction():
-            assignment = await self.assignments.upsert_assignment(employee_id, template_id, assigned_by)
+            assignment = await self.assignments.upsert_assignment(
+                employee_id, template_id, assigned_by, branch_id=emp.master_branch_id
+            )
             await self.audit.record(
                 org_id=org_id,
                 module="leave",
@@ -1239,7 +1278,7 @@ class LeaveService(BaseService):
         self, org_id: int, template_id: int, data: dict[str, Any], created_by: int
     ) -> HolidayTemplateItem:
         """Create a holiday item inside a template."""
-        template = await self.get_holiday_group(org_id, template_id)
+        template = await self.get_holiday_group_by_id(org_id, template_id)
 
         async with self.transaction():
             item = await self.items.create({**data, "template_id": template_id, "created_by": created_by})
@@ -1262,7 +1301,7 @@ class LeaveService(BaseService):
         self, org_id: int, template_id: int, item_id: int, data: dict[str, Any], user_id: int
     ) -> HolidayTemplateItem:
         """Update a holiday item details."""
-        await self.get_holiday_group(org_id, template_id)
+        await self.get_holiday_group_by_id(org_id, template_id)
         item = await self.items.get_by_id_in_template(template_id, item_id)
         if not item:
             raise HolidayItemNotFoundException()
@@ -1283,7 +1322,7 @@ class LeaveService(BaseService):
 
     async def delete_holiday(self, org_id: int, template_id: int, item_id: int, user_id: int) -> None:
         """Soft-delete a holiday item from group template."""
-        template = await self.get_holiday_group(org_id, template_id)
+        template = await self.get_holiday_group_by_id(org_id, template_id)
         item = await self.items.get_by_id_in_template(template_id, item_id)
         if not item:
             raise HolidayItemNotFoundException()
@@ -1307,7 +1346,7 @@ class LeaveService(BaseService):
 
     async def list_holidays(self, org_id: int, template_id: int) -> list[HolidayTemplateItem]:
         """List non-deleted holidays in template."""
-        await self.get_holiday_group(org_id, template_id)
+        await self.get_holiday_group_by_id(org_id, template_id)
         return await self.items.list_for_template(template_id)
 
     async def get_employee_holiday_calendar(

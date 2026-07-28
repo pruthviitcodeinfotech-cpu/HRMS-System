@@ -84,7 +84,10 @@ export const employeeService = {
     return apiClient.get<ApiResponse<DepartmentListResponse>>(url);
   },
 
-  createDepartment: async (data: { dept_name: string }): Promise<ApiResponse<DepartmentSchema>> => {
+  createDepartment: async (data: {
+    dept_name: string;
+    branch_id: number;
+  }): Promise<ApiResponse<DepartmentSchema>> => {
     return apiClient.post<ApiResponse<DepartmentSchema>>("/departments", data);
   },
 
@@ -128,6 +131,7 @@ export const employeeService = {
 
   createDesignation: async (data: {
     designation_name: string;
+    branch_id: number;
   }): Promise<ApiResponse<DesignationSchema>> => {
     return apiClient.post<ApiResponse<DesignationSchema>>("/designations", data);
   },

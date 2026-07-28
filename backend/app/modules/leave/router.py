@@ -258,7 +258,7 @@ async def update_leave_settings(
 
 @router.get(
     "/leave-balances",
-    response_model=SuccessResponse[LeaveBalanceListResponse],
+    response_model=SuccessResponse[PaginatedResponse[EmployeeLeaveBalanceSchema]],
     summary="List Leave Balances",
     dependencies=[Depends(require_permission(_LEAVE_BALANCE, A.READ))],
 )

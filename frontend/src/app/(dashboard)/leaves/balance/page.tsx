@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { ProtectedRoute } from "@/features/auth";
 import { useEmployees } from "@/features/employees/hooks";
@@ -13,118 +14,70 @@ import {
   LeaveBulkUpdateDrawer,
   useLeaveTypes,
   useLeaveBalances,
+  leaveKeys,
 } from "@/features/leaves";
-
-const STORAGE_KEY = "hrms_leave_balances";
-
-const getSavedBalances = (): Record<string, Record<string, number | "Not Assigned">> => {
-  if (typeof window === "undefined") return {};
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : {};
-  } catch {
-    return {};
-  }
-};
-
-const saveBalances = (data: Record<string, Record<string, number | "Not Assigned">>) => {
-  if (typeof window === "undefined") return;
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-  } catch (err) {
-    console.error("Failed to save balances", err);
-  }
-};
-
-const getSavedAssignments = (): Record<string, Record<string, boolean>> => {
-  if (typeof window === "undefined") return {};
-  try {
-    const raw = localStorage.getItem("hrms_leave_assignments");
-    return raw ? JSON.parse(raw) : {};
-  } catch {
-    return {};
-  }
-};
-
-const saveAssignments = (data: Record<string, Record<string, boolean>>) => {
-  if (typeof window === "undefined") return;
-  try {
-    localStorage.setItem("hrms_leave_assignments", JSON.stringify(data));
-  } catch (err) {
-    console.error("Failed to save assignments", err);
-  }
-};
 
 export default function LeaveBalancePage() {
   const router = useRouter();
-
-  const [employees, setEmployees] = useState<LeaveBalanceEmployee[]>([]);
+  const queryClient = useQueryClient();
 
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [isBulkAdjustOpen, setIsBulkAdjustOpen] = useState<boolean>(false);
   const [isBulkUpdateOpen, setIsBulkUpdateOpen] = useState<boolean>(false);
 
-  // Fetch real employees and balances from backend
+  // Fetch real data from backend — page_size capped at 200 by FastAPI
   const { data: employeeData, isLoading: isEmployeesLoading } = useEmployees({ page: 1, page_size: 100 });
   const { data: leaveTypesResponse, isLoading: isLeavesLoading } = useLeaveTypes({ page_size: 100 });
-  const { data: balancesResponse } = useLeaveBalances({ page_size: 500 });
+  const { data: balancesResponse } = useLeaveBalances({ page_size: 100 });
 
+  // Leave columns: display names for the table header
   const leaveColumns = useMemo(() => {
-    if (leaveTypesResponse?.items && leaveTypesResponse.items.length > 0) {
-      return leaveTypesResponse.items.map((lt) => lt.name);
-    }
-    return ["Comp Off"];
+    return leaveTypesResponse?.items?.map((lt) => lt.name) ?? [];
   }, [leaveTypesResponse]);
 
-  // Sync live backend employees & saved balances
-  useEffect(() => {
-    const savedMap = getSavedBalances();
-    const savedAssignments = getSavedAssignments();
-    const serverBalances = balancesResponse?.items || [];
+  // Build a map: leaveTypeId -> leaveTypeName for reverse lookup
+  const leaveTypeIdToName = useMemo(() => {
+    const map: Record<number, string> = {};
+    leaveTypesResponse?.items?.forEach((lt) => { map[lt.id] = lt.name; });
+    return map;
+  }, [leaveTypesResponse]);
 
-    if (employeeData?.items && employeeData.items.length > 0) {
-      const liveRows: LeaveBalanceEmployee[] = employeeData.items.map((emp) => {
-        const empIdStr = String(emp.employee_id);
-        const empCodeStr = emp.employee_code || empIdStr;
-        const savedForEmp = savedMap[empIdStr] || savedMap[empCodeStr] || {};
-        const assignmentsForEmp = savedAssignments[empIdStr] || savedAssignments[empCodeStr] || {};
+  // Derive employees declaratively from server state — zero localStorage
+  const employees = useMemo<LeaveBalanceEmployee[]>(() => {
+    if (!employeeData?.items?.length) return [];
 
-        // Merge server balances
-        const empBalances = serverBalances.filter((b) => b.employee_id === emp.employee_id);
-        const serverBalanceMap: Record<string, number | "Not Assigned"> = {};
-        empBalances.forEach((b) => {
-          if (b.leave_type?.name) {
-            serverBalanceMap[b.leave_type.name] = Number(b.closing_balance);
+    const serverBalances = balancesResponse?.items ?? [];
+
+    return employeeData.items.map((emp) => {
+      const empIdStr = String(emp.employee_id);
+
+      // Build balance map keyed by leave type NAME (what the table column uses)
+      // Only include leave types that are actually assigned (allocated > 0)
+      const leaveBalances: Record<string, number | "Not Assigned"> = {};
+
+      serverBalances
+        .filter((b) => b.employee_id === emp.employee_id && Number(b.allocated) > 0)
+        .forEach((b) => {
+          // Prefer leave_type_id → name lookup; fallback to b.leave_type.name
+          const ltName =
+            (b.leave_type_id != null ? leaveTypeIdToName[b.leave_type_id] : null) ??
+            b.leave_type?.name;
+          if (ltName) {
+            leaveBalances[ltName] = Number(b.closing_balance);
           }
         });
 
-        // Initialize assigned leave types to 0 if not explicitly defined
-        const mergedAssignmentsMap: Record<string, number | "Not Assigned"> = {};
-        Object.keys(assignmentsForEmp).forEach((lt) => {
-          if (assignmentsForEmp[lt] && savedForEmp[lt] === undefined) {
-            mergedAssignmentsMap[lt] = 0;
-          }
-        });
-
-        return {
-          id: empIdStr,
-          employeeId: empCodeStr,
-          name: emp.employee_name,
-          department: emp.department_name || "-",
-          designation: emp.designation_name || "-",
-          leaveBalances: {
-            ...mergedAssignmentsMap,
-            ...serverBalanceMap,
-            ...savedForEmp,
-          },
-          employeeSummary: emp,
-        };
-      });
-      setEmployees(liveRows);
-    } else {
-      setEmployees([]);
-    }
-  }, [employeeData, balancesResponse]);
+      return {
+        id: empIdStr,
+        employeeId: emp.employee_code || empIdStr,
+        name: emp.employee_name,
+        department: emp.department_name || "-",
+        designation: emp.designation_name || "-",
+        leaveBalances,
+        employeeSummary: emp,
+      };
+    });
+  }, [employeeData, balancesResponse, leaveTypeIdToName]);
 
   const handleBulkLeaveUpdate = () => {
     if (selectedIds.length === 0) {
@@ -134,46 +87,9 @@ export default function LeaveBalancePage() {
     setIsBulkUpdateOpen(true);
   };
 
-  const handleBulkUpdateSuccess = (leaveType: string, balanceCount: number) => {
-    setEmployees((prev) => {
-      const updated = prev.map((emp) => {
-        if (selectedIds.includes(emp.id) || selectedIds.includes(emp.employeeId)) {
-          return {
-            ...emp,
-            leaveBalances: {
-              ...emp.leaveBalances,
-              [leaveType]: balanceCount,
-            },
-          };
-        }
-        return emp;
-      });
-
-      // Persist leave balances
-      const mapToSave: Record<string, Record<string, number | "Not Assigned">> = {};
-      updated.forEach((e) => {
-        mapToSave[e.id] = e.leaveBalances;
-        mapToSave[e.employeeId] = e.leaveBalances;
-      });
-      saveBalances(mapToSave);
-
-      // Sync leave assignments so Leave Assign page reflects the updated assignment
-      const currentAssignments = getSavedAssignments();
-      updated.forEach((e) => {
-        if (selectedIds.includes(e.id) || selectedIds.includes(e.employeeId)) {
-          const empKey = e.id;
-          const empCodeKey = e.employeeId;
-          const currentEmpAssign = currentAssignments[empKey] || currentAssignments[empCodeKey] || {};
-          const isAssigned = typeof balanceCount === "number" && balanceCount >= 0;
-
-          currentAssignments[empKey] = { ...currentEmpAssign, [leaveType]: isAssigned };
-          currentAssignments[empCodeKey] = { ...currentEmpAssign, [leaveType]: isAssigned };
-        }
-      });
-      saveAssignments(currentAssignments);
-
-      return updated;
-    });
+  const handleBulkUpdateSuccess = (_leaveType: string, _balanceCount: number) => {
+    // Invalidate and refetch so the table always reflects server state
+    queryClient.invalidateQueries({ queryKey: leaveKeys.all });
   };
 
   const handleAssignLeaves = () => {

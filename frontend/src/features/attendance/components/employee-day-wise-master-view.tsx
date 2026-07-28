@@ -350,7 +350,7 @@ export const EmployeeDayWiseMasterView: React.FC = () => {
                 className="bg-transparent border-0 text-sm font-medium text-slate-700 dark:text-slate-200 focus:ring-0 focus:outline-none px-2 py-0.5"
               >
                 <option value="" className="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100">Select Designation</option>
-                {designationOptions.map((des) => (
+                {designationOptions.map((des: { designation_id: number; designation_name: string }) => (
                   <option key={des.designation_id} value={des.designation_id} className="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100">
                     {des.designation_name}
                   </option>

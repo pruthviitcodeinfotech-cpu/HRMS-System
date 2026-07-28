@@ -5,13 +5,18 @@ import { ArrowUpDown, X, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { LeaveAssignEmployee } from "../types";
 
+export interface LeaveTypeColumn {
+  id: number;
+  name: string;
+}
+
 interface LeaveAssignTableProps {
   employees: LeaveAssignEmployee[];
-  leaveTypes: string[];
+  leaveTypes: LeaveTypeColumn[];
   isLoading?: boolean;
   selectedIds?: string[];
   onSelectionChange?: (ids: string[]) => void;
-  onToggleAssignment: (employeeId: string, leaveType: string) => void;
+  onToggleAssignment: (employeeId: string, leaveTypeId: number) => void;
 }
 
 export function LeaveAssignTable({
@@ -164,8 +169,8 @@ export function LeaveAssignTable({
 
               {/* Leave Type Columns */}
               {leaveTypes.map((type) => (
-                <th key={type} className="px-4 py-3 min-w-[100px] text-center font-bold">
-                  {type}
+                <th key={type.id} className="px-4 py-3 min-w-[100px] text-center font-bold">
+                  {type.name}
                 </th>
               ))}
             </tr>
@@ -192,7 +197,7 @@ export function LeaveAssignTable({
                     <div className="h-3.5 w-24 bg-slate-200 dark:bg-slate-800 rounded" />
                   </td>
                   {leaveTypes.map((t) => (
-                    <td key={t} className="px-4 py-3 text-center">
+                    <td key={t.id} className="px-4 py-3 text-center">
                       <div className="h-4 w-4 bg-slate-200 dark:bg-slate-800 rounded mx-auto" />
                     </td>
                   ))}
@@ -236,11 +241,11 @@ export function LeaveAssignTable({
 
                   {/* Leave Assignment Red X / Green Check Icons */}
                   {leaveTypes.map((type) => {
-                    const isAssigned = emp.leaveAssignments[type] ?? false;
+                    const isAssigned = emp.leaveAssignments[String(type.id)] ?? false;
                     return (
-                      <td key={type} className="px-4 py-3 text-center">
+                      <td key={type.id} className="px-4 py-3 text-center">
                         <button
-                          onClick={() => onToggleAssignment(emp.id, type)}
+                          onClick={() => onToggleAssignment(emp.id, type.id)}
                           className="inline-flex items-center justify-center p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
                           title={
                             isAssigned

@@ -695,18 +695,36 @@ export const EmployeeList = () => {
       return;
     }
 
+    // Match branch, department, designation to their database IDs strictly without fallbacks
+    const branchOpt = branchOptions?.find(
+      b => String(b.branch_id) === String(formData.master_branch) ||
+           b.branch_name.toLowerCase() === formData.master_branch.toLowerCase()
+    );
+    const deptOpt = departmentOptions?.find(
+      d => String(d.dept_id) === String(formData.department) ||
+           d.dept_name.toLowerCase() === formData.department.toLowerCase()
+    );
+    const desigOpt = designationOptions?.find(
+      d => String(d.designation_id) === String(formData.designation) ||
+           d.designation_name.toLowerCase() === formData.designation.toLowerCase()
+    );
+
+    if (!branchOpt) {
+      toast.error("Please select a valid Master Branch.");
+      return;
+    }
+    if (!deptOpt) {
+      toast.error("Please select a valid Department.");
+      return;
+    }
+    if (!desigOpt) {
+      toast.error("Please select a valid Designation.");
+      return;
+    }
+
     const loadingToastId = toast.loading("Adding employee...");
     try {
       const { axiosClient } = await import("@/lib/axios-client");
-
-      // Match branch, department, designation to their database IDs
-      const branchOpt = branchOptions?.find(b => b.branch_name.toLowerCase() === formData.master_branch.toLowerCase());
-      const deptOpt = departmentOptions?.find(d => d.dept_name.toLowerCase() === formData.department.toLowerCase());
-      const desigOpt = designationOptions?.find(d => d.designation_name.toLowerCase() === formData.designation.toLowerCase());
-
-      const branchId = branchOpt?.branch_id || branchOptions?.[0]?.branch_id || 1;
-      const deptId = deptOpt?.dept_id || departmentOptions?.[0]?.dept_id || 1;
-      const desigId = desigOpt?.designation_id || designationOptions?.[0]?.designation_id || 1;
 
       const payload = {
         employee_name: formData.name.trim(),
@@ -716,9 +734,9 @@ export const EmployeeList = () => {
         mobile_number: formData.mobile_number.trim(),
         email: formData.email.trim() || null,
         address: formData.address.trim() || null,
-        master_branch_id: branchId,
-        dept_id: deptId,
-        designation_id: desigId,
+        master_branch_id: branchOpt.branch_id,
+        dept_id: deptOpt.dept_id,
+        designation_id: desigOpt.designation_id,
         date_of_joining: formData.date_of_joining || new Date().toISOString().slice(0, 10),
         employee_type: formData.employee_type || "Full Time",
         door_lock_permission: formData.door_lock_permission === "Yes",
@@ -753,18 +771,36 @@ export const EmployeeList = () => {
       return;
     }
 
+    // Match branch, department, designation to their database IDs strictly without fallbacks
+    const branchOpt = branchOptions?.find(
+      b => String(b.branch_id) === String(formData.master_branch) ||
+           b.branch_name.toLowerCase() === formData.master_branch.toLowerCase()
+    );
+    const deptOpt = departmentOptions?.find(
+      d => String(d.dept_id) === String(formData.department) ||
+           d.dept_name.toLowerCase() === formData.department.toLowerCase()
+    );
+    const desigOpt = designationOptions?.find(
+      d => String(d.designation_id) === String(formData.designation) ||
+           d.designation_name.toLowerCase() === formData.designation.toLowerCase()
+    );
+
+    if (!branchOpt) {
+      toast.error("Please select a valid Master Branch.");
+      return;
+    }
+    if (!deptOpt) {
+      toast.error("Please select a valid Department.");
+      return;
+    }
+    if (!desigOpt) {
+      toast.error("Please select a valid Designation.");
+      return;
+    }
+
     const loadingToastId = toast.loading("Saving employee...");
     try {
       const { axiosClient } = await import("@/lib/axios-client");
-
-      // Match branch, department, designation to their database IDs
-      const branchOpt = branchOptions?.find(b => b.branch_name.toLowerCase() === formData.master_branch.toLowerCase());
-      const deptOpt = departmentOptions?.find(d => d.dept_name.toLowerCase() === formData.department.toLowerCase());
-      const desigOpt = designationOptions?.find(d => d.designation_name.toLowerCase() === formData.designation.toLowerCase());
-
-      const branchId = branchOpt?.branch_id || branchOptions?.[0]?.branch_id || 1;
-      const deptId = deptOpt?.dept_id || departmentOptions?.[0]?.dept_id || 1;
-      const desigId = desigOpt?.designation_id || designationOptions?.[0]?.designation_id || 1;
 
       const payload = {
         employee_name: formData.name.trim(),
@@ -774,9 +810,9 @@ export const EmployeeList = () => {
         mobile_number: formData.mobile_number.trim(),
         email: formData.email.trim() || null,
         address: formData.address.trim() || null,
-        master_branch_id: branchId,
-        dept_id: deptId,
-        designation_id: desigId,
+        master_branch_id: branchOpt.branch_id,
+        dept_id: deptOpt.dept_id,
+        designation_id: desigOpt.designation_id,
         date_of_joining: formData.date_of_joining || new Date().toISOString().slice(0, 10),
         employee_type: formData.employee_type || "Full Time",
         door_lock_permission: formData.door_lock_permission === "Yes",
@@ -1835,15 +1871,16 @@ export const EmployeeList = () => {
                   </div>
                   {expandedSections["Basic Details"] && (
                     <div className="px-6 pb-5 space-y-4 animate-in fade-in slide-in-from-top-1 duration-150">
-                      {/* Employee Code * */}
+                      {/* Employee Code */}
                       <div className="space-y-1">
                         <label className="text-xs font-semibold text-foreground/80">
-                          Employee Code <span className="text-red-550 dark:text-red-400">*</span>
+                          Employee Code
                         </label>
                         <Input
-                          required
-                          value={formData.employee_id}
-                          onChange={e => setFormData({ ...formData, employee_id: e.target.value })}
+                          disabled
+                          readOnly
+                          value="Auto Generated"
+                          className="bg-muted text-muted-foreground cursor-not-allowed"
                         />
                       </div>
 
@@ -2426,11 +2463,12 @@ export const EmployeeList = () => {
             <form onSubmit={handleSaveEmployee} className="p-5 space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1">
-                  <label className="text-xs font-semibold text-foreground/80">Employee ID *</label>
+                  <label className="text-xs font-semibold text-foreground/80">Employee Code</label>
                   <Input
-                    required
+                    disabled
+                    readOnly
                     value={formData.employee_id}
-                    onChange={e => setFormData({ ...formData, employee_id: e.target.value })}
+                    className="bg-muted text-muted-foreground cursor-not-allowed"
                   />
                 </div>
                 <div className="space-y-1">
@@ -2445,32 +2483,54 @@ export const EmployeeList = () => {
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1">
-                  <label className="text-xs font-semibold text-foreground/80">Master Branch</label>
-                  <Input
+                  <label className="text-xs font-semibold text-foreground/80">Master Branch *</label>
+                  <select
+                    required
                     value={formData.master_branch}
                     onChange={e => setFormData({ ...formData, master_branch: e.target.value })}
-                  />
+                    className="w-full rounded-md border border-input bg-card px-3 py-2 text-sm text-foreground shadow-sm focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary cursor-pointer"
+                  >
+                    <option value="">Select Master Branch</option>
+                    {branchOptions?.map(b => (
+                      <option key={b.branch_id} value={b.branch_name}>{b.branch_name}</option>
+                    ))}
+                  </select>
                 </div>
                 <div className="space-y-1">
-                  <label className="text-xs font-semibold text-foreground/80">Department</label>
-                  <Input
+                  <label className="text-xs font-semibold text-foreground/80">Department *</label>
+                  <select
+                    required
                     value={formData.department}
                     onChange={e => setFormData({ ...formData, department: e.target.value })}
-                  />
+                    className="w-full rounded-md border border-input bg-card px-3 py-2 text-sm text-foreground shadow-sm focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary cursor-pointer"
+                  >
+                    <option value="">Select Department</option>
+                    {departmentOptions?.map(d => (
+                      <option key={d.dept_id} value={d.dept_name}>{d.dept_name}</option>
+                    ))}
+                  </select>
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1">
-                  <label className="text-xs font-semibold text-foreground/80">Designation</label>
-                  <Input
+                  <label className="text-xs font-semibold text-foreground/80">Designation *</label>
+                  <select
+                    required
                     value={formData.designation}
                     onChange={e => setFormData({ ...formData, designation: e.target.value })}
-                  />
+                    className="w-full rounded-md border border-input bg-card px-3 py-2 text-sm text-foreground shadow-sm focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary cursor-pointer"
+                  >
+                    <option value="">Select Designation</option>
+                    {designationOptions?.map(d => (
+                      <option key={d.designation_id} value={d.designation_name}>{d.designation_name}</option>
+                    ))}
+                  </select>
                 </div>
                 <div className="space-y-1">
                   <label className="text-xs font-semibold text-foreground/80">Date of Joining</label>
                   <Input
+                    type="date"
                     value={formData.date_of_joining}
                     onChange={e => setFormData({ ...formData, date_of_joining: e.target.value })}
                   />

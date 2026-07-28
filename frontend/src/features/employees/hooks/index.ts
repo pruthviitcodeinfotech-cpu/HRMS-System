@@ -79,26 +79,28 @@ export const useBranchOptions = () => {
   });
 };
 
-export const useDepartmentOptions = () => {
+export const useDepartmentOptions = (overrideBranchId?: number) => {
   const { selectedBranchId } = useBranchContext();
+  const effectiveBranchId = overrideBranchId ?? selectedBranchId;
   return useQuery({
-    queryKey: [...employeeKeys.lookup("departments"), selectedBranchId],
+    queryKey: [...employeeKeys.lookup("departments"), effectiveBranchId],
     queryFn: async () => {
       const response = await employeeService.getDepartmentOptions(
-        selectedBranchId ? { branch_id: selectedBranchId } : undefined
+        effectiveBranchId ? { branch_id: effectiveBranchId } : undefined
       );
       return response.data.items;
     },
   });
 };
 
-export const useDesignationOptions = () => {
+export const useDesignationOptions = (overrideBranchId?: number) => {
   const { selectedBranchId } = useBranchContext();
+  const effectiveBranchId = overrideBranchId ?? selectedBranchId;
   return useQuery({
-    queryKey: [...employeeKeys.lookup("designations"), selectedBranchId],
+    queryKey: [...employeeKeys.lookup("designations"), effectiveBranchId],
     queryFn: async () => {
       const response = await employeeService.getDesignationOptions(
-        selectedBranchId ? { branch_id: selectedBranchId } : undefined
+        effectiveBranchId ? { branch_id: effectiveBranchId } : undefined
       );
       return response.data.items;
     },
@@ -133,9 +135,17 @@ export const useDepartments = (params: DepartmentListParams) => {
 
 export const useCreateDepartment = () => {
   const queryClient = useQueryClient();
+  const { selectedBranchId } = useBranchContext();
   return useMutation({
-    mutationFn: async (data: { dept_name: string }) => {
-      const response = await employeeService.createDepartment(data);
+    mutationFn: async (data: { dept_name: string; branch_id?: number }) => {
+      const branchId = data.branch_id || selectedBranchId;
+      if (!branchId) {
+        throw new Error("Branch selection is required to create a department.");
+      }
+      const response = await employeeService.createDepartment({
+        dept_name: data.dept_name,
+        branch_id: branchId,
+      });
       return response.data;
     },
     onSuccess: () => {
@@ -224,9 +234,17 @@ export const useDesignations = (params: DesignationListParams) => {
 
 export const useCreateDesignation = () => {
   const queryClient = useQueryClient();
+  const { selectedBranchId } = useBranchContext();
   return useMutation({
-    mutationFn: async (data: { designation_name: string }) => {
-      const response = await employeeService.createDesignation(data);
+    mutationFn: async (data: { designation_name: string; branch_id?: number }) => {
+      const branchId = data.branch_id || selectedBranchId;
+      if (!branchId) {
+        throw new Error("Branch selection is required to create a designation.");
+      }
+      const response = await employeeService.createDesignation({
+        designation_name: data.designation_name,
+        branch_id: branchId,
+      });
       return response.data;
     },
     onSuccess: () => {

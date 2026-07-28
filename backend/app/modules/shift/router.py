@@ -337,6 +337,14 @@ async def delete_shift_timing(
 # parameterised /shift-assignments/{assignment_id} routes.
 
 
+def _branch_scope(current_user: CurrentUser, branch_id: int | None = None) -> list[int] | None:
+    if branch_id is not None:
+        return [branch_id]
+    if current_user.is_super_admin or not current_user.permissions.branch_ids:
+        return None
+    return list(current_user.permissions.branch_ids)
+
+
 @router.post(
     "/shift-assignments",
     response_model=SuccessResponse[ShiftAssignmentSchema],
@@ -352,7 +360,11 @@ async def create_shift_assignment(
 ) -> dict[str, Any]:
     """Assign a shift to an employee (contract #14; ``shift_id`` in the body)."""
     result = await service.assign_shift(
-        org_id=org_id, actor_id=current_user.user_id, shift_id=payload.shift_id, data=payload
+        org_id=org_id,
+        actor_id=current_user.user_id,
+        shift_id=payload.shift_id,
+        data=payload,
+        branch_scope=_branch_scope(current_user),
     )
     return _ok(result, "Shift assigned.")
 
@@ -371,7 +383,10 @@ async def bulk_assign_shift(
 ) -> dict[str, Any]:
     """Assign one shift to many employees with per-item results (contract #15)."""
     result = await service.bulk_assign_shift(
-        org_id=org_id, actor_id=current_user.user_id, data=payload
+        org_id=org_id,
+        actor_id=current_user.user_id,
+        data=payload,
+        branch_scope=_branch_scope(current_user),
     )
     return _ok(result, "Bulk assignment processed.")
 

@@ -254,7 +254,10 @@ class EmployeeLeaveBalanceRepository(BaseRepository[EmployeeLeaveBalance]):
         if branch_id is not None or dept_id is not None:
             stmt = stmt.join(Employee, Employee.employee_id == EmployeeLeaveBalance.employee_id)
             if branch_id is not None:
+                # Filter both the employee's branch AND the leave type's branch so that
+                # cross-branch leave type records don't appear in the wrong branch view.
                 conds.append(Employee.master_branch_id == branch_id)
+                conds.append(LeaveType.branch_id == branch_id)
             if dept_id is not None:
                 conds.append(Employee.dept_id == dept_id)
         stmt = stmt.where(and_(*conds)).options(selectinload(EmployeeLeaveBalance.leave_type))
@@ -283,6 +286,7 @@ class EmployeeLeaveBalanceRepository(BaseRepository[EmployeeLeaveBalance]):
             stmt = stmt.join(Employee, Employee.employee_id == EmployeeLeaveBalance.employee_id)
             if branch_id is not None:
                 conds.append(Employee.master_branch_id == branch_id)
+                conds.append(LeaveType.branch_id == branch_id)
             if dept_id is not None:
                 conds.append(Employee.dept_id == dept_id)
         stmt = stmt.where(and_(*conds))
@@ -545,6 +549,20 @@ class HolidayTemplateRepository(BaseRepository[HolidayTemplate]):
         )
         return (await self.session.execute(stmt.limit(1))).scalar_one_or_none()
 
+    async def get_by_id_in_org_only(self, org_id: int, template_id: int) -> HolidayTemplate | None:
+        """Return a template by ID scoped to org only (branch-agnostic). Used when branch_id is
+        not available in the calling context, e.g. assignment and holiday-item CRUD."""
+        stmt = (
+            select(HolidayTemplate)
+            .where(
+                HolidayTemplate.id == template_id,
+                HolidayTemplate.org_id == org_id,
+                HolidayTemplate.is_deleted.is_(False),
+            )
+            .options(selectinload(HolidayTemplate.items))
+        )
+        return (await self.session.execute(stmt.limit(1))).scalar_one_or_none()
+
     @staticmethod
     def _search_conditions(org_id: int, branch_id: int) -> list:
         return [
@@ -621,30 +639,31 @@ class EmployeeHolidayAssignmentRepository(BaseRepository[EmployeeHolidayAssignme
         return list((await self.session.execute(stmt)).scalars().all())
 
     async def upsert_assignment(
-        self, employee_id: int, template_id: int, assigned_by: int
+        self, employee_id: int, template_id: int, assigned_by: int, *, branch_id: int | None = None
     ) -> EmployeeHolidayAssignment:
         """Upsert assignment, archiving the current template as previous_template_id."""
         existing = await self.get_by_employee_id(employee_id)
         if existing:
             prev_id = existing.template_id
-            await self.update(
-                existing,
-                {
-                    "template_id": template_id,
-                    "previous_template_id": prev_id,
-                    "assigned_by": assigned_by,
-                    "assigned_at": func.now(),
-                },
-            )
+            update_data: dict = {
+                "template_id": template_id,
+                "previous_template_id": prev_id,
+                "assigned_by": assigned_by,
+                "assigned_at": func.now(),
+            }
+            if branch_id is not None:
+                update_data["branch_id"] = branch_id
+            await self.update(existing, update_data)
         else:
-            await self.create(
-                {
-                    "employee_id": employee_id,
-                    "template_id": template_id,
-                    "previous_template_id": None,
-                    "assigned_by": assigned_by,
-                }
-            )
+            create_data: dict = {
+                "employee_id": employee_id,
+                "template_id": template_id,
+                "previous_template_id": None,
+                "assigned_by": assigned_by,
+            }
+            if branch_id is not None:
+                create_data["branch_id"] = branch_id
+            await self.create(create_data)
         return await self.get_by_employee_id(employee_id)
 
 

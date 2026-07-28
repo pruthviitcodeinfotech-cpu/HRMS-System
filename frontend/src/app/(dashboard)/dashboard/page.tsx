@@ -48,12 +48,14 @@ const formatPunchTime = (dateStr: string | null) => {
   if (!dateStr) return "-";
   try {
     const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return dateStr;
     let hours = d.getHours();
     const minutes = String(d.getMinutes()).padStart(2, '0');
+    const seconds = String(d.getSeconds()).padStart(2, '0');
     const ampm = hours >= 12 ? 'PM' : 'AM';
     hours = hours % 12;
     hours = hours ? hours : 12;
-    return `${String(hours).padStart(2, '0')}:${minutes} ${ampm}`;
+    return `${String(hours).padStart(2, '0')}:${minutes}:${seconds} ${ampm}`;
   } catch {
     return dateStr;
   }
@@ -217,6 +219,22 @@ export default function DashboardPage() {
   const [viewDate, setViewDate] = useState<Date>(new Date(2026, 6, 15)); // July 15, 2026
   const calendarRef = useRef<HTMLDivElement>(null);
 
+  // Restore saved targetDate from localStorage on mount
+  useEffect(() => {
+    try {
+      const savedDate = localStorage.getItem("dashboard_target_date");
+      if (savedDate && /^\d{4}-\d{2}-\d{2}$/.test(savedDate)) {
+        setTargetDate(savedDate);
+        const [y, m, d] = savedDate.split("-").map(Number);
+        if (!isNaN(y) && !isNaN(m) && !isNaN(d)) {
+          setViewDate(new Date(y, m - 1, d));
+        }
+      }
+    } catch (err) {
+      console.error("Failed to restore dashboard_target_date from localStorage", err);
+    }
+  }, []);
+
   // Close calendar popover on click outside
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -239,7 +257,13 @@ export default function DashboardPage() {
   };
 
   const handleSelectDay = (date: Date) => {
-    setTargetDate(formatDateStr(date));
+    const formattedDate = formatDateStr(date);
+    setTargetDate(formattedDate);
+    try {
+      localStorage.setItem("dashboard_target_date", formattedDate);
+    } catch (err) {
+      console.error("Failed to save dashboard_target_date to localStorage", err);
+    }
     setIsCalendarOpen(false);
   };
 

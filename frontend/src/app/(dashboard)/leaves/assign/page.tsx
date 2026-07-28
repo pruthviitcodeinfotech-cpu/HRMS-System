@@ -2,6 +2,7 @@
 
 import { useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { ProtectedRoute } from "@/features/auth";
@@ -13,28 +14,29 @@ import {
   useLeaveTypes,
   useLeaveBalances,
   leaveService,
+  leaveKeys,
 } from "@/features/leaves";
 
 export default function LeaveAssignPage() {
   const router = useRouter();
+  const queryClient = useQueryClient();
 
-  const [localAssignments, setLocalAssignments] = useState<Record<string, Record<string, boolean>>>({});
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [isBulkAssignOpen, setIsBulkAssignOpen] = useState<boolean>(false);
 
   // Fetch real employees and balances from backend
   const { data: employeeData, isLoading: isEmployeesLoading } = useEmployees({ page: 1, page_size: 100 });
   const { data: leaveTypesResponse, isLoading: isLeavesLoading } = useLeaveTypes({ page_size: 100 });
-  const { data: balancesResponse, refetch: refetchBalances } = useLeaveBalances({ page_size: 500 });
+  const { data: balancesResponse, isLoading: isBalancesLoading, refetch: refetchBalances } = useLeaveBalances({ page_size: 100 });
 
-  const leaveTypes = useMemo(() => {
+  const leaveTypeColumns = useMemo(() => {
     if (leaveTypesResponse?.items && leaveTypesResponse.items.length > 0) {
-      return leaveTypesResponse.items.map((lt) => lt.name);
+      return leaveTypesResponse.items.map((lt) => ({ id: lt.id, name: lt.name }));
     }
     return [];
   }, [leaveTypesResponse]);
 
-  // Compute live employees and backend leave assignments declaratively
+  // Compute live employees and backend leave assignments declaratively directly from database state
   const employees: LeaveAssignEmployee[] = useMemo(() => {
     const serverBalances = balancesResponse?.items || [];
     if (!employeeData?.items || employeeData.items.length === 0) return [];
@@ -43,16 +45,17 @@ export default function LeaveAssignPage() {
       const empIdStr = String(emp.employee_id);
       const empCodeStr = emp.employee_code || empIdStr;
 
-      // Extract server balances
-      const empBalances = serverBalances.filter((b) => b.employee_id === emp.employee_id);
+      // Extract server balances matching employee ID
+      const empBalances = serverBalances.filter(
+        (b) => String(b.employee_id) === String(emp.employee_id)
+      );
       const serverAssignMap: Record<string, boolean> = {};
-      empBalances.forEach((b) => {
-        if (b.leave_type?.name) {
-          serverAssignMap[b.leave_type.name] = true;
-        }
-      });
 
-      const overrideMap = localAssignments[empIdStr] || localAssignments[empCodeStr] || {};
+      empBalances.forEach((b) => {
+        const key = String(b.leave_type_id);
+        const isAssigned = Number(b.allocated || 0) > 0 || Number(b.closing_balance || 0) > 0;
+        serverAssignMap[key] = isAssigned;
+      });
 
       return {
         id: empIdStr,
@@ -60,40 +63,34 @@ export default function LeaveAssignPage() {
         name: emp.employee_name,
         department: emp.department_name || "-",
         designation: emp.designation_name || "-",
-        leaveAssignments: {
-          ...serverAssignMap,
-          ...overrideMap,
-        },
+        leaveAssignments: serverAssignMap,
         employeeSummary: emp,
       };
     });
-  }, [employeeData, balancesResponse, localAssignments]);
+  }, [employeeData, balancesResponse]);
 
-  const handleToggleAssignment = async (employeeIdStr: string, leaveTypeName: string) => {
+  const handleToggleAssignment = async (employeeIdStr: string, leaveTypeId: number) => {
     const empIdNum = Number(employeeIdStr);
-    const ltObj = leaveTypesResponse?.items.find((lt) => lt.name === leaveTypeName);
-    if (!ltObj || !empIdNum) return;
+    if (!leaveTypeId || !empIdNum) return;
 
     const empObj = employees.find((e) => e.id === employeeIdStr || e.employeeId === employeeIdStr);
-    const currentVal = empObj?.leaveAssignments[leaveTypeName] ?? false;
+    const ltObj = leaveTypesResponse?.items.find((lt) => lt.id === leaveTypeId);
+    const currentVal = empObj?.leaveAssignments[String(leaveTypeId)] ?? false;
     const nextVal = !currentVal;
 
     try {
       await leaveService.assignLeaveTypes({
         employee_ids: [empIdNum],
-        leave_type_ids: [ltObj.id],
+        leave_type_ids: [leaveTypeId],
         is_assigned: nextVal,
       });
 
-      setLocalAssignments((prev) => ({
-        ...prev,
-        [employeeIdStr]: {
-          ...(prev[employeeIdStr] || {}),
-          [leaveTypeName]: nextVal,
-        },
-      }));
-      refetchBalances();
-      toast.success(`${leaveTypeName} leave ${nextVal ? "assigned to" : "unassigned from"} ${empObj?.name || "employee"}`);
+      await queryClient.invalidateQueries({ queryKey: leaveKeys.all });
+      await queryClient.refetchQueries({ queryKey: leaveKeys.all, type: "active" });
+      await refetchBalances();
+      toast.success(
+        `${ltObj?.name || "Leave"} ${nextVal ? "assigned to" : "unassigned from"} ${empObj?.name || "employee"}`
+      );
     } catch (err: unknown) {
       const message =
         err && typeof err === "object" && "message" in err
@@ -111,32 +108,24 @@ export default function LeaveAssignPage() {
     setIsBulkAssignOpen(true);
   };
 
-  const handleBulkAssignSuccess = async (leaveTypeName: string, isAssigned: boolean) => {
-    const ltObj = leaveTypesResponse?.items.find((lt) => lt.name === leaveTypeName);
-    if (!ltObj || selectedIds.length === 0) return;
+  const handleBulkAssignSuccess = async (leaveTypeId: number, isAssigned: boolean) => {
+    if (!leaveTypeId || selectedIds.length === 0) return;
 
+    const ltObj = leaveTypesResponse?.items.find((lt) => lt.id === leaveTypeId);
     const targetEmpIds = selectedIds.map((id) => Number(id)).filter((n) => !isNaN(n) && n > 0);
     if (targetEmpIds.length === 0) return;
 
     try {
       await leaveService.assignLeaveTypes({
         employee_ids: targetEmpIds,
-        leave_type_ids: [ltObj.id],
+        leave_type_ids: [leaveTypeId],
         is_assigned: isAssigned,
       });
 
-      setLocalAssignments((prev) => {
-        const nextMap = { ...prev };
-        selectedIds.forEach((id) => {
-          nextMap[id] = {
-            ...(nextMap[id] || {}),
-            [leaveTypeName]: isAssigned,
-          };
-        });
-        return nextMap;
-      });
-      refetchBalances();
-      toast.success(`${leaveTypeName} leave ${isAssigned ? "assigned to" : "unassigned from"} ${targetEmpIds.length} employees`);
+      await queryClient.invalidateQueries({ queryKey: leaveKeys.all });
+      await queryClient.refetchQueries({ queryKey: leaveKeys.all, type: "active" });
+      await refetchBalances();
+      toast.success(`${ltObj?.name || "Leave"} ${isAssigned ? "assigned to" : "unassigned from"} ${targetEmpIds.length} employees`);
     } catch (err: unknown) {
       const message =
         err && typeof err === "object" && "message" in err
@@ -181,8 +170,8 @@ export default function LeaveAssignPage() {
         {/* Leave Assign Table */}
         <LeaveAssignTable
           employees={employees}
-          leaveTypes={leaveTypes}
-          isLoading={isLeavesLoading || isEmployeesLoading}
+          leaveTypes={leaveTypeColumns}
+          isLoading={isLeavesLoading || isEmployeesLoading || isBalancesLoading}
           selectedIds={selectedIds}
           onSelectionChange={setSelectedIds}
           onToggleAssignment={handleToggleAssignment}
@@ -193,7 +182,7 @@ export default function LeaveAssignPage() {
           isOpen={isBulkAssignOpen}
           onClose={() => setIsBulkAssignOpen(false)}
           selectedCount={selectedIds.length}
-          leaveOptions={leaveTypes}
+          leaveOptions={leaveTypeColumns}
           onSuccess={handleBulkAssignSuccess}
         />
       </div>

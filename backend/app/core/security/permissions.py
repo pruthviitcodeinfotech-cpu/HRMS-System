@@ -199,6 +199,27 @@ def build_effective_permissions(
     """
     features: dict[str, FeaturePermission] = {}
     for row in feature_rows or []:
+        if isinstance(row, str):
+            if row in ("*:*", "all"):
+                continue
+            parts = row.split(":")
+            f_key = parts[0].strip()
+            act = parts[1].strip() if len(parts) > 1 else "read"
+            fp = features.get(f_key) or FeaturePermission(feature_key=f_key)
+            if act in ("*", "create"):
+                fp.can_create = True
+            if act in ("*", "read"):
+                fp.can_read = True
+            if act in ("*", "edit", "update"):
+                fp.can_edit = True
+            if act in ("*", "delete"):
+                fp.can_delete = True
+            features[f_key] = fp
+            continue
+
+        if not isinstance(row, dict):
+            continue
+
         key = str(row.get("feature_key") or row.get("feature") or "").strip()
         if not key:
             continue

@@ -145,7 +145,7 @@ export const useLeaveBalances = (params: import("../types").LeaveBalanceListPara
       const response = await leaveService.getLeaveBalances(effectiveParams);
       return response.data;
     },
-    placeholderData: keepPreviousData,
+    staleTime: 0,
   });
 };
 

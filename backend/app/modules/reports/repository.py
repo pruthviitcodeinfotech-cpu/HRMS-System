@@ -786,13 +786,16 @@ class ReportsRepository(BaseRepository[Employee]):
                 day_rec = attendance_map.get((emp_id, d_str))
                 if day_rec:
                     status = day_rec.status.upper() if day_rec.status else "ABSENT"
+                    from zoneinfo import ZoneInfo
+                    ist_tz = ZoneInfo("Asia/Kolkata")
+
                     first_in = (
-                        day_rec.first_punch_in.strftime("%I:%M %p")
+                        day_rec.first_punch_in.astimezone(ist_tz).strftime("%I:%M:%S %p")
                         if day_rec.first_punch_in
                         else getattr(day_rec, "first_punch", None)
                     )
                     last_out = (
-                        day_rec.last_punch_out.strftime("%I:%M %p")
+                        day_rec.last_punch_out.astimezone(ist_tz).strftime("%I:%M:%S %p")
                         if day_rec.last_punch_out
                         else getattr(day_rec, "last_punch", None)
                     )
@@ -3576,8 +3579,10 @@ class ReportsRepository(BaseRepository[Employee]):
                         st_label = "Absent"
                         absent_cnt += 1.0
 
-                    first_in_str = row_data.first_punch_in.strftime("%I:%M %p") if row_data.first_punch_in else None
-                    last_out_str = row_data.last_punch_out.strftime("%I:%M %p") if row_data.last_punch_out else None
+                    from zoneinfo import ZoneInfo
+                    ist_tz = ZoneInfo("Asia/Kolkata")
+                    first_in_str = row_data.first_punch_in.astimezone(ist_tz).strftime("%I:%M:%S %p") if row_data.first_punch_in else None
+                    last_out_str = row_data.last_punch_out.astimezone(ist_tz).strftime("%I:%M:%S %p") if row_data.last_punch_out else None
 
                     # Calculate total hours (elapsed time between First In and Last Out if both exist)
                     if row_data.first_punch_in and row_data.last_punch_out:

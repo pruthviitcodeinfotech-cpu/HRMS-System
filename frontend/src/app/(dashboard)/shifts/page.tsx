@@ -226,6 +226,9 @@ export default function ShiftsPage() {
   // Build day_timings payload from form state
   const buildDayTimingsPayload = () => {
     if (oneShiftTimeForAllDays) {
+      const isCrossesMidnight = Boolean(
+        formStartTime && formEndTime && formEndTime <= formStartTime
+      );
       return [{
         day_of_week: null,
         start_time: formStartTime || null,
@@ -233,19 +236,22 @@ export default function ShiftsPage() {
         break_start_time: addBreakTime && formBreakStart ? formBreakStart : null,
         break_end_time: addBreakTime && formBreakEnd ? formBreakEnd : null,
         is_working_day: !!(formStartTime && formEndTime),
-        crosses_midnight: false,
+        crosses_midnight: isCrossesMidnight,
       }];
     }
     return WEEKDAYS.map((day, idx) => {
       const info = dayTimings[day] || { check_in: "", check_out: "", is_working: true };
+      const checkIn = info.is_working && info.check_in ? info.check_in : null;
+      const checkOut = info.is_working && info.check_out ? info.check_out : null;
+      const isCrossesMidnight = Boolean(checkIn && checkOut && checkOut <= checkIn);
       return {
         day_of_week: idx,
-        start_time: info.is_working && info.check_in ? info.check_in : null,
-        end_time: info.is_working && info.check_out ? info.check_out : null,
+        start_time: checkIn,
+        end_time: checkOut,
         break_start_time: null,
         break_end_time: null,
         is_working_day: info.is_working,
-        crosses_midnight: false,
+        crosses_midnight: isCrossesMidnight,
       };
     });
   };

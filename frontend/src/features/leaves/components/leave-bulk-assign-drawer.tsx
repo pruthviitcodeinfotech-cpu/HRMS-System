@@ -5,27 +5,32 @@ import { X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 
+export interface LeaveOption {
+  id: number;
+  name: string;
+}
+
 interface LeaveBulkAssignDrawerProps {
   isOpen: boolean;
   onClose: () => void;
   selectedCount: number;
-  leaveOptions?: string[];
-  onSuccess?: (leaveType: string, isAssigned: boolean) => void;
+  leaveOptions?: LeaveOption[];
+  onSuccess?: (leaveTypeId: number, isAssigned: boolean) => void;
 }
 
 export function LeaveBulkAssignDrawer({
   isOpen,
   onClose,
   selectedCount,
-  leaveOptions = ["Comp Off", "Casual Leave", "Sick Leave", "Paid Leave"],
+  leaveOptions = [],
   onSuccess,
 }: LeaveBulkAssignDrawerProps) {
-  const [chooseLeave, setChooseLeave] = useState<string>("");
+  const [chooseLeaveId, setChooseLeaveId] = useState<string>("");
   const [assignmentStatus, setAssignmentStatus] = useState<"assign" | "unassign">("assign");
   const [remarks, setRemarks] = useState<string>("");
 
   const handleClose = useCallback(() => {
-    setChooseLeave("");
+    setChooseLeaveId("");
     setAssignmentStatus("assign");
     setRemarks("");
     onClose();
@@ -45,18 +50,19 @@ export function LeaveBulkAssignDrawer({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!chooseLeave) {
+    if (!chooseLeaveId) {
       toast.error("Please choose a leave type.");
       return;
     }
 
+    const selectedLt = leaveOptions.find((opt) => String(opt.id) === String(chooseLeaveId));
     const isAssigned = assignmentStatus === "assign";
     toast.success(
-      `Leave "${chooseLeave}" ${isAssigned ? "assigned to" : "unassigned from"} ${selectedCount} employee(s) successfully!`
+      `Leave "${selectedLt?.name || chooseLeaveId}" ${isAssigned ? "assigned to" : "unassigned from"} ${selectedCount} employee(s) successfully!`
     );
 
     if (onSuccess) {
-      onSuccess(chooseLeave, isAssigned);
+      onSuccess(Number(chooseLeaveId), isAssigned);
     }
     handleClose();
   };
@@ -104,16 +110,16 @@ export function LeaveBulkAssignDrawer({
                 Choose Leave<span className="text-red-500">*</span>
               </label>
               <select
-                value={chooseLeave}
-                onChange={(e) => setChooseLeave(e.target.value)}
+                value={chooseLeaveId}
+                onChange={(e) => setChooseLeaveId(e.target.value)}
                 className="w-full h-9 px-3 text-xs bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-md focus:outline-none focus:ring-1 focus:ring-[#0B85C9] text-slate-700 dark:text-slate-300 cursor-pointer"
               >
                 <option value="" disabled>
                   Choose Leave
                 </option>
                 {leaveOptions.map((opt) => (
-                  <option key={opt} value={opt}>
-                    {opt}
+                  <option key={opt.id} value={opt.id}>
+                    {opt.name}
                   </option>
                 ))}
               </select>

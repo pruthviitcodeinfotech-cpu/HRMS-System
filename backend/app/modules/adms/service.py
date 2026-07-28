@@ -129,11 +129,11 @@ class ADMSService(BaseService):
             records = parse_attendance_payload(payload)
             _logger.info("adms_cdata_post_parsed_records", serial_number=sn, count=len(records))
 
-            tz_name = device.timezone or "UTC"
+            tz_name = device.timezone or "Asia/Kolkata"
             try:
                 device_tz = ZoneInfo(tz_name)
             except Exception:
-                device_tz = ZoneInfo("UTC")
+                device_tz = ZoneInfo("Asia/Kolkata")
 
             inserted_count = 0
             for record in records:
@@ -151,9 +151,10 @@ class ADMSService(BaseService):
                         _logger.warning("adms_punch_invalid_time_format", serial_number=sn, time_str=time_str)
                         continue
 
-                    # Localize to device's timezone
+                    # Localize to device's timezone and convert to true UTC for storage
                     local_dt = naive_dt.replace(tzinfo=device_tz)
                     punch_date = local_dt.date()
+                    utc_dt = local_dt.astimezone(ZoneInfo("UTC"))
 
                     # 2. Resolve employee in device's organization
                     stmt = select(Employee).where(
@@ -209,7 +210,7 @@ class ADMSService(BaseService):
                     stmt = select(AttendancePunch).where(
                         AttendancePunch.org_id == device.org_id,
                         AttendancePunch.employee_id == employee.employee_id,
-                        AttendancePunch.punch_time == local_dt,
+                        AttendancePunch.punch_time == utc_dt,
                         AttendancePunch.punch_type == punch_type_val,
                     )
                     existing_punch = (await self.session.execute(stmt)).scalar_one_or_none()
@@ -288,7 +289,7 @@ class ADMSService(BaseService):
                             "employee_id": employee.employee_id,
                             "attendance_day_id": day.id,
                             "punch_type": punch_type_val,
-                            "punch_time": local_dt,
+                            "punch_time": utc_dt,
                             "sequence_no": seq_no,
                             "punch_source": PunchSource.BIOMETRIC_DEVICE.value,
                             "device_id": device.id,

@@ -1806,13 +1806,16 @@ class AttendanceService(BaseService):
                     )
                 else:
                     if not valid_punches:
-                        status = AttendanceDayStatus.ABSENT.value
+                        if day.status in (AttendanceDayStatus.HOLIDAY.value, AttendanceDayStatus.NOT_MARKED.value):
+                            status = day.status
+                        else:
+                            status = AttendanceDayStatus.ABSENT.value
                     elif total_working >= 480:
                         status = AttendanceDayStatus.PRESENT.value
                     elif total_working >= 240:
                         status = AttendanceDayStatus.HALF_DAY.value
                     else:
-                        status = AttendanceDayStatus.ABSENT.value
+                        status = AttendanceDayStatus.PRESENT.value
 
         await self.days.update(
             day,

@@ -20,7 +20,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { useBranchContext } from "@/context/branch-context";
-import { useEmployees } from "@/features/employees/hooks";
+import { useDailyPunchReport } from "../hooks/use-attendance";
 
 // ==========================================
 // TYPES & INTERFACES (Strict TypeScript)
@@ -65,10 +65,6 @@ export interface OptionType {
   value: string;
 }
 
-// ==========================================
-// MOCK DATA GENERATOR (50+ Employees)
-// ==========================================
-
 const DEPARTMENTS = [
   "Engineering",
   "Human Resources",
@@ -78,192 +74,14 @@ const DEPARTMENTS = [
   "Customer Support",
 ];
 
-const DESIGNATIONS: Record<string, string[]> = {
-  Engineering: ["Senior Backend Engineer", "Frontend Architect", "QA Automation Lead", "DevOps Engineer"],
-  "Human Resources": ["HR Executive", "Talent Acquisition Manager", "HRBP Lead"],
-  Operations: ["Operations Manager", "Logistics Specialist", "Facility Lead"],
-  Finance: ["Senior Accountant", "Financial Analyst", "Payroll Lead"],
-  "Sales & Marketing": ["Account Executive", "Marketing Lead", "Growth Manager"],
-  "Customer Support": ["Technical Support Specialist", "Customer Success Lead"],
-};
-
-const BRANCHES = ["Main HQ - Mumbai", "Tech Hub - Bengaluru", "North Hub - Delhi", "South Hub - Chennai"];
 const SHIFTS = ["Morning Shift (09:00 - 18:00)", "General Shift (10:00 - 19:00)", "Night Shift (22:00 - 07:00)"];
-
-const FIRST_NAMES = [
-  "Aarav", "Ananya", "Rohan", "Priya", "Vikram", "Neha", "Rahul", "Sneha", "Aditya", "Pooja",
-  "Karan", "Kavya", "Siddharth", "Meera", "Amit", "Riya", "Manish", "Divya", "Suresh", "Ishita",
-  "Rajesh", "Tanvi", "Deepak", "Shreya", "Nitin", "Swati", "Harsh", "Bhavna", "Alok", "Nisha",
-  "Varun", "Sonam", "Gaurav", "Simran", "Abhishek", "Kriti", "Mayank", "Ritika", "Akash", "Priti",
-  "Tarun", "Nidhi", "Sanjay", "Anjali", "Yash", "Monika", "Vivek", "Payal", "Mohit", "Richa",
-  "Sameer", "Juhi"
-];
-
-const LAST_NAMES = [
-  "Sharma", "Verma", "Patel", "Gupta", "Singh", "Kumar", "Joshi", "Mehta", "Shah", "Nair",
-  "Deshmukh", "Reddy", "Rao", "Chopra", "Malhotra", "Bhatia", "Kapoor", "Saxena", "Agarwal", "Kulkarni"
-];
-
-const generateMockEmployees = (): MockEmployeeDailyRow[] => {
-  const dates = [
-    "2026-07-01", "2026-07-02", "2026-07-03", "2026-07-04", "2026-07-05",
-    "2026-07-06", "2026-07-07", "2026-07-08", "2026-07-09", "2026-07-10",
-    "2026-07-11", "2026-07-12", "2026-07-13", "2026-07-14", "2026-07-15"
-  ];
-
-  const employees: MockEmployeeDailyRow[] = [];
-
-  for (let i = 1; i <= 52; i++) {
-    const fn = FIRST_NAMES[(i - 1) % FIRST_NAMES.length];
-    const ln = LAST_NAMES[(i - 1) % LAST_NAMES.length];
-    const dept = DEPARTMENTS[(i - 1) % DEPARTMENTS.length];
-    const desigList = DESIGNATIONS[dept];
-    const desig = desigList[(i - 1) % desigList.length];
-    const branch = BRANCHES[(i - 1) % BRANCHES.length];
-    const shift = SHIFTS[(i - 1) % SHIFTS.length];
-    const empCode = `EMP${1000 + i}`;
-
-    const punches: Record<string, MockPunchCell> = {};
-
-    dates.forEach((dStr, dIdx) => {
-      const dayOfWeek = new Date(dStr).getDay(); // 0 is Sunday, 6 is Saturday
-
-      if (dayOfWeek === 0 || (dayOfWeek === 6 && i % 2 === 0)) {
-        // Week Off
-        punches[dStr] = {
-          firstIn: null,
-          lastOut: null,
-          status: "WEEK_OFF",
-          isLate: false,
-          isEarlyOut: false,
-          isMissingPunch: false,
-          isWeekOff: true,
-          isHoliday: false,
-          isLeave: false,
-          punchCount: 0,
-        };
-      } else if (dStr === "2026-07-10") {
-        // Company Holiday
-        punches[dStr] = {
-          firstIn: null,
-          lastOut: null,
-          status: "HOLIDAY",
-          isLate: false,
-          isEarlyOut: false,
-          isMissingPunch: false,
-          isWeekOff: false,
-          isHoliday: true,
-          isLeave: false,
-          punchCount: 0,
-        };
-      } else if ((i + dIdx) % 17 === 0) {
-        // Leave
-        punches[dStr] = {
-          firstIn: null,
-          lastOut: null,
-          status: "LEAVE",
-          isLate: false,
-          isEarlyOut: false,
-          isMissingPunch: false,
-          isWeekOff: false,
-          isHoliday: false,
-          isLeave: true,
-          punchCount: 0,
-        };
-      } else if ((i + dIdx) % 13 === 0) {
-        // Absent
-        punches[dStr] = {
-          firstIn: null,
-          lastOut: null,
-          status: "ABSENT",
-          isLate: false,
-          isEarlyOut: false,
-          isMissingPunch: false,
-          isWeekOff: false,
-          isHoliday: false,
-          isLeave: false,
-          punchCount: 0,
-        };
-      } else if ((i + dIdx) % 11 === 0) {
-        // Missing Punch
-        punches[dStr] = {
-          firstIn: "09:05 AM",
-          lastOut: null,
-          status: "MISSING_PUNCH",
-          isLate: false,
-          isEarlyOut: false,
-          isMissingPunch: true,
-          isWeekOff: false,
-          isHoliday: false,
-          isLeave: false,
-          punchCount: 1,
-        };
-      } else if ((i + dIdx) % 7 === 0) {
-        // Late Arrival
-        punches[dStr] = {
-          firstIn: "09:42 AM",
-          lastOut: "06:15 PM",
-          status: "LATE",
-          isLate: true,
-          isEarlyOut: false,
-          isMissingPunch: false,
-          isWeekOff: false,
-          isHoliday: false,
-          isLeave: false,
-          punchCount: 2,
-        };
-      } else if ((i + dIdx) % 9 === 0) {
-        // Early Out
-        punches[dStr] = {
-          firstIn: "08:58 AM",
-          lastOut: "04:30 PM",
-          status: "EARLY_OUT",
-          isLate: false,
-          isEarlyOut: true,
-          isMissingPunch: false,
-          isWeekOff: false,
-          isHoliday: false,
-          isLeave: false,
-          punchCount: 2,
-        };
-      } else {
-        // On-Time Present
-        punches[dStr] = {
-          firstIn: "09:02 AM",
-          lastOut: "06:08 PM",
-          status: "PRESENT",
-          isLate: false,
-          isEarlyOut: false,
-          isMissingPunch: false,
-          isWeekOff: false,
-          isHoliday: false,
-          isLeave: false,
-          punchCount: 2,
-        };
-      }
-    });
-
-    employees.push({
-      employeeId: i,
-      employeeCode: empCode,
-      employeeName: `${fn} ${ln}`,
-      department: dept,
-      designation: desig,
-      branch: branch,
-      shift: shift,
-      punches: punches,
-    });
-  }
-
-  return employees;
-};
 
 export const DailyPunchReportView: React.FC = () => {
   const { selectedBranchId: activeBranchId, setSelectedBranchId: setActiveBranchId, availableBranches } = useBranchContext();
 
   // Filter Controls
   const [fromDate, setFromDate] = useState<string>("2026-07-01");
-  const [toDate, setToDate] = useState<string>("2026-07-15");
+  const [toDate, setToDate] = useState<string>("2026-07-28");
   const [selectedBranch, setSelectedBranch] = useState<string>(activeBranchId ? String(activeBranchId) : "");
   const [selectedDept, setSelectedDept] = useState<string>("");
   const [selectedShift, setSelectedShift] = useState<string>("");
@@ -272,24 +90,26 @@ export const DailyPunchReportView: React.FC = () => {
   // Applied Filter States
   const [appliedBranch, setAppliedBranch] = useState<string>(activeBranchId ? String(activeBranchId) : "");
   const [appliedDept, setAppliedDept] = useState<string>("");
-  const [appliedShift, setAppliedShift] = useState<string>("");
 
   // Sort & Pagination States
   const [sortField, setSortField] = useState<"employeeCode" | "employeeName" | "department">("employeeCode");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc");
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [pageSize] = useState<number>(10);
-  const [manualLoading, setManualLoading] = useState<boolean>(false);
 
   const effectiveBranchId = appliedBranch ? Number(appliedBranch) : (activeBranchId ?? undefined);
 
-  // Query real active employees for current branch
-  const employeesQuery = useEmployees({
+  // Query real Daily Punch Matrix Report from backend
+  const dailyPunchQuery = useDailyPunchReport({
+    date_from: fromDate,
+    date_to: toDate,
     branch_id: effectiveBranchId,
-    page_size: 100,
+    dept_id: appliedDept ? Number(appliedDept) : undefined,
+    page: currentPage,
+    page_size: pageSize,
   });
 
-  const isLoading = employeesQuery.isLoading || manualLoading;
+  const isLoading = dailyPunchQuery.isLoading;
 
   // Dynamic Date Columns from Date Range
   const dateList = useMemo(() => {
@@ -312,54 +132,49 @@ export const DailyPunchReportView: React.FC = () => {
     return list;
   }, [fromDate, toDate]);
 
-  // Construct daily punch matrix for real active employees
+  // Map real backend daily punch matrix rows
   const allEmployees = useMemo<MockEmployeeDailyRow[]>(() => {
-    const rawEmps = employeesQuery.data?.items || [];
-    if (rawEmps.length === 0) return generateMockEmployees();
+    const rawItems = dailyPunchQuery.data?.items || [];
 
-    return rawEmps.map((emp) => {
+    return rawItems.map((emp: any) => {
       const punches: Record<string, MockPunchCell> = {};
-      dateList.forEach((d, dIdx) => {
+      const backendPunches = emp.daily_punches || {};
+
+      dateList.forEach((d) => {
         const dStr = d.dateStr;
-        const isSunday = d.dayName === "Sun";
-        if (isSunday) {
+        const pCell = backendPunches[dStr];
+
+        if (pCell) {
+          const rawStatus = String(pCell.status || "ABSENT").toUpperCase();
+          const statusStr: AttendanceStatusType = 
+            rawStatus === "WEEKOFF" || rawStatus === "WEEK_OFF" ? "WEEK_OFF" :
+            rawStatus === "ON_LEAVE" || rawStatus === "LEAVE" ? "LEAVE" :
+            (rawStatus as AttendanceStatusType);
+
           punches[dStr] = {
-            firstIn: null,
-            lastOut: null,
-            status: "WEEK_OFF",
-            isLate: false,
-            isEarlyOut: false,
-            isMissingPunch: false,
-            isWeekOff: true,
-            isHoliday: false,
-            isLeave: false,
-            punchCount: 0,
-          };
-        } else if ((emp.employee_id + dIdx) % 7 === 0) {
-          punches[dStr] = {
-            firstIn: "09:42 AM",
-            lastOut: "06:15 PM",
-            status: "LATE",
-            isLate: true,
-            isEarlyOut: false,
-            isMissingPunch: false,
-            isWeekOff: false,
-            isHoliday: false,
-            isLeave: false,
-            punchCount: 2,
+            firstIn: pCell.first_in || null,
+            lastOut: pCell.last_out || null,
+            status: statusStr,
+            isLate: statusStr === "LATE",
+            isEarlyOut: statusStr === "EARLY_OUT",
+            isMissingPunch: Boolean(pCell.is_missing_punch),
+            isWeekOff: statusStr === "WEEK_OFF",
+            isHoliday: statusStr === "HOLIDAY",
+            isLeave: statusStr === "LEAVE",
+            punchCount: (pCell.first_in ? 1 : 0) + (pCell.last_out ? 1 : 0),
           };
         } else {
           punches[dStr] = {
-            firstIn: "09:02 AM",
-            lastOut: "06:08 PM",
-            status: "PRESENT",
+            firstIn: null,
+            lastOut: null,
+            status: "ABSENT",
             isLate: false,
             isEarlyOut: false,
             isMissingPunch: false,
             isWeekOff: false,
             isHoliday: false,
             isLeave: false,
-            punchCount: 2,
+            punchCount: 0,
           };
         }
       });
@@ -367,48 +182,23 @@ export const DailyPunchReportView: React.FC = () => {
       return {
         employeeId: emp.employee_id,
         employeeCode: emp.employee_code || String(emp.employee_id),
-        employeeName: emp.employee_name || emp.display_name || `Employee #${emp.employee_id}`,
-        department: emp.department_name || "Department",
-        designation: emp.designation_name || "Designation",
+        employeeName: emp.employee_name || `Employee #${emp.employee_id}`,
+        department: emp.department_name || "General",
+        designation: emp.designation_name || "-",
         branch: emp.branch_name || "Branch",
-        shift: "General Shift (10:00 - 19:00)",
+        shift: "General Shift",
         punches,
       };
     });
-  }, [employeesQuery.data, dateList]);
+  }, [dailyPunchQuery.data, dateList]);
 
-  // Filtered & Sorted Employees
+  // Sorting
   const processedEmployees = useMemo(() => {
     let result = [...allEmployees];
 
-    // Branch Filter
-    if (appliedBranch) {
-      result = result.filter((e) => e.branch === appliedBranch);
-    }
-    // Department Filter
-    if (appliedDept) {
-      result = result.filter((e) => e.department === appliedDept);
-    }
-    // Shift Filter
-    if (appliedShift) {
-      result = result.filter((e) => e.shift === appliedShift);
-    }
-    // Search Term Filter
-    if (searchTerm.trim()) {
-      const term = searchTerm.toLowerCase().trim();
-      result = result.filter(
-        (e) =>
-          e.employeeName.toLowerCase().includes(term) ||
-          e.employeeCode.toLowerCase().includes(term) ||
-          e.department.toLowerCase().includes(term) ||
-          e.designation.toLowerCase().includes(term)
-      );
-    }
-
-    // Sorting
     result.sort((a, b) => {
-      const valA = a[sortField];
-      const valB = b[sortField];
+      const valA = a[sortField] || "";
+      const valB = b[sortField] || "";
       if (sortOrder === "asc") {
         return valA.localeCompare(valB);
       } else {
@@ -417,46 +207,31 @@ export const DailyPunchReportView: React.FC = () => {
     });
 
     return result;
-  }, [allEmployees, appliedBranch, appliedDept, appliedShift, searchTerm, sortField, sortOrder]);
+  }, [allEmployees, sortField, sortOrder]);
 
-  // Paginated View Items
-  const paginatedEmployees = useMemo(() => {
-    const start = (currentPage - 1) * pageSize;
-    return processedEmployees.slice(start, start + pageSize);
-  }, [processedEmployees, currentPage, pageSize]);
+  const paginatedEmployees = processedEmployees;
 
-  const totalPages = Math.ceil(processedEmployees.length / pageSize) || 1;
+  const totalPages = dailyPunchQuery.data?.pagination?.total_pages || Math.ceil((dailyPunchQuery.data?.pagination?.total_records || 0) / pageSize) || 1;
+  const totalRecords = dailyPunchQuery.data?.pagination?.total_records || processedEmployees.length;
 
   // Handlers
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    setManualLoading(true);
     setAppliedBranch(selectedBranch);
     setAppliedDept(selectedDept);
-    setAppliedShift(selectedShift);
     setCurrentPage(1);
-
-    setTimeout(() => {
-      setManualLoading(false);
-    }, 300);
   };
 
   const handleResetFilters = () => {
-    setManualLoading(true);
     setFromDate("2026-07-01");
-    setToDate("2026-07-15");
+    setToDate("2026-07-28");
     setSelectedBranch("");
     setSelectedDept("");
     setSelectedShift("");
     setSearchTerm("");
     setAppliedBranch("");
     setAppliedDept("");
-    setAppliedShift("");
     setCurrentPage(1);
-
-    setTimeout(() => {
-      setManualLoading(false);
-    }, 300);
   };
 
   const toggleSort = (field: "employeeCode" | "employeeName" | "department") => {
@@ -852,7 +627,7 @@ export const DailyPunchReportView: React.FC = () => {
         <div className="p-4 bg-white dark:bg-slate-800 border-t border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row items-center justify-between gap-4">
           <p className="text-xs text-slate-500 dark:text-slate-400">
             Showing <span className="font-medium text-slate-700 dark:text-slate-200">{paginatedEmployees.length}</span> of{" "}
-            <span className="font-medium text-slate-700 dark:text-slate-200">{processedEmployees.length}</span> employees
+            <span className="font-medium text-slate-700 dark:text-slate-200">{totalRecords}</span> employees
           </p>
 
           <div className="flex items-center gap-2">

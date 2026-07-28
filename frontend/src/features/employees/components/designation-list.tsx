@@ -108,7 +108,7 @@ export function DesignationList() {
   // Map backend DesignationSchema to local Designation type
   const designations = useMemo<Designation[]>(() => {
     const items = designationsQuery.data?.items ?? [];
-    return items.map((item) => ({
+    return items.map((item: { designation_id: number; designation_name: string; employee_count: number }) => ({
       id: item.designation_id,
       name: item.designation_name,
       employeeCount: item.employee_count,

@@ -1339,26 +1339,31 @@ class EmployeeService(BaseService):
     async def _validate_org_hierarchy(
         self, org_id: int, *, branch_id: int, dept_id: int, designation_id: int
     ) -> None:
-        """Ensure branch, department, and designation all exist and are active in ``org_id``.
+        """Ensure branch, department, and designation exist, are active in ``org_id``,
+        and that department and designation belong to the specified ``branch_id``.
 
-        The approved schema models branch / department / designation as independent
-        children of the organisation (no inter-FK linking designation → department →
-        branch), so the enforceable consistency rule is co-membership in the same
-        organisation; each leg is confirmed active here before any write. A failure
-        surfaces the contract's ``org_hierarchy_mismatch`` (422) code, with the
-        message identifying the offending leg.
+        Surfaces the contract's ``org_hierarchy_mismatch`` (422) code, with the
+        message identifying the offending leg or cross-branch mismatch.
         """
         if not await self.branches.exists_active(org_id, branch_id):
             raise ValidationException(
                 "Branch does not exist or is inactive.", code="org_hierarchy_mismatch"
             )
-        if not await self.departments.exists_active(org_id, dept_id):
+        if not await self.departments.exists_active(org_id, dept_id, branch_id=branch_id):
+            if not await self.departments.exists_active(org_id, dept_id):
+                raise ValidationException(
+                    "Department does not exist or is inactive.", code="org_hierarchy_mismatch"
+                )
             raise ValidationException(
-                "Department does not exist or is inactive.", code="org_hierarchy_mismatch"
+                "Department does not belong to the selected branch.", code="org_hierarchy_mismatch"
             )
-        if not await self.designations.exists_active(org_id, designation_id):
+        if not await self.designations.exists_active(org_id, designation_id, branch_id=branch_id):
+            if not await self.designations.exists_active(org_id, designation_id):
+                raise ValidationException(
+                    "Designation does not exist or is inactive.", code="org_hierarchy_mismatch"
+                )
             raise ValidationException(
-                "Designation does not exist or is inactive.", code="org_hierarchy_mismatch"
+                "Designation does not belong to the selected branch.", code="org_hierarchy_mismatch"
             )
 
     async def _next_employee_code(self, org_id: int) -> str:
