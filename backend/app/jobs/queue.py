@@ -73,6 +73,7 @@ class JobName(StrEnum):
     GENERATE_REPORT_EXPORT = "generate_report_export"
     DELIVER_NOTIFICATION = "deliver_notification"
     SEND_EMAIL = "send_email"
+    FINALIZE_ATTENDANCE = "finalize_daily_attendance_all_orgs"
 
 
 def get_redis_settings() -> RedisSettings:

@@ -106,6 +106,15 @@ class ProfileSchema(BaseSchema):
     profile_photo_url: str | None = Field(
         default=None, description="Storage key of the linked employee's profile photo, if any."
     )
+    signature_url: str | None = Field(default=None, description="Storage key of the user's signature image.")
+    emergency_contact_name: str | None = Field(default=None, description="Emergency contact person name.")
+    emergency_contact_phone: str | None = Field(default=None, description="Emergency contact phone number.")
+    emergency_contact_relationship: str | None = Field(default=None, description="Relationship with emergency contact.")
+    language: str = Field(default="en", description="UI language preference.")
+    timezone: str = Field(default="Asia/Kolkata", description="User timezone preference.")
+    theme: str = Field(default="system", description="UI theme preference: light, dark, system.")
+    is_2fa_enabled: bool = Field(default=False, description="Whether 2FA / TOTP is enabled.")
+    notification_preferences: str | None = Field(default=None, description="JSON string of notification channel settings.")
     last_login_at: datetime | None = Field(default=None, description="Last successful login.")
     created_at: datetime = Field(..., description="Account creation timestamp.")
     organization: OrganizationSummary = Field(..., description="Owning organization.")
@@ -123,7 +132,7 @@ class ProfileSchema(BaseSchema):
 
 
 class ProfileUpdateRequest(BaseSchema):
-    """``PUT /profile`` — only the mobile number is editable."""
+    """``PUT /profile`` — mobile number and basic fields."""
 
     mobile_country_code: str | None = Field(
         default=None, max_length=10, description="Mobile country code, e.g. '+91'."
@@ -144,6 +153,68 @@ class ProfileUpdateRequest(BaseSchema):
         return self
 
 
+class EmergencyContactUpdateRequest(BaseSchema):
+    """``PUT /profile/emergency-contact``."""
+
+    name: str = Field(..., min_length=2, max_length=150, description="Emergency contact full name.")
+    phone: str = Field(..., min_length=7, max_length=30, description="Emergency contact phone number.")
+    relationship: str = Field(..., min_length=2, max_length=50, description="Relationship (e.g. Spouse, Parent).")
+
+    @field_validator("phone")
+    @classmethod
+    def _phone(cls, value: str) -> str:
+        return _validate_phone(value)
+
+
+class PreferencesUpdateRequest(BaseSchema):
+    """``PUT /profile/preferences``."""
+
+    language: str | None = Field(default=None, max_length=10, description="Language code (e.g. en, hi).")
+    timezone: str | None = Field(default=None, max_length=50, description="Timezone string (e.g. Asia/Kolkata).")
+    theme: str | None = Field(default=None, max_length=20, description="Theme preference (light, dark, system).")
+    notification_preferences: dict | None = Field(default=None, description="Notification channels dictionary.")
+
+
+class ActiveSessionSchema(BaseSchema):
+    """Active device session entry."""
+
+    id: int = Field(..., description="Session PK.")
+    device_info: str | None = Field(default=None, description="User agent / device info.")
+    ip_address: str | None = Field(default=None, description="Client IP address.")
+    created_at: datetime = Field(..., description="Session creation timestamp.")
+    expires_at: datetime | None = Field(default=None, description="Session expiration timestamp.")
+    is_current: bool = Field(default=False, description="Whether this is the current active HTTP session.")
+
+
+class LoginHistorySchema(BaseSchema):
+    """Login activity log entry."""
+
+    id: int = Field(..., description="Activity log PK.")
+    ip_address: str | None = Field(default=None, description="Client IP address.")
+    user_agent: str | None = Field(default=None, description="Client User Agent.")
+    created_at: datetime = Field(..., description="Login timestamp.")
+    status: str = Field(default="success", description="Login status outcome.")
+
+
+class TwoFactorSetupResponse(BaseSchema):
+    """2FA setup initiation payload."""
+
+    totp_secret: str = Field(..., description="Base32 TOTP secret key.")
+    provisioning_uri: str = Field(..., description="otpauth:// URI for QR code generation.")
+
+
+class TwoFactorVerifyRequest(BaseSchema):
+    """2FA enablement request payload."""
+
+    code: str = Field(..., min_length=6, max_length=6, description="6-digit TOTP verification code.")
+
+
+class SignatureResponse(BaseSchema):
+    """Response for a successful signature upload."""
+
+    signature_url: str = Field(..., description="Storage key of the stored signature photo.")
+
+
 # ===========================================================================
 # PUT /profile/change-password
 # ===========================================================================
@@ -152,7 +223,6 @@ class ProfileUpdateRequest(BaseSchema):
 class ChangePasswordRequest(BaseSchema):
     """``PUT /profile/change-password`` — self-service password change."""
 
-    # Not stripped/normalised: whitespace can be a significant part of a password.
     model_config = {**BaseSchema.model_config, "str_strip_whitespace": False}
 
     current_password: str = Field(..., min_length=1, description="The account's current password.")
@@ -206,6 +276,13 @@ __all__ = [
     "EmployeeSummary",
     "ProfileSchema",
     "ProfileUpdateRequest",
+    "EmergencyContactUpdateRequest",
+    "PreferencesUpdateRequest",
+    "ActiveSessionSchema",
+    "LoginHistorySchema",
+    "TwoFactorSetupResponse",
+    "TwoFactorVerifyRequest",
+    "SignatureResponse",
     "ChangePasswordRequest",
     "ChangePasswordResponse",
     "ProfilePhotoResponse",

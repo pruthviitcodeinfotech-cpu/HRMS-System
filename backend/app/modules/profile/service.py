@@ -8,6 +8,8 @@ written inside the same transaction as the mutation.
 
 from __future__ import annotations
 
+from typing import Any
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security.password import hash_password, verify_password
@@ -25,14 +27,20 @@ from app.modules.profile.exceptions import (
 )
 from app.modules.profile.repository import ProfileRepository
 from app.modules.profile.schemas import (
+    ActiveSessionSchema,
     BranchSummary,
     ChangePasswordRequest,
     ChangePasswordResponse,
+    EmergencyContactUpdateRequest,
     EmployeeSummary,
     OrganizationSummary,
+    PreferencesUpdateRequest,
     ProfilePhotoResponse,
     ProfileSchema,
     ProfileUpdateRequest,
+    SignatureResponse,
+    TwoFactorSetupResponse,
+    TwoFactorVerifyRequest,
 )
 from app.modules.rbac.models.user import User
 from app.shared.base.service import BaseService
@@ -209,12 +217,239 @@ class ProfileService(BaseService):
             is_active=user.is_active,
             role_name=role_name,
             profile_photo_url=profile_photo_url,
+            signature_url=user.signature_url,
+            emergency_contact_name=user.emergency_contact_name,
+            emergency_contact_phone=user.emergency_contact_phone,
+            emergency_contact_relationship=user.emergency_contact_relationship,
+            language=user.language or "en",
+            timezone=user.timezone or "Asia/Kolkata",
+            theme=user.theme or "system",
+            is_2fa_enabled=user.is_2fa_enabled,
+            notification_preferences=user.notification_preferences,
             last_login_at=user.last_login_at,
             created_at=user.created_at,
             organization=OrganizationSummary.model_validate(organization),
             branch=branch_summary,
             employee=employee_summary,
         )
+
+    # --- Emergency Contact & Preferences -------------------------------------
+
+    async def update_emergency_contact(
+        self, *, user_id: int, org_id: int, data: EmergencyContactUpdateRequest
+    ) -> ProfileSchema:
+        """Update caller's emergency contact details."""
+        user = await self._get_user_or_404(user_id, org_id)
+        async with self.transaction():
+            await self.profile.update_user(
+                user,
+                {
+                    "emergency_contact_name": data.name,
+                    "emergency_contact_phone": data.phone,
+                    "emergency_contact_relationship": data.relationship,
+                },
+            )
+            await self._audit(
+                org_id=org_id,
+                actor_id=user_id,
+                action_type=ActionType.UPDATE,
+                title="Emergency contact updated",
+                description=f"Updated emergency contact to {data.name} ({data.relationship}).",
+            )
+        return await self._build_profile(user_id=user_id, org_id=org_id)
+
+    async def update_preferences(
+        self, *, user_id: int, org_id: int, data: PreferencesUpdateRequest
+    ) -> ProfileSchema:
+        """Update language, timezone, theme, or notification preferences."""
+        user = await self._get_user_or_404(user_id, org_id)
+        updates: dict[str, Any] = {}
+        if data.language is not None:
+            updates["language"] = data.language
+        if data.timezone is not None:
+            updates["timezone"] = data.timezone
+        if data.theme is not None:
+            updates["theme"] = data.theme
+        if data.notification_preferences is not None:
+            import json
+            updates["notification_preferences"] = json.dumps(data.notification_preferences)
+
+        if updates:
+            async with self.transaction():
+                await self.profile.update_user(user, updates)
+                await self._audit(
+                    org_id=org_id,
+                    actor_id=user_id,
+                    action_type=ActionType.UPDATE,
+                    title="User preferences updated",
+                    description="Updated account language, timezone, or theme preferences.",
+                )
+        return await self._build_profile(user_id=user_id, org_id=org_id)
+
+    async def upload_signature(
+        self, *, user_id: int, org_id: int, file: UploadedFile
+    ) -> SignatureResponse:
+        """Upload a digital signature image for legal/HR documents."""
+        user = await self._get_user_or_404(user_id, org_id)
+        client = self._storage or get_storage_client()
+        key = await client.save_file(
+            file,
+            destination_dir="signatures",
+            file_prefix=f"sig_{user_id}",
+        )
+        async with self.transaction():
+            await self.profile.update_user(user, {"signature_url": key})
+            await self._audit(
+                org_id=org_id,
+                actor_id=user_id,
+                action_type=ActionType.UPDATE,
+                title="Signature uploaded",
+                description="Uploaded digital signature photo.",
+            )
+        return SignatureResponse(signature_url=key)
+
+    # --- Active Sessions & Revocation ----------------------------------------
+
+    async def get_active_sessions(
+        self, *, user_id: int, org_id: int, current_session_id: int | None = None
+    ) -> list[ActiveSessionSchema]:
+        """List caller's active device sessions."""
+        user = await self._get_user_or_404(user_id, org_id)
+        from sqlalchemy import select
+        from app.modules.rbac.models.user import UserSession
+        stmt = (
+            select(UserSession)
+            .where(UserSession.user_id == user.id, UserSession.is_active.is_(True))
+            .order_by(UserSession.created_at.desc())
+        )
+        sessions = (await self.session.execute(stmt)).scalars().all()
+        result = []
+        for s in sessions:
+            result.append(
+                ActiveSessionSchema(
+                    id=s.id,
+                    device_info=s.device_info,
+                    ip_address=str(s.ip_address) if s.ip_address else None,
+                    created_at=s.created_at,
+                    expires_at=s.expires_at,
+                    is_current=(s.id == current_session_id),
+                )
+            )
+        return result
+
+    async def revoke_session(
+        self, *, user_id: int, org_id: int, session_id: int
+    ) -> None:
+        """Revoke a specific active device session."""
+        user = await self._get_user_or_404(user_id, org_id)
+        from sqlalchemy import select
+        from app.modules.rbac.models.user import UserSession
+        stmt = select(UserSession).where(
+            UserSession.id == session_id,
+            UserSession.user_id == user.id,
+            UserSession.is_active.is_(True),
+        )
+        s = (await self.session.execute(stmt)).scalar_one_or_none()
+        if s:
+            async with self.transaction():
+                s.is_active = False
+                s.revoked_at = utcnow()
+                await self._audit(
+                    org_id=org_id,
+                    actor_id=user_id,
+                    action_type=ActionType.UPDATE,
+                    title="Session revoked",
+                    description=f"Revoked active device session #{session_id}.",
+                )
+
+    async def revoke_all_other_sessions(
+        self, *, user_id: int, org_id: int, current_session_id: int | None
+    ) -> int:
+        """Revoke all active device sessions for caller except current session."""
+        user = await self._get_user_or_404(user_id, org_id)
+        count = await self.sessions.revoke_user_sessions(user.id, exclude_session_id=current_session_id)
+        async with self.transaction():
+            await self._audit(
+                org_id=org_id,
+                actor_id=user_id,
+                action_type=ActionType.UPDATE,
+                title="All other sessions revoked",
+                description=f"Logged out {count} active device sessions.",
+            )
+        return count
+
+    # --- Two-Factor Authentication (2FA) ------------------------------------
+
+    async def setup_2fa(self, *, user_id: int, org_id: int) -> TwoFactorSetupResponse:
+        """Initiate TOTP 2FA secret generation."""
+        user = await self._get_user_or_404(user_id, org_id)
+        import base64
+        import secrets
+        from urllib.parse import quote
+
+        secret = base64.b32encode(secrets.token_bytes(10)).decode("utf-8").rstrip("=")
+        issuer = "Payroll HRMS"
+        label = quote(f"{issuer}:{user.email}")
+        issuer_q = quote(issuer)
+        uri = f"otpauth://totp/{label}?secret={secret}&issuer={issuer_q}&algorithm=SHA1&digits=6&period=30"
+
+        async with self.transaction():
+            await self.profile.update_user(user, {"totp_secret": secret})
+        return TwoFactorSetupResponse(totp_secret=secret, provisioning_uri=uri)
+
+    async def enable_2fa(self, *, user_id: int, org_id: int, code: str) -> None:
+        """Verify 6-digit TOTP code and enable 2FA."""
+        user = await self._get_user_or_404(user_id, org_id)
+        if not user.totp_secret:
+            raise ProfileNotFoundException("2FA setup has not been initiated.")
+
+        import base64
+        import hmac
+        import hashlib
+        import time
+        import struct
+
+        sec = user.totp_secret.upper()
+        if len(sec) % 8:
+            sec += "=" * (8 - len(sec) % 8)
+        key = base64.b32decode(sec)
+
+        valid_codes = []
+        interval = 30
+        for t_offset in (0, -1, 1):
+            counter = int((time.time() + t_offset * interval) // interval)
+            msg = struct.pack(">Q", counter)
+            h = hmac.new(key, msg, hashlib.sha1).digest()
+            offset = h[-1] & 0x0F
+            code_int = struct.unpack(">I", h[offset : offset + 4])[0] & 0x7FFFFFFF
+            valid_codes.append(str(code_int % 1000000).zfill(6))
+
+        if str(code).strip() not in valid_codes:
+            from app.core.exceptions.base import ValidationException
+            raise ValidationException("Invalid 6-digit TOTP code.", code="INVALID_2FA_CODE")
+
+        async with self.transaction():
+            await self.profile.update_user(user, {"is_2fa_enabled": True})
+            await self._audit(
+                org_id=org_id,
+                actor_id=user_id,
+                action_type=ActionType.UPDATE,
+                title="2FA enabled",
+                description="Enabled Two-Factor Authentication.",
+            )
+
+    async def disable_2fa(self, *, user_id: int, org_id: int) -> None:
+        """Disable 2FA for account."""
+        user = await self._get_user_or_404(user_id, org_id)
+        async with self.transaction():
+            await self.profile.update_user(user, {"is_2fa_enabled": False, "totp_secret": None})
+            await self._audit(
+                org_id=org_id,
+                actor_id=user_id,
+                action_type=ActionType.UPDATE,
+                title="2FA disabled",
+                description="Disabled Two-Factor Authentication.",
+            )
 
     async def _actor_name(self, org_id: int, actor_id: int) -> str:
         user = await self.profile.get_user(actor_id, org_id)

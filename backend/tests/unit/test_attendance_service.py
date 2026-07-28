@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -274,5 +274,33 @@ async def test_recompute_day_metrics_status_present_when_punched_in() -> None:
     kwargs = svc.days.update.call_args[0][1]
     assert kwargs["first_punch_in"] == datetime.datetime(2026, 7, 28, 9, 0, 0, tzinfo=datetime.timezone.utc)
     assert kwargs["status"] == "present"
+
+
+@pytest.mark.asyncio
+async def test_finalize_unclosed_days() -> None:
+    svc = _make_service()
+    day = SimpleNamespace(
+        id=1,
+        org_id=_ORG_ID,
+        employee_id=242,
+        attendance_date=datetime.date(2026, 7, 27),
+        first_punch_in=datetime.datetime(2026, 7, 27, 9, 0, 0, tzinfo=datetime.timezone.utc),
+        last_punch_out=None,
+        total_working_minutes=0,
+        status="present",
+        is_missing_punch=False,
+        is_finalized=False,
+    )
+    mock_res = MagicMock()
+    mock_res.scalars().all.return_value = [day]
+    svc.session.execute = AsyncMock(return_value=mock_res)
+    svc.session.commit = AsyncMock()
+    svc.locks.is_locked = AsyncMock(return_value=False)
+
+    result = await svc.finalize_unclosed_days(org_id=_ORG_ID, target_date=datetime.date(2026, 7, 27))
+    assert result["finalized_count"] == 1
+    assert result["missing_punch_count"] == 1
+    assert day.status == "absent"
+
 
 

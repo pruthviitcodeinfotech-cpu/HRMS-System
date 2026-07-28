@@ -33,6 +33,7 @@ from app.modules.attendance.constants import (
 )
 from app.modules.attendance.schemas import (
     AttendanceCorrectionApproveRequest,
+    AttendanceCorrectionCancelRequest,
     AttendanceCorrectionCreateRequest,
     AttendanceCorrectionSchema,
     AttendanceDailyListResponse,
@@ -733,6 +734,29 @@ async def approve_correction(
         data=payload,
     )
     return _ok(result, f"Regularization request status updated to {payload.decision.value}.")
+
+
+@router.post(
+    "/attendance/corrections/{request_id}/cancel",
+    response_model=SuccessResponse[AttendanceCorrectionSchema],
+    summary="Cancel Attendance Correction Request",
+    dependencies=[Depends(require_permission(_ATTENDANCE, A.EDIT))],
+)
+async def cancel_correction(
+    request_id: int,
+    service: ServiceDep,
+    current_user: CurrentUserDep,
+    org_id: OrgIdDep,
+    payload: AttendanceCorrectionCancelRequest | None = None,
+) -> dict[str, Any]:
+    """Cancel a pending regularization request."""
+    result = await service.cancel_correction(
+        org_id=org_id,
+        actor_id=current_user.user_id,
+        request_id=request_id,
+        data=payload,
+    )
+    return _ok(result, "Regularization request cancelled.")
 
 
 # ===========================================================================

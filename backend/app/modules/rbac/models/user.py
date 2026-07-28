@@ -26,6 +26,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     String,
+    Text,
     UniqueConstraint,
     text,
 )
@@ -63,6 +64,24 @@ class User(Base):
         ),
     )
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    signature_url: Mapped[str | None] = mapped_column(String(500))
+    emergency_contact_name: Mapped[str | None] = mapped_column(String(150))
+    emergency_contact_phone: Mapped[str | None] = mapped_column(String(30))
+    emergency_contact_relationship: Mapped[str | None] = mapped_column(String(50))
+    language: Mapped[str] = mapped_column(
+        String(10), nullable=False, server_default=text("'en'")
+    )
+    timezone: Mapped[str] = mapped_column(
+        String(50), nullable=False, server_default=text("'Asia/Kolkata'")
+    )
+    theme: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default=text("'system'")
+    )
+    is_2fa_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    totp_secret: Mapped[str | None] = mapped_column(String(100))
+    notification_preferences: Mapped[str | None] = mapped_column(Text)
     created_by: Mapped[int | None] = mapped_column(
         BigInteger,
         ForeignKey("users.id", name="fk_users_created_by_users", ondelete="SET NULL"),

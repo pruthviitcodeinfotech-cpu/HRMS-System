@@ -20,6 +20,13 @@ from __future__ import annotations
 
 from datetime import date, datetime, time
 from decimal import Decimal
+try:
+    from enum import StrEnum
+except ImportError:
+    from enum import Enum
+
+    class StrEnum(str, Enum):
+        pass
 
 from pydantic import Field, field_validator, model_validator
 
@@ -121,6 +128,17 @@ class AttendanceManualCreateRequest(BaseSchema):
         return self
 
 
+class AttendanceCorrectionCategory(StrEnum):
+    MISSING_PUNCH_IN = "missing_punch_in"
+    MISSING_PUNCH_OUT = "missing_punch_out"
+    WRONG_PUNCH_TIME = "wrong_punch_time"
+    DEVICE_FAILURE = "device_failure"
+    FORGOT_TO_PUNCH = "forgot_to_punch"
+    WORK_FROM_HOME = "wfh_correction"
+    ON_DUTY = "on_duty_correction"
+    MANUAL_ENTRY = "manual_entry"
+
+
 class AttendanceCorrectionCreateRequest(BaseSchema):
     """Body for ``POST /attendance/corrections`` (request regularization)."""
 
@@ -129,6 +147,8 @@ class AttendanceCorrectionCreateRequest(BaseSchema):
     requested_in: datetime = Field(..., description="Requested punch-in timestamp.")
     requested_out: datetime = Field(..., description="Requested punch-out timestamp.")
     reason: str = Field(..., min_length=3, max_length=500, description="Reason for correction.")
+    category: AttendanceCorrectionCategory | None = Field(default=AttendanceCorrectionCategory.WRONG_PUNCH_TIME, description="Structured category of request.")
+    attachment_url: str | None = Field(default=None, max_length=500, description="Optional document attachment URL.")
 
     @model_validator(mode="after")
     def _validate_times(self) -> AttendanceCorrectionCreateRequest:
@@ -143,6 +163,12 @@ class AttendanceCorrectionApproveRequest(BaseSchema):
 
     decision: ApprovalStatus = Field(..., description="Approval decision: approved or rejected.")
     comment: str | None = Field(default=None, max_length=500, description="Approver's remarks.")
+
+
+class AttendanceCorrectionCancelRequest(BaseSchema):
+    """Body for ``POST /attendance/corrections/{id}/cancel``."""
+
+    reason: str | None = Field(default=None, max_length=500, description="Cancellation reason.")
 
 
 class AttendanceMissingPunchesQuery(PaginationRequest):
@@ -525,8 +551,13 @@ class AttendanceCorrectionSchema(BaseSchema):
     old_punch_time: str | None = Field(default=None, description="Original punch time string.")
     new_punch_time: str = Field(..., description="New requested punch time string.")
     employee_reason: str | None = Field(default=None, description="Reason for request.")
+    category: str | None = Field(default=None, description="Category of request.")
+    attachment_url: str | None = Field(default=None, description="Document attachment URL.")
+    sla_due_date: datetime | None = Field(default=None, description="SLA resolution deadline.")
+    is_escalated: bool = Field(default=False, description="Whether request is escalated.")
+    escalation_level: int = Field(default=0, description="Escalation level.")
     applied_on: datetime = Field(..., description="Submission timestamp.")
-    status: ApprovalStatus = Field(..., description="Status: pending, approved, or rejected.")
+    status: ApprovalStatus = Field(..., description="Status: pending, approved, rejected, cancelled, or withdrawn.")
     created_at: datetime = Field(..., description="Log creation timestamp.")
     updated_at: datetime = Field(..., description="Log update timestamp.")
 

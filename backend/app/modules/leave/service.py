@@ -1038,20 +1038,60 @@ class LeaveService(BaseService):
             return updated
 
     async def cancel_leave_request(self, org_id: int, request_id: int, user_id: int) -> None:
-        """Cancel a pending leave request (hard-delete)."""
+        """Cancel a pending or approved leave request with balance refund and attendance rollback."""
         request = await self.get_leave_request(org_id, request_id)
-        if request.status != LeaveRequestStatus.PENDING:
+        if request.status not in (LeaveRequestStatus.PENDING, LeaveRequestStatus.APPROVED):
             raise LeaveNotCancellableException()
 
         async with self.transaction():
-            await self.requests.delete(request)
+            if request.status == LeaveRequestStatus.APPROVED:
+                # 1. Refund leave balance
+                settings = await self.get_leave_settings(org_id)
+                cycle_year = self.get_cycle_year(
+                    request.start_date, settings.leave_cycle, settings.cycle_start_month
+                )
+                balance = await self.balances.get_by_employee_type_year(
+                    request.employee_id, request.leave_type_id, cycle_year
+                )
+                if balance:
+                    refund_days = request.duration_days
+                    await self.balances.update(
+                        balance,
+                        {
+                            "used": max(Decimal("0.00"), balance.used - refund_days),
+                            "closing_balance": balance.closing_balance + refund_days,
+                            "updated_by": user_id,
+                        },
+                    )
+
+                # 2. Reset AttendanceDay records linked to this leave
+                from app.modules.attendance.models import AttendanceDay
+                from app.modules.attendance.service import AttendanceService
+                stmt_days = select(AttendanceDay).where(
+                    AttendanceDay.org_id == org_id,
+                    AttendanceDay.employee_id == request.employee_id,
+                    AttendanceDay.leave_id == request.id,
+                )
+                att_days = (await self.session.execute(stmt_days)).scalars().all()
+                att_service = AttendanceService(self.session)
+                for day in att_days:
+                    await self.session.execute(
+                        select(AttendanceDay)
+                        .where(AttendanceDay.id == day.id)
+                    )
+                    day.leave_id = None
+                    if not day.first_punch_in:
+                        day.status = "absent"
+                    await att_service._recompute_day_metrics(org_id, day)
+
+            await self.requests.update(request, {"status": "cancelled", "updated_at": utcnow()})
             await self.audit.record(
                 org_id=org_id,
                 module="leave",
                 sub_module="leave_request",
                 action_type=ActionType.DELETE,
                 title="Cancel Leave Request",
-                description=f"Cancelled pending leave request {request_id} for employee {request.employee_id}",
+                description=f"Cancelled leave request {request_id} for employee {request.employee_id} (refunded {request.duration_days} days)",
                 performed_by_user_id=user_id,
                 performed_by_name=f"User {user_id}",
                 employee_id=request.employee_id,

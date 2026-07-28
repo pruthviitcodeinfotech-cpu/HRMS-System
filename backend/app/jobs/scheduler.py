@@ -28,7 +28,11 @@ from arq import cron
 from arq.cron import CronJob
 
 from app.core.config.settings import settings
-from app.jobs.tasks import run_leave_accrual_all_orgs, sync_all_devices
+from app.jobs.tasks import (
+    finalize_daily_attendance_all_orgs,
+    run_leave_accrual_all_orgs,
+    sync_all_devices,
+)
 
 
 def build_cron_jobs() -> list[CronJob]:
@@ -54,6 +58,14 @@ def build_cron_jobs() -> list[CronJob]:
         cron(
             sync_all_devices,
             minute=device_sync_minutes,
+            run_at_startup=False,
+            timeout=settings.job_timeout_seconds,
+            max_tries=settings.job_max_tries,
+        ),
+        cron(
+            finalize_daily_attendance_all_orgs,
+            hour=0,
+            minute=5,
             run_at_startup=False,
             timeout=settings.job_timeout_seconds,
             max_tries=settings.job_max_tries,

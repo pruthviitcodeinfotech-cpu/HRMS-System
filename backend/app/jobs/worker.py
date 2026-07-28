@@ -32,6 +32,8 @@ from app.jobs.queue import close_queue_pool, get_redis_settings
 from app.jobs.scheduler import build_cron_jobs
 from app.jobs.tasks import (
     deliver_notification,
+    finalize_daily_attendance,
+    finalize_daily_attendance_all_orgs,
     generate_report_export,
     run_leave_accrual,
     run_leave_accrual_all_orgs,
@@ -56,6 +58,8 @@ FUNCTIONS: list[WorkerCoroutine] = [
     sync_all_devices,
     deliver_notification,
     send_email,
+    finalize_daily_attendance,
+    finalize_daily_attendance_all_orgs,
 ]
 
 

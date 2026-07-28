@@ -640,7 +640,11 @@ def test_worker_registers_the_cron_jobs() -> None:
     """The scheduled work (nightly accrual, periodic device sync) is registered."""
     cron_names = {job.name for job in worker_module.WorkerSettings.cron_jobs}
 
-    assert cron_names == {"cron:run_leave_accrual_all_orgs", "cron:sync_all_devices"}
+    assert cron_names == {
+        "cron:run_leave_accrual_all_orgs",
+        "cron:sync_all_devices",
+        "cron:finalize_daily_attendance_all_orgs",
+    }
 
 
 def test_worker_settings_are_driven_by_config() -> None:

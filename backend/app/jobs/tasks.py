@@ -517,3 +517,73 @@ async def send_email(
     except Exception as exc:
         _logger.error("email_sending_failed", to=to, error=str(exc))
         raise
+
+
+# ===========================================================================
+# 7. Attendance finalization
+# ===========================================================================
+
+
+async def finalize_daily_attendance(
+    ctx: dict[str, Any],
+    org_id: int,
+    target_date: date | None = None,
+) -> dict[str, Any]:
+    """Finalize unclosed attendance days for org_id up to target_date (default yesterday)."""
+    from datetime import timedelta, datetime
+    from zoneinfo import ZoneInfo
+    from app.modules.attendance.service import AttendanceService
+
+    if target_date is None:
+        today_ist = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+        target_date = today_ist - timedelta(days=1)
+
+    async with _session_factory(ctx)() as session:
+        service = AttendanceService(session)
+        try:
+            result = await service.finalize_unclosed_days(org_id=org_id, target_date=target_date)
+        except Exception as exc:
+            await _audit(
+                session,
+                org_id=org_id,
+                module="attendance",
+                sub_module="finalization",
+                action_type=ActionType.UPDATE,
+                title="Attendance Finalization Failed",
+                description=f"Finalization failed for org {org_id}: {exc}",
+            )
+            raise
+
+        _logger.info("attendance_finalization_completed", **result)
+        await _audit(
+            session,
+            org_id=org_id,
+            module="attendance",
+            sub_module="finalization",
+            action_type=ActionType.UPDATE,
+            title="Attendance Finalization Run",
+            description=f"Finalized attendance up to {target_date}: {result.get('finalized_count', 0)} records processed.",
+        )
+        return result
+
+
+async def finalize_daily_attendance_all_orgs(ctx: dict[str, Any]) -> dict[str, Any]:
+    """Cron entrypoint: finalize attendance for every active organization."""
+    async with _session_factory(ctx)() as session:
+        stmt = select(Organization.org_id).where(
+            Organization.is_deleted.is_(False),
+            Organization.is_active.is_(True),
+        )
+        org_ids = list((await session.execute(stmt)).scalars().all())
+
+    finalized = 0
+    failed: list[int] = []
+    for org_id in org_ids:
+        try:
+            result = await finalize_daily_attendance(ctx, org_id)
+            finalized += int(result.get("finalized_count", 0))
+        except Exception as exc:  # noqa: BLE001
+            _logger.error("attendance_finalization_org_failed", org_id=org_id, error=str(exc))
+            failed.append(org_id)
+
+    return {"orgs": len(org_ids), "finalized": finalized, "failed": failed}

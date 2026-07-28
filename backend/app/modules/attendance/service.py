@@ -1244,6 +1244,9 @@ class AttendanceService(BaseService):
             f"{data.requested_in.strftime('%H:%M')} - {data.requested_out.strftime('%H:%M')}"
         )
 
+        sla_due = utcnow() + timedelta(hours=48)
+        cat_val = data.category.value if data.category else AttendanceCorrectionCategory.WRONG_PUNCH_TIME.value
+
         async with self.transaction():
             # Create AttendanceRegularizationRequest
             reg_req = await self.regularization_requests.create(
@@ -1253,6 +1256,11 @@ class AttendanceService(BaseService):
                     "old_punch_time": old_time_str,
                     "new_punch_time": new_time_str,
                     "employee_reason": data.reason,
+                    "category": cat_val,
+                    "attachment_url": data.attachment_url,
+                    "requested_in": data.requested_in,
+                    "requested_out": data.requested_out,
+                    "sla_due_date": sla_due,
                     "status": ApprovalStatus.PENDING.value,
                 }
             )
@@ -1274,7 +1282,7 @@ class AttendanceService(BaseService):
                 actor_id=actor_id,
                 action_type=ActionType.INSERT,
                 title="Regularization Correction Requested",
-                description=f"Requested time correction for {data.date} to {new_time_str}.",
+                description=f"Requested time correction for {data.date} to {new_time_str} (Category: {cat_val}).",
                 employee_id=data.employee_id,
                 employee_name=employee.employee_name,
             )
@@ -1401,6 +1409,59 @@ class AttendanceService(BaseService):
 
         return AttendanceCorrectionSchema.model_validate(reg_req)
 
+    async def cancel_correction(
+        self,
+        org_id: int,
+        actor_id: int,
+        request_id: int,
+        data: AttendanceCorrectionCancelRequest | None = None,
+    ) -> AttendanceCorrectionSchema:
+        """Cancel a pending regularization request."""
+        stmt = select(ApprovalRequest).where(
+            ApprovalRequest.id == request_id,
+            ApprovalRequest.org_id == org_id,
+        )
+        approval = (await self.session.execute(stmt)).scalar_one_or_none()
+        if not approval:
+            raise NotFoundException("Approval request not found.")
+
+        if approval.status != ApprovalStatus.PENDING.value:
+            raise ConflictException(
+                "Only pending requests can be cancelled.", code="request_not_pending"
+            )
+
+        reg_req = await self.regularization_requests.get_by_id(approval.reference_id)
+        if not reg_req:
+            raise NotFoundException("Regularization request details not found.")
+
+        async with self.transaction():
+            await self.approval_requests.update(
+                approval,
+                {
+                    "status": "cancelled",
+                    "reviewed_by": actor_id,
+                    "reviewed_at": utcnow(),
+                    "reject_remarks": data.reason if data and data.reason else "Cancelled by employee",
+                },
+            )
+            await self.regularization_requests.update(
+                reg_req,
+                {
+                    "status": "cancelled",
+                    "cancelled_at": utcnow(),
+                },
+            )
+            await self._audit(
+                org_id=org_id,
+                actor_id=actor_id,
+                action_type=ActionType.UPDATE,
+                title="Regularization Correction Cancelled",
+                description=f"Cancelled regularization request {request_id}.",
+                employee_id=reg_req.employee_id,
+            )
+
+        return AttendanceCorrectionSchema.model_validate(reg_req)
+
     # =========================================================================
     # Missing Punches Analysis
     # =========================================================================
@@ -1465,6 +1526,52 @@ class AttendanceService(BaseService):
             page_size=query.page_size,
             total_records=len(missing_records),
         )
+
+    async def finalize_unclosed_days(
+        self,
+        org_id: int,
+        target_date: date,
+    ) -> dict[str, Any]:
+        """Finalize unclosed attendance days up to target_date for an organization."""
+        stmt = select(AttendanceDay).where(
+            AttendanceDay.org_id == org_id,
+            AttendanceDay.attendance_date <= target_date,
+            AttendanceDay.first_punch_in.isnot(None),
+            AttendanceDay.last_punch_out.is_(None),
+        )
+        days = (await self.session.execute(stmt)).scalars().all()
+
+        finalized_count = 0
+        missing_punch_count = 0
+
+        for day in days:
+            # Check period lock
+            is_locked = await self.locks.is_locked(
+                org_id=org_id,
+                month=day.attendance_date.month,
+                year=day.attendance_date.year,
+            )
+            if isinstance(is_locked, bool) and is_locked:
+                continue
+
+            missing_punch_count += 1
+            if (day.total_working_minutes or 0) < 240:
+                if day.status not in (
+                    AttendanceDayStatus.ON_LEAVE.value,
+                    AttendanceDayStatus.WEEK_OFF.value,
+                    AttendanceDayStatus.HOLIDAY.value,
+                ):
+                    day.status = AttendanceDayStatus.ABSENT.value
+
+            finalized_count += 1
+
+        await self.session.commit()
+        return {
+            "org_id": org_id,
+            "target_date": target_date.isoformat(),
+            "finalized_count": finalized_count,
+            "missing_punch_count": missing_punch_count,
+        }
 
     # =========================================================================
     # Locked Period Freeze
