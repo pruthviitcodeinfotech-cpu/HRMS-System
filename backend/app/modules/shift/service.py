@@ -1041,6 +1041,9 @@ class ShiftService(BaseService):
 
     async def _write_roster_entry(self, org_id: int, actor_id: int, data: RosterUpsertRequest):
         """Insert-or-update the ``(employee_id, roster_date)`` roster row (validated caller)."""
+        employee = await self.employees.get_active_by_id(data.employee_id, org_id)
+        branch_id = employee.master_branch_id if employee else None
+
         existing = await self.rosters.get_for_employee_date(data.employee_id, data.roster_date)
         if existing is not None:
             row = await self.rosters.update(
@@ -1055,6 +1058,7 @@ class ShiftService(BaseService):
         row = await self.rosters.create(
             {
                 "org_id": org_id,
+                "branch_id": branch_id,
                 "employee_id": data.employee_id,
                 "roster_date": data.roster_date,
                 "shift_id": data.shift_id,

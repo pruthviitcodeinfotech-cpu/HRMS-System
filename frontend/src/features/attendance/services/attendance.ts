@@ -384,6 +384,7 @@ export interface DailyPunchReportQueryParams {
   date_to?: string;
   branch_id?: number;
   dept_id?: number;
+  shift_id?: number;
   employee_id?: number;
   page?: number;
   page_size?: number;

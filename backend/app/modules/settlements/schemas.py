@@ -449,6 +449,11 @@ class LoanAdvanceSchema(BaseSchema):
     transaction_date: datetime.date = Field(..., description="Date issued.")
     status: LoanAdvanceStatus = Field(..., description="Status: active or closed.")
     comment: str | None = Field(default=None, description="Optional notes.")
+    employee_code: str | None = Field(default=None, description="Employee code.")
+    employee_name: str | None = Field(default=None, description="Employee full name.")
+    department_name: str | None = Field(default=None, description="Department name.")
+    designation_name: str | None = Field(default=None, description="Designation name.")
+    branch_name: str | None = Field(default=None, description="Branch name.")
     created_by: int = Field(..., description="User ID of creator.")
     updated_by: int | None = Field(default=None, description="User ID of last updater.")
     created_at: datetime.datetime = Field(..., description="Registry creation timestamp.")
@@ -468,6 +473,7 @@ class LoanAdvanceTransactionSchema(BaseSchema):
         description="Associated loan/advance registry ID.",
     )
     employee_id: int = Field(..., description="Employee ID.")
+    employee_code: str | None = Field(default=None, description="Employee code.")
     employee_name: str | None = Field(default=None, description="Employee full name.")
     transaction_date: datetime.date = Field(..., description="Transaction date.")
     transaction_type: TransactionType = Field(
@@ -596,6 +602,8 @@ class ArrearsTransactionSchema(BaseSchema):
         description="Associated employee arrears registry ID.",
     )
     employee_id: int = Field(..., description="Employee ID.")
+    employee_code: str | None = Field(default=None, description="Employee code.")
+    employee_name: str | None = Field(default=None, description="Employee full name.")
     transaction_date: datetime.date = Field(..., description="Transaction date.")
     transaction_type: TransactionType = Field(
         ...,

@@ -707,12 +707,16 @@ class ReportsRepository(BaseRepository[Employee]):
         branch_ids: list[int] | None = None,
         dept_ids: list[int] | None = None,
         employee_id: int | None = None,
+        shift_id: int | None = None,
         sort_by: str | None = None,
         sort_dir: str = "asc",
         page: int = 1,
         page_size: int = 25,
     ) -> tuple[dict[str, Any], int]:
         """Fetch multi-day daily punch matrix report grouped by employee."""
+        from app.modules.shift.models.assignment import ShiftAssignment
+        from app.modules.shift.models.shift import Shift
+
         # 1. Build date strings list
         dates: list[str] = []
         curr = date_from
@@ -728,9 +732,23 @@ class ReportsRepository(BaseRepository[Employee]):
                 Employee.employee_name,
                 Department.dept_name.label("department_name"),
                 Designation.designation_name.label("designation_name"),
+                Shift.shift_name.label("shift_name"),
             )
             .join(Department, Employee.dept_id == Department.dept_id, isouter=True)
             .join(Designation, Employee.designation_id == Designation.designation_id, isouter=True)
+            .join(
+                ShiftAssignment,
+                and_(
+                    Employee.employee_id == ShiftAssignment.employee_id,
+                    ShiftAssignment.effective_from <= date_to,
+                    or_(
+                        ShiftAssignment.effective_to.is_(None),
+                        ShiftAssignment.effective_to >= date_from,
+                    ),
+                ),
+                isouter=True,
+            )
+            .join(Shift, ShiftAssignment.shift_id == Shift.shift_id, isouter=True)
             .where(
                 Employee.org_id == org_id,
                 Employee.is_deleted.is_(False),
@@ -744,6 +762,8 @@ class ReportsRepository(BaseRepository[Employee]):
             emp_stmt = emp_stmt.where(Employee.dept_id.in_(dept_ids))
         if employee_id:
             emp_stmt = emp_stmt.where(Employee.employee_id == employee_id)
+        if shift_id:
+            emp_stmt = emp_stmt.where(ShiftAssignment.shift_id == shift_id)
 
         # Count total
         count_stmt = select(func.count()).select_from(emp_stmt.subquery())
@@ -827,6 +847,7 @@ class ReportsRepository(BaseRepository[Employee]):
                     "employee_name": emp.employee_name,
                     "department_name": emp.department_name or "General",
                     "designation_name": emp.designation_name or "-",
+                    "shift_name": emp.shift_name or "General Shift",
                     "daily_punches": daily_punches,
                 }
             )

@@ -30,7 +30,7 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
-from sqlalchemy.dialects.postgresql import INET
+from sqlalchemy.dialects.postgresql import INET, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database.base import Base
@@ -81,7 +81,7 @@ class User(Base):
         Boolean, nullable=False, server_default=text("false")
     )
     totp_secret: Mapped[str | None] = mapped_column(String(100))
-    notification_preferences: Mapped[str | None] = mapped_column(Text)
+    notification_preferences: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_by: Mapped[int | None] = mapped_column(
         BigInteger,
         ForeignKey("users.id", name="fk_users_created_by_users", ondelete="SET NULL"),

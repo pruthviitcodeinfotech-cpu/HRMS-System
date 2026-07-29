@@ -8,6 +8,7 @@ import {
   ChevronLeft,
   X,
   AlertCircle,
+  CheckCircle2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -25,7 +26,7 @@ import {
   useConfigureWeekoffs,
   useBulkWeekoffUpdate,
 } from "@/features/shifts/hooks";
-import { DayOfWeek, WeekoffType } from "@/features/shifts/types";
+import { DayOfWeek, WeekoffType, WeeklyOffSchema } from "@/features/shifts/types";
 
 const WEEKDAYS: { key: DayOfWeek; label: string }[] = [
   { key: 0, label: "Sunday" },
@@ -46,12 +47,30 @@ function getErrorMessage(err: unknown, fallback: string): string {
   return fallback;
 }
 
+function getWeekoffDisplayType(weekoff?: WeeklyOffSchema): WeekoffType {
+  if (!weekoff) return "working";
+  if (weekoff.weekoff_type === "working") return "working";
+
+  const occs = [
+    weekoff.occurrence_1st,
+    weekoff.occurrence_2nd,
+    weekoff.occurrence_3rd,
+    weekoff.occurrence_4th,
+    weekoff.occurrence_5th,
+  ];
+  const trueCount = occs.filter(Boolean).length;
+
+  if (trueCount === 5) return "week_off";
+  if (trueCount === 0) return "working";
+  return "occasional_week_off";
+}
+
 function WeekOffSymbolIcon({ type }: { type: WeekoffType }) {
   if (type === "working") {
     return (
       <span
         title="Working Day"
-        className="inline-flex items-center justify-center h-4 w-4 rounded-full bg-emerald-600 shrink-0 hover:scale-110 transition-transform cursor-pointer"
+        className="inline-flex items-center justify-center h-4 w-4 rounded-full bg-emerald-600 shrink-0 hover:scale-110 transition-transform cursor-pointer shadow-2xs"
       />
     );
   }
@@ -59,7 +78,7 @@ function WeekOffSymbolIcon({ type }: { type: WeekoffType }) {
     return (
       <span
         title="WO Week Off"
-        className="inline-flex items-center justify-center h-4 w-4 rounded-full bg-[#0B85C9] text-white text-[9px] font-bold shrink-0 hover:scale-110 transition-transform cursor-pointer"
+        className="inline-flex items-center justify-center h-4 w-4 rounded-full bg-[#0B85C9] text-white text-[9px] font-bold shrink-0 hover:scale-110 transition-transform cursor-pointer shadow-2xs"
       >
         WO
       </span>
@@ -81,21 +100,25 @@ function EmployeeWeekoffTableRow({
   isSelected,
   onSelectRow,
   onCellClick,
-  isMutating,
 }: {
   employee: EmployeeSummary;
   isSelected: boolean;
   onSelectRow: (id: number) => void;
-  onCellClick: (employeeId: number, day: DayOfWeek, currentType: WeekoffType) => void;
-  isMutating: boolean;
+  onCellClick: (
+    employeeId: number,
+    employeeName: string,
+    day: DayOfWeek,
+    dayLabel: string,
+    currentWeekoff?: WeeklyOffSchema
+  ) => void;
 }) {
   const { data: weekoffData, isLoading } = useEmployeeWeekoffs(employee.employee_id);
 
   const weekoffByDay = useMemo(() => {
-    const map = new Map<DayOfWeek, WeekoffType>();
+    const map = new Map<DayOfWeek, WeeklyOffSchema>();
     if (weekoffData?.items) {
       weekoffData.items.forEach((item) => {
-        map.set(item.day_of_week, item.weekoff_type);
+        map.set(item.day_of_week, item);
       });
     }
     return map;
@@ -103,8 +126,8 @@ function EmployeeWeekoffTableRow({
 
   return (
     <tr
-      className={`hover:bg-slate-50/70 dark:hover:bg-slate-800/30 transition-colors border-b border-slate-100 dark:border-slate-800/60 align-middle ${
-        isSelected ? "bg-blue-50/30 dark:bg-blue-950/20" : ""
+      className={`hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors border-b border-slate-100 dark:border-slate-800/60 align-middle ${
+        isSelected ? "bg-blue-50/40 dark:bg-blue-950/20" : ""
       }`}
     >
       <td className="px-4 py-3.5 text-center">
@@ -124,23 +147,29 @@ function EmployeeWeekoffTableRow({
       <td className="px-5 py-3.5 font-medium text-slate-600 dark:text-slate-400 whitespace-nowrap">
         {employee.department_name || "-"}
       </td>
-      {WEEKDAYS.map(({ key: day }) => {
-        const currentType = weekoffByDay.get(day) || "working";
+      {WEEKDAYS.map(({ key: day, label: dayLabel }) => {
+        const item = weekoffByDay.get(day);
+        const displayType = getWeekoffDisplayType(item);
+
         return (
           <td
             key={day}
-            onClick={() => {
-              if (!isMutating) {
-                onCellClick(employee.employee_id, day, currentType);
-              }
-            }}
-            className="px-4 py-3.5 text-center select-none"
+            onClick={() =>
+              onCellClick(
+                employee.employee_id,
+                employee.employee_name,
+                day,
+                dayLabel,
+                item
+              )
+            }
+            className="px-4 py-3.5 text-center select-none cursor-pointer hover:bg-blue-50/50 dark:hover:bg-slate-800/50 transition-colors"
           >
             <div className="flex items-center justify-center">
               {isLoading ? (
-                <span className="h-3 w-3 rounded-full bg-slate-200 dark:bg-slate-700 animate-pulse" />
+                <span className="h-3.5 w-3.5 rounded-full bg-slate-200 dark:bg-slate-700 animate-pulse" />
               ) : (
-                <WeekOffSymbolIcon type={currentType} />
+                <WeekOffSymbolIcon type={displayType} />
               )}
             </div>
           </td>
@@ -148,6 +177,18 @@ function EmployeeWeekoffTableRow({
       })}
     </tr>
   );
+}
+
+interface CellEditState {
+  employeeId: number;
+  employeeName: string;
+  day: DayOfWeek;
+  dayLabel: string;
+  occurrence_1st: boolean;
+  occurrence_2nd: boolean;
+  occurrence_3rd: boolean;
+  occurrence_4th: boolean;
+  occurrence_5th: boolean;
 }
 
 export default function WeekOffPage() {
@@ -176,10 +217,20 @@ export default function WeekOffPage() {
   // Selection
   const [selectedEmpIds, setSelectedEmpIds] = useState<number[]>([]);
 
+  // Success alert message banner state
+  const [successBanner, setSuccessBanner] = useState<string | null>(null);
+
+  // Cell Edit Modal state (Select Week Off Modal)
+  const [cellEditState, setCellEditState] = useState<CellEditState | null>(null);
+
   // Bulk Modal state
   const [isBulkModalOpen, setIsBulkModalOpen] = useState<boolean>(false);
   const [bulkDay, setBulkDay] = useState<DayOfWeek>(0);
-  const [bulkStatus, setBulkStatus] = useState<WeekoffType>("week_off");
+  const [bulkOcc1, setBulkOcc1] = useState<boolean>(true);
+  const [bulkOcc2, setBulkOcc2] = useState<boolean>(true);
+  const [bulkOcc3, setBulkOcc3] = useState<boolean>(true);
+  const [bulkOcc4, setBulkOcc4] = useState<boolean>(true);
+  const [bulkOcc5, setBulkOcc5] = useState<boolean>(true);
 
   // React Query Hooks
   const { data: departmentOptions = [] } = useDepartmentOptions();
@@ -243,35 +294,84 @@ export default function WeekOffPage() {
     }
   };
 
-  // Cell click handler: cycles working -> week_off -> occasional_week_off -> working
+  // Open Popover/Modal for cell click
   const handleCellClick = (
     employeeId: number,
+    employeeName: string,
     day: DayOfWeek,
-    currentType: WeekoffType
+    dayLabel: string,
+    currentWeekoff?: WeeklyOffSchema
   ) => {
-    let nextStatus: WeekoffType = "working";
-    if (currentType === "working") {
-      nextStatus = "week_off";
-    } else if (currentType === "week_off") {
-      nextStatus = "occasional_week_off";
-    } else {
-      nextStatus = "working";
+    const isWorking = !currentWeekoff || currentWeekoff.weekoff_type === "working";
+    setCellEditState({
+      employeeId,
+      employeeName,
+      day,
+      dayLabel,
+      occurrence_1st: isWorking ? true : currentWeekoff.occurrence_1st,
+      occurrence_2nd: isWorking ? true : currentWeekoff.occurrence_2nd,
+      occurrence_3rd: isWorking ? true : currentWeekoff.occurrence_3rd,
+      occurrence_4th: isWorking ? true : currentWeekoff.occurrence_4th,
+      occurrence_5th: isWorking ? true : currentWeekoff.occurrence_5th,
+    });
+  };
+
+  // Apply cell popover changes
+  const handleApplyCellChanges = () => {
+    if (!cellEditState) return;
+
+    const {
+      employeeId,
+      day,
+      occurrence_1st,
+      occurrence_2nd,
+      occurrence_3rd,
+      occurrence_4th,
+      occurrence_5th,
+    } = cellEditState;
+
+    const trueCount = [
+      occurrence_1st,
+      occurrence_2nd,
+      occurrence_3rd,
+      occurrence_4th,
+      occurrence_5th,
+    ].filter(Boolean).length;
+
+    let weekoff_type: WeekoffType = "working";
+    if (trueCount === 5) {
+      weekoff_type = "week_off";
+    } else if (trueCount > 0) {
+      weekoff_type = "occasional_week_off";
     }
 
     configureMutation.mutate(
       {
         employeeId,
         data: {
-          weekoffs: [{ day_of_week: day, weekoff_type: nextStatus }],
+          weekoffs: [
+            {
+              day_of_week: day,
+              weekoff_type,
+              occurrence_1st,
+              occurrence_2nd,
+              occurrence_3rd,
+              occurrence_4th,
+              occurrence_5th,
+            },
+          ],
         },
       },
       {
         onSuccess: () => {
-          const weekdayLabel = WEEKDAYS.find((w) => w.key === day)?.label || "Day";
-          toast.success(`Updated ${weekdayLabel} to ${nextStatus.replace("_", " ")}.`);
+          const bannerMsg = "Employee Weekoff Saved Successfully";
+          toast.success(bannerMsg);
+          setSuccessBanner(bannerMsg);
+          setCellEditState(null);
+          setTimeout(() => setSuccessBanner(null), 5000);
         },
         onError: (err: unknown) => {
-          toast.error(getErrorMessage(err, "Failed to update week off."));
+          toast.error(getErrorMessage(err, "Failed to update employee week off."));
         },
       }
     );
@@ -281,19 +381,44 @@ export default function WeekOffPage() {
   const handleBulkUpdate = () => {
     if (selectedEmpIds.length === 0) return;
 
+    const trueCount = [
+      bulkOcc1,
+      bulkOcc2,
+      bulkOcc3,
+      bulkOcc4,
+      bulkOcc5,
+    ].filter(Boolean).length;
+
+    let weekoff_type: WeekoffType = "working";
+    if (trueCount === 5) {
+      weekoff_type = "week_off";
+    } else if (trueCount > 0) {
+      weekoff_type = "occasional_week_off";
+    }
+
     bulkUpdateMutation.mutate(
       {
         employeeIds: selectedEmpIds,
-        weekoffs: [{ day_of_week: bulkDay, weekoff_type: bulkStatus }],
+        weekoffs: [
+          {
+            day_of_week: bulkDay,
+            weekoff_type,
+            occurrence_1st: bulkOcc1,
+            occurrence_2nd: bulkOcc2,
+            occurrence_3rd: bulkOcc3,
+            occurrence_4th: bulkOcc4,
+            occurrence_5th: bulkOcc5,
+          },
+        ],
       },
       {
         onSuccess: () => {
-          const dayLabel = WEEKDAYS.find((w) => w.key === bulkDay)?.label || "Day";
-          toast.success(
-            `Successfully updated ${dayLabel} to ${bulkStatus.replace("_", " ")} for ${selectedEmpIds.length} employee(s).`
-          );
+          const bannerMsg = "Employee Weekoff Saved Successfully";
+          toast.success(bannerMsg);
+          setSuccessBanner(bannerMsg);
           setIsBulkModalOpen(false);
           setSelectedEmpIds([]);
+          setTimeout(() => setSuccessBanner(null), 5000);
         },
         onError: (err: unknown) => {
           toast.error(getErrorMessage(err, "Failed to execute bulk week off update."));
@@ -303,8 +428,23 @@ export default function WeekOffPage() {
   };
 
   return (
-    <ProtectedRoute requiredPermission={{ feature: "shift", action: "read" }}>
-      <div className="p-6 space-y-6 bg-slate-50/40 min-h-screen">
+    <ProtectedRoute requiredPermission={{ feature: "weekoff", action: "read" }}>
+      <div className="p-6 space-y-5 bg-slate-50/40 min-h-screen relative">
+        {/* Success Alert Banner (matching screenshot top-right banner) */}
+        {successBanner && (
+          <div className="fixed top-5 right-5 z-[200] flex items-center justify-between gap-3 px-4 py-3 bg-emerald-50 border border-emerald-300 text-emerald-800 rounded-lg shadow-lg animate-in fade-in slide-in-from-top-2 duration-200 max-w-md">
+            <div className="flex items-center gap-2 text-xs font-semibold">
+              <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+              <span>{successBanner}</span>
+            </div>
+            <button
+              onClick={() => setSuccessBanner(null)}
+              className="p-1 hover:bg-emerald-100 rounded text-emerald-600 transition-colors"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
 
         {/* Page Header */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -337,11 +477,11 @@ export default function WeekOffPage() {
               Bulk Update {selectedEmpIds.length > 0 && `(${selectedEmpIds.length})`}
             </Button>
 
-            {/* Legend Box matching UI spec with identical h-4 symbol heights */}
-            <div className="flex items-center gap-3 px-3 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg shadow-2xs text-xs font-medium text-slate-700 dark:text-slate-300">
+            {/* Legend Box matching UI spec with identical symbol heights */}
+            <div className="flex items-center gap-3 px-3.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg shadow-2xs text-xs font-medium text-slate-700 dark:text-slate-300">
               <div className="flex items-center gap-1.5">
                 <WeekOffSymbolIcon type="week_off" />
-                <span>Week Off</span>
+                <span>WO Week Off</span>
               </div>
               <span className="text-slate-300 dark:text-slate-700">|</span>
               <div className="flex items-center gap-1.5">
@@ -418,9 +558,9 @@ export default function WeekOffPage() {
           </div>
 
           {/* Table */}
-          <div className="w-full overflow-x-auto relative min-h-[300px]">
+          <div className="w-full overflow-x-auto relative min-h-[320px]">
             <table className="w-full text-left border-collapse text-xs">
-              <thead className="bg-[#EBF5FF] dark:bg-slate-950/80 border-b border-slate-200/80 dark:border-slate-800 uppercase text-[11px] tracking-wider text-slate-700 dark:text-slate-300 font-bold sticky top-0 z-10">
+              <thead className="bg-[#EBF5FF] dark:bg-slate-950/80 border-b border-slate-200/80 dark:border-slate-800 text-[11px] tracking-wider text-slate-700 dark:text-slate-300 font-bold sticky top-0 z-10">
                 <tr>
                   <th className="px-4 py-3.5 w-12 text-center">
                     <input
@@ -449,7 +589,10 @@ export default function WeekOffPage() {
                     </div>
                   </th>
                   <th className="px-5 py-3.5 font-bold text-slate-700 dark:text-slate-300 whitespace-nowrap">
-                    Department
+                    <div className="flex items-center gap-1">
+                      Department
+                      <ArrowUpDown className="h-3 w-3 text-slate-400" />
+                    </div>
                   </th>
                   {WEEKDAYS.map(({ key, label }) => (
                     <th key={key} className="px-4 py-3.5 text-center font-bold text-slate-700 dark:text-slate-300">
@@ -507,7 +650,6 @@ export default function WeekOffPage() {
                       isSelected={selectedEmpIds.includes(emp.employee_id)}
                       onSelectRow={handleSelectRow}
                       onCellClick={handleCellClick}
-                      isMutating={configureMutation.isPending}
                     />
                   ))
                 )}
@@ -591,9 +733,81 @@ export default function WeekOffPage() {
           </div>
         </div>
 
+        {/* SELECT WEEK OFF POPOVER MODAL (Matches user screenshot popover) */}
+        {cellEditState && (
+          <div className="fixed inset-0 z-[150] flex items-center justify-center p-4">
+            <div
+              className="absolute inset-0 bg-black/40 backdrop-blur-[1px]"
+              onClick={() => setCellEditState(null)}
+            />
+            <div className="relative w-full max-w-sm bg-white dark:bg-slate-900 rounded-xl shadow-2xl border border-slate-200 dark:border-slate-800 p-5 space-y-4 z-10 animate-in fade-in zoom-in-95 duration-150">
+              
+              {/* Modal Header */}
+              <h3 className="text-sm font-bold text-slate-800 dark:text-slate-100">
+                Select Week Off ({cellEditState.dayLabel})
+              </h3>
+
+              {/* Grid with 1st, 2nd, 3rd, 4th, 5th occurrence headers and checkboxes */}
+              <div className="border border-slate-200 dark:border-slate-800 rounded-lg overflow-hidden text-xs">
+                <div className="grid grid-cols-5 bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-800 text-center py-2 font-bold text-slate-700 dark:text-slate-300">
+                  <div>1<sup>st</sup></div>
+                  <div>2<sup>nd</sup></div>
+                  <div>3<sup>rd</sup></div>
+                  <div>4<sup>th</sup></div>
+                  <div>5<sup>th</sup></div>
+                </div>
+                <div className="grid grid-cols-5 py-3.5 bg-white dark:bg-slate-900 text-center items-center">
+                  {[
+                    { key: "occurrence_1st" as const },
+                    { key: "occurrence_2nd" as const },
+                    { key: "occurrence_3rd" as const },
+                    { key: "occurrence_4th" as const },
+                    { key: "occurrence_5th" as const },
+                  ].map((occ) => (
+                    <div key={occ.key} className="flex justify-center">
+                      <input
+                        type="checkbox"
+                        checked={cellEditState[occ.key]}
+                        onChange={(e) =>
+                          setCellEditState((prev) =>
+                            prev ? { ...prev, [occ.key]: e.target.checked } : null
+                          )
+                        }
+                        className="h-4 w-4 rounded border-slate-300 dark:border-slate-700 text-[#0B85C9] focus:ring-[#0B85C9] cursor-pointer"
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Modal Actions */}
+              <div className="flex items-center justify-end gap-2.5 pt-1">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCellEditState(null)}
+                  className="h-8 text-xs px-4 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-700"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  disabled={configureMutation.isPending}
+                  onClick={handleApplyCellChanges}
+                  className="h-8 text-xs px-4 font-bold bg-[#0B85C9] hover:bg-[#0974b0] text-white border-0 shadow-xs disabled:opacity-50"
+                >
+                  {configureMutation.isPending ? "Applying..." : "Apply Changes"}
+                </Button>
+              </div>
+
+            </div>
+          </div>
+        )}
+
         {/* BULK UPDATE MODAL */}
         {isBulkModalOpen && (
-          <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
+          <div className="fixed inset-0 z-[140] flex items-center justify-center p-4">
             <div
               className="absolute inset-0 bg-black/50 backdrop-blur-[1px]"
               onClick={() => setIsBulkModalOpen(false)}
@@ -634,17 +848,64 @@ export default function WeekOffPage() {
 
                 <div className="space-y-1.5">
                   <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                    Select Status
+                    Select Week Off Occurrences
                   </label>
-                  <select
-                    value={bulkStatus}
-                    onChange={(e) => setBulkStatus(e.target.value as WeekoffType)}
-                    className="w-full h-9 px-3 text-xs bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-md text-slate-800 dark:text-slate-200 focus:outline-none"
-                  >
-                    <option value="working">Working Day</option>
-                    <option value="week_off">Week Off (WO)</option>
-                    <option value="occasional_week_off">Occasional Week Off</option>
-                  </select>
+                  <div className="border border-slate-200 dark:border-slate-800 rounded-lg overflow-hidden text-xs">
+                    <div className="grid grid-cols-5 bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-800 text-center py-2 font-bold text-slate-700 dark:text-slate-300">
+                      <div>1<sup>st</sup></div>
+                      <div>2<sup>nd</sup></div>
+                      <div>3<sup>rd</sup></div>
+                      <div>4<sup>th</sup></div>
+                      <div>5<sup>th</sup></div>
+                    </div>
+                    <div className="grid grid-cols-5 py-3 bg-white dark:bg-slate-900 text-center items-center">
+                      {[
+                        { val: bulkOcc1, setVal: setBulkOcc1 },
+                        { val: bulkOcc2, setVal: setBulkOcc2 },
+                        { val: bulkOcc3, setVal: setBulkOcc3 },
+                        { val: bulkOcc4, setVal: setBulkOcc4 },
+                        { val: bulkOcc5, setVal: setBulkOcc5 },
+                      ].map((item, idx) => (
+                        <div key={idx} className="flex justify-center">
+                          <input
+                            type="checkbox"
+                            checked={item.val}
+                            onChange={(e) => item.setVal(e.target.checked)}
+                            className="h-4 w-4 rounded border-slate-300 dark:border-slate-700 text-[#0B85C9] focus:ring-[#0B85C9] cursor-pointer"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setBulkOcc1(true);
+                        setBulkOcc2(true);
+                        setBulkOcc3(true);
+                        setBulkOcc4(true);
+                        setBulkOcc5(true);
+                      }}
+                      className="text-[11px] text-[#0B85C9] hover:underline font-medium cursor-pointer"
+                    >
+                      Check All
+                    </button>
+                    <span className="text-slate-300">|</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setBulkOcc1(false);
+                        setBulkOcc2(false);
+                        setBulkOcc3(false);
+                        setBulkOcc4(false);
+                        setBulkOcc5(false);
+                      }}
+                      className="text-[11px] text-slate-500 hover:underline font-medium cursor-pointer"
+                    >
+                      Clear All
+                    </button>
+                  </div>
                 </div>
 
                 <p className="text-[11px] text-slate-500 dark:text-slate-400">
@@ -669,7 +930,7 @@ export default function WeekOffPage() {
                   onClick={handleBulkUpdate}
                   className="text-xs h-9 px-5 font-bold bg-[#0B85C9] hover:bg-[#0974b0] text-white rounded-md border-0 disabled:opacity-50"
                 >
-                  {bulkUpdateMutation.isPending ? "Updating..." : "Update"}
+                  {bulkUpdateMutation.isPending ? "Updating..." : "Apply Changes"}
                 </Button>
               </div>
 

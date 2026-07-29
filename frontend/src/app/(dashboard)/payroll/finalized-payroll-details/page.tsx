@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useCallback, useMemo } from "react";
+import React, { useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
@@ -568,28 +568,15 @@ export default function FinalizedPayrollDetailsPage() {
 
   const { data, isLoading, isError, error, refetch } = useFinalizedPayroll(queryParams);
 
-  // Local persistent history state
-  const [localHistory, setLocalHistory] = useState<any[]>([]);
-
+  // Clear any legacy mock localStorage history items on mount
   React.useEffect(() => {
     if (typeof window !== "undefined") {
-      const stored = JSON.parse(localStorage.getItem("finalized_payroll_history_list") || "[]");
-      setLocalHistory(stored);
+      localStorage.removeItem("finalized_payroll_history_list");
     }
   }, []);
 
   const apiItems: FinalizedPayrollItem[] = (data as any)?.items ?? [];
-
-  // Combine API items and local persistent items (removing duplicates by from_date + to_date)
-  const combinedItems = useMemo(() => {
-    const list = [...apiItems];
-    for (const loc of localHistory) {
-      if (!list.some((item: any) => item.from_date === loc.from_date && item.to_date === loc.to_date)) {
-        list.push(loc);
-      }
-    }
-    return list;
-  }, [apiItems, localHistory]);
+  const combinedItems = apiItems;
 
   const pagination = (data as any)?.pagination ?? { total_records: combinedItems.length, total_pages: 1 };
 

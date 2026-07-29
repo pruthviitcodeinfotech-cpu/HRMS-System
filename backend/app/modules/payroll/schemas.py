@@ -112,6 +112,20 @@ class PayrollGroupCreateSchema(BaseSchema):
     is_default: bool = Field(default=False, description="Set as default group.")
     branch_id: int | None = Field(default=None, description="Branch ID.")
 
+    @field_validator("payroll_type", mode="before")
+    @classmethod
+    def normalize_payroll_type(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            val_clean = value.strip().lower().replace(" ", "_")
+            if "without" in val_clean:
+                return PayrollType.MONTHLY_WITHOUT_COMPLIANCE.value
+            elif "with" in val_clean:
+                return PayrollType.MONTHLY_WITH_COMPLIANCE.value
+            elif "hourly" in val_clean:
+                return PayrollType.HOURLY_PAYROLL.value
+            return val_clean
+        return value
+
     @field_validator("name")
     @classmethod
     def validate_name_not_empty(cls, value: str) -> str:
@@ -126,6 +140,20 @@ class PayrollGroupUpdateSchema(BaseSchema):
     name: str | None = Field(default=None, min_length=1, max_length=150, description="Name of the payroll group.")
     payroll_type: PayrollType | None = Field(default=None, description="Type of payroll computation.")
     is_default: bool | None = Field(default=None, description="Set as default group.")
+
+    @field_validator("payroll_type", mode="before")
+    @classmethod
+    def normalize_payroll_type(cls, value: Any) -> Any:
+        if value is not None and isinstance(value, str):
+            val_clean = value.strip().lower().replace(" ", "_")
+            if "without" in val_clean:
+                return PayrollType.MONTHLY_WITHOUT_COMPLIANCE.value
+            elif "with" in val_clean:
+                return PayrollType.MONTHLY_WITH_COMPLIANCE.value
+            elif "hourly" in val_clean:
+                return PayrollType.HOURLY_PAYROLL.value
+            return val_clean
+        return value
 
     @field_validator("name")
     @classmethod

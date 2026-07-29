@@ -20,6 +20,8 @@ import {
   Sparkles,
 } from "lucide-react";
 import { useBranchContext } from "@/context/branch-context";
+import { useDepartments } from "@/features/employees/hooks";
+import { useShifts } from "@/features/shifts/hooks";
 import { useDailyPunchReport } from "../hooks/use-attendance";
 
 // ==========================================
@@ -65,19 +67,15 @@ export interface OptionType {
   value: string;
 }
 
-const DEPARTMENTS = [
-  "Engineering",
-  "Human Resources",
-  "Operations",
-  "Finance",
-  "Sales & Marketing",
-  "Customer Support",
-];
-
-const SHIFTS = ["Morning Shift (09:00 - 18:00)", "General Shift (10:00 - 19:00)", "Night Shift (22:00 - 07:00)"];
-
 export const DailyPunchReportView: React.FC = () => {
   const { selectedBranchId: activeBranchId, setSelectedBranchId: setActiveBranchId, availableBranches } = useBranchContext();
+
+  // Master Data Hooks (Single Source of Truth per AGENTS.md rule)
+  const { data: departmentData } = useDepartments({ page: 1, page_size: 100 });
+  const departmentList = departmentData?.items || [];
+
+  const { data: shiftsData } = useShifts({ page: 1, page_size: 100 });
+  const shiftList = shiftsData?.items || [];
 
   // Filter Controls
   const [fromDate, setFromDate] = useState<string>("2026-07-01");
@@ -90,6 +88,8 @@ export const DailyPunchReportView: React.FC = () => {
   // Applied Filter States
   const [appliedBranch, setAppliedBranch] = useState<string>(activeBranchId ? String(activeBranchId) : "");
   const [appliedDept, setAppliedDept] = useState<string>("");
+  const [appliedShift, setAppliedShift] = useState<string>("");
+  const [appliedSearch, setAppliedSearch] = useState<string>("");
 
   // Sort & Pagination States
   const [sortField, setSortField] = useState<"employeeCode" | "employeeName" | "department">("employeeCode");
@@ -105,6 +105,7 @@ export const DailyPunchReportView: React.FC = () => {
     date_to: toDate,
     branch_id: effectiveBranchId,
     dept_id: appliedDept ? Number(appliedDept) : undefined,
+    shift_id: appliedShift ? Number(appliedShift) : undefined,
     page: currentPage,
     page_size: pageSize,
   });
@@ -186,15 +187,38 @@ export const DailyPunchReportView: React.FC = () => {
         department: emp.department_name || "General",
         designation: emp.designation_name || "-",
         branch: emp.branch_name || "Branch",
-        shift: "General Shift",
+        shift: emp.shift_name || "General Shift",
         punches,
       };
     });
   }, [dailyPunchQuery.data, dateList]);
 
-  // Sorting
+  // Filtering & Sorting
   const processedEmployees = useMemo(() => {
     let result = [...allEmployees];
+
+    // Filter by quick search term
+    if (appliedSearch.trim()) {
+      const term = appliedSearch.toLowerCase().trim();
+      result = result.filter(
+        (emp) =>
+          emp.employeeName.toLowerCase().includes(term) ||
+          emp.employeeCode.toLowerCase().includes(term) ||
+          emp.department.toLowerCase().includes(term) ||
+          emp.designation.toLowerCase().includes(term)
+      );
+    }
+
+    // Filter by shift (if selected)
+    if (appliedShift) {
+      const selectedShiftObj = shiftList.find((s) => String(s.shift_id) === appliedShift);
+      if (selectedShiftObj) {
+        const targetShiftName = selectedShiftObj.shift_name.toLowerCase();
+        result = result.filter(
+          (emp) => emp.shift.toLowerCase().includes(targetShiftName) || emp.shift.toLowerCase() === targetShiftName
+        );
+      }
+    }
 
     result.sort((a, b) => {
       const valA = a[sortField] || "";
@@ -207,7 +231,7 @@ export const DailyPunchReportView: React.FC = () => {
     });
 
     return result;
-  }, [allEmployees, sortField, sortOrder]);
+  }, [allEmployees, appliedSearch, appliedShift, shiftList, sortField, sortOrder]);
 
   const paginatedEmployees = processedEmployees;
 
@@ -219,6 +243,8 @@ export const DailyPunchReportView: React.FC = () => {
     e.preventDefault();
     setAppliedBranch(selectedBranch);
     setAppliedDept(selectedDept);
+    setAppliedShift(selectedShift);
+    setAppliedSearch(searchTerm);
     setCurrentPage(1);
   };
 
@@ -231,6 +257,8 @@ export const DailyPunchReportView: React.FC = () => {
     setSearchTerm("");
     setAppliedBranch("");
     setAppliedDept("");
+    setAppliedShift("");
+    setAppliedSearch("");
     setCurrentPage(1);
   };
 
@@ -386,9 +414,9 @@ export const DailyPunchReportView: React.FC = () => {
               className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg text-sm font-medium text-slate-700 dark:text-slate-200 focus:ring-2 focus:ring-sky-500 px-3 py-2"
             >
               <option value="">All Departments</option>
-              {DEPARTMENTS.map((d) => (
-                <option key={d} value={d}>
-                  {d}
+              {departmentList.map((d) => (
+                <option key={d.dept_id} value={String(d.dept_id)}>
+                  {d.dept_name}
                 </option>
               ))}
             </select>
@@ -403,9 +431,9 @@ export const DailyPunchReportView: React.FC = () => {
               className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg text-sm font-medium text-slate-700 dark:text-slate-200 focus:ring-2 focus:ring-sky-500 px-3 py-2"
             >
               <option value="">All Shifts</option>
-              {SHIFTS.map((s) => (
-                <option key={s} value={s}>
-                  {s}
+              {shiftList.map((s) => (
+                <option key={s.shift_id} value={String(s.shift_id)}>
+                  {s.shift_name}
                 </option>
               ))}
             </select>

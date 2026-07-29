@@ -29,6 +29,7 @@ import {
   useUpsertRosterEntry,
   useBulkSetRoster,
   useUpdateRosterEntry,
+  useShiftAssignments,
   RosterBulkEntry,
 } from "@/features/shifts";
 
@@ -162,6 +163,36 @@ export default function RosterSpreadsheetPage() {
 
     return list;
   }, [backendShiftsData]);
+
+  // Default daily working shift fallback value (e.g. Daily / first working shift)
+  const defaultWorkingShiftValue = useMemo(() => {
+    const workingOpt = shiftOptions.find((opt) => !opt.isWeekOff && opt.id !== null);
+    return workingOpt ? workingOpt.value : "1";
+  }, [shiftOptions]);
+
+  // Live Backend Shift Assignments Query (GET /shift-assignments)
+  const { data: assignmentsData } = useShiftAssignments({ page_size: 200 });
+
+  // Map employee_id -> assigned shift_id
+  const assignmentsByEmp = useMemo(() => {
+    const map = new Map<number, number>();
+    if (assignmentsData?.items) {
+      assignmentsData.items.forEach((asg) => {
+        map.set(asg.employee_id, asg.shift_id);
+      });
+    }
+    return map;
+  }, [assignmentsData]);
+
+  // Helper to get default shift value for a specific employee (assigned shift -> org default)
+  const getEmpDefaultShiftValue = (empId: number) => {
+    const assignedShiftId = assignmentsByEmp.get(empId);
+    if (assignedShiftId) {
+      const matchedOpt = shiftOptions.find((opt) => opt.id === assignedShiftId);
+      if (matchedOpt) return matchedOpt.value;
+    }
+    return defaultWorkingShiftValue;
+  };
 
   // Live Backend Employees Query (GET /employees)
   const { data: employeesData, isLoading: isEmployeesLoading } = useEmployees({
@@ -834,7 +865,7 @@ export default function RosterSpreadsheetPage() {
                         const cellKey = `${emp.id}_${d.dateStr}`;
                         const cell = effectiveCellMap[cellKey];
 
-                        let currentOptVal = "Week Off";
+                        let currentOptVal = getEmpDefaultShiftValue(emp.id);
                         if (cell) {
                           if (cell.is_week_off || cell.shift_id === null) {
                             currentOptVal = "Week Off";

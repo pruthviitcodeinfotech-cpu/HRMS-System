@@ -70,186 +70,7 @@ export interface PayrollMatrixRecord {
   payment_method: string;
 }
 
-// Generate 120 deterministic QA payroll records for fallback scenario testing
-const generate120QAPayrollRecords = (): PayrollMatrixRecord[] => {
-  const records: PayrollMatrixRecord[] = [];
 
-  const firstNames = [
-    "Bakrushn", "Nakul", "Tanvin", "Khushi", "Sneha", "Krunal", "Jay", "Harsh", "Divya", "Hardik",
-    "Aarav", "Neha", "Vikram", "Priya", "Rohan", "Ananya", "Siddharth", "Ishita", "Kabir", "Riya",
-    "Arjun", "Bhavya", "Chirag", "Deepak", "Ekta", "Farhan", "Gautam", "Hina", "Inderpal", "Jatin",
-    "Kavita", "Lokesh", "Manish", "Nidhi", "Omkar", "Pooja", "Qasim", "Rahul", "Simran", "Tushar",
-  ];
-
-  const lastNames = [
-    "Koladiya", "Verma", "Kheni", "Bhut", "Patel", "Hirpara", "Bodra", "Kumbhani", "Agrawat", "Sharma",
-    "Gupta", "Malhotra", "Singh", "Das", "Roy", "Jain", "Kapoor", "Mehta", "Reddy", "Trivedi",
-    "Parikh", "Joshi", "Shah", "Khan", "Adani", "Kausar", "Rao", "Nanda", "Kumar", "Salvi",
-  ];
-
-  const deptDesigList = [
-    { dept: "Executive", desig: "Chief Executive Officer" },
-    { dept: "Developer", desig: "Full Stack Developer" },
-    { dept: "Developer", desig: "React.js Specialist" },
-    { dept: "Developer", desig: "Angular Architect" },
-    { dept: "Developer", desig: "Node.js Backend Engineer" },
-    { dept: "Marketing", desig: "Growth Lead" },
-    { dept: "Marketing", desig: "Content Lead" },
-    { dept: "Human Resources", desig: "HR Manager" },
-    { dept: "Finance", desig: "Finance Controller" },
-    { dept: "QA", desig: "SDET Automation Lead" },
-    { dept: "Operations", desig: "Supply Chain Manager" },
-    { dept: "Design", desig: "Product UI-UX Designer" },
-    { dept: "Sales", desig: "Enterprise Account Manager" },
-    { dept: "Intern", desig: "Software Development Intern" },
-    { dept: "Support", desig: "Technical Support Manager" },
-  ];
-
-  const branches = [
-    { id: 1, name: "Main HQ" },
-    { id: 2, name: "West Branch" },
-    { id: 3, name: "South Tech Park" },
-    { id: 4, name: "North Plant" },
-    { id: 5, name: "East Sales Hub" },
-  ];
-
-  const archetypes = [
-    "full_attendance",
-    "half_day_heavy",
-    "unpaid_heavy",
-    "high_overtime",
-    "high_penalties",
-    "loan_deductions",
-    "high_arrears",
-    "extras_bonus",
-    "zero_salary",
-    "high_salary_executive",
-  ];
-
-  for (let i = 1; i <= 120; i++) {
-    const fn = firstNames[(i - 1) % firstNames.length];
-    const ln = lastNames[(i - 1) % lastNames.length];
-    const fullName = `${fn} ${ln}`;
-    const code = `${i}`;
-
-    const deptDesig = deptDesigList[(i - 1) % deptDesigList.length];
-    const branch = branches[(i - 1) % branches.length];
-    const archetype = archetypes[(i - 1) % archetypes.length];
-
-    let full_days = 18;
-    let half_days = 1;
-    let off_days = 4;
-    const paid_leaves = 0;
-    let daily_wage = 2200;
-    let overtime = 0;
-    let penalties = 0;
-    let extras = 0;
-    let loan_advance = 0;
-    let arrears = 0;
-
-    switch (archetype) {
-      case "full_attendance":
-        full_days = 22;
-        half_days = 0;
-        off_days = 4;
-        daily_wage = 3500;
-        break;
-      case "half_day_heavy":
-        full_days = 6;
-        half_days = 12;
-        off_days = 4;
-        daily_wage = 2000;
-        break;
-      case "unpaid_heavy":
-        full_days = 1;
-        half_days = 0;
-        off_days = 4;
-        daily_wage = 1800;
-        break;
-      case "high_overtime":
-        full_days = 18;
-        half_days = 2;
-        daily_wage = 2500;
-        overtime = 14500;
-        break;
-      case "high_penalties":
-        full_days = 16;
-        half_days = 2;
-        daily_wage = 2100;
-        penalties = 4200;
-        break;
-      case "loan_deductions":
-        full_days = 18;
-        half_days = 1;
-        daily_wage = 2800;
-        loan_advance = 28000;
-        break;
-      case "high_arrears":
-        full_days = 18;
-        half_days = 1;
-        daily_wage = 2400;
-        arrears = 19500;
-        break;
-      case "extras_bonus":
-        full_days = 18;
-        half_days = 1;
-        daily_wage = 2600;
-        extras = 8500;
-        break;
-      case "zero_salary":
-        full_days = 18;
-        half_days = 1;
-        daily_wage = 0;
-        break;
-      case "high_salary_executive":
-        full_days = 22;
-        half_days = 0;
-        daily_wage = 18500;
-        overtime = 25000;
-        extras = 15000;
-        break;
-      default:
-        break;
-    }
-
-    const paid_days = Number((full_days + half_days * 0.5 + paid_leaves).toFixed(1));
-    const unpaid_days = Number((22 - paid_days).toFixed(1));
-    const gross_wages = Math.round(paid_days * daily_wage);
-    const gross_earnings = gross_wages + overtime - penalties + extras;
-    const net_payable = Math.max(0, gross_earnings - loan_advance + arrears);
-
-    records.push({
-      id: i,
-      payroll_group_id: (i % 3) + 1,
-      employee_code: code,
-      employee_name: fullName,
-      department: deptDesig.dept,
-      designation: deptDesig.desig,
-      branch_id: branch.id,
-      branch_name: branch.name,
-      archetype,
-      full_days,
-      half_days,
-      off_days,
-      paid_leaves,
-      paid_days,
-      unpaid_days,
-      daily_wage,
-      gross_wages,
-      overtime,
-      penalties,
-      extras,
-      gross_earnings,
-      loan_advance,
-      arrears,
-      net_payable,
-      balance_arrears: 0,
-      payment_method: "-",
-    });
-  }
-
-  return records;
-};
 
 function ProcessPayrollContent() {
   const { selectedBranchId: activeBranchId, setSelectedBranchId: setActiveBranchId, availableBranches } = useBranchContext();
@@ -401,18 +222,18 @@ function ProcessPayrollContent() {
 
   const realEmployeeFallbackRecords = useMemo<PayrollMatrixRecord[]>(() => {
     const rawEmps = employeesQuery.data?.items || [];
-    if (rawEmps.length === 0) return generate120QAPayrollRecords();
+    if (rawEmps.length === 0) return [];
 
     return rawEmps.map((emp) => {
-      const daily_wage = 2000 + (emp.employee_id % 5) * 500;
-      const full_days = 18;
+      const daily_wage = Number((emp as any).daily_rate || (emp as any).basic_salary || 0);
+      const full_days = 0;
       const half_days = 0;
-      const off_days = 4;
-      const paid_days = 22;
-      const unpaid_days = 0;
+      const off_days = 0;
+      const paid_days = 0;
+      const unpaid_days = calculatedWorkingDays;
       const gross_wages = Math.round(daily_wage * paid_days);
-      const overtime = (emp.employee_id % 4) === 0 ? 3000 : 0;
-      const penalties = (emp.employee_id % 6) === 0 ? 1000 : 0;
+      const overtime = 0;
+      const penalties = 0;
       const gross_earnings = gross_wages + overtime - penalties;
 
       return {
@@ -444,7 +265,7 @@ function ProcessPayrollContent() {
         payment_method: "Bank Transfer",
       };
     });
-  }, [employeesQuery.data, effectivePayrollGroupId]);
+  }, [employeesQuery.data, effectivePayrollGroupId, calculatedWorkingDays]);
 
   // Consolidate Data Matrix Records (Live API or Real Employee Fallback)
   const mergedRecords = useMemo<PayrollMatrixRecord[]>(() => {
@@ -754,22 +575,6 @@ function ProcessPayrollContent() {
     setIsFinalized(true);
     if (typeof window !== "undefined") {
       localStorage.setItem(storageKey, "true");
-      const totalAmount = mergedRecords.reduce((acc, r) => acc + (r.net_payable || 0), 0);
-      const newRecord = {
-        id: Date.now(),
-        from_date: fromDate,
-        to_date: toDate,
-        finalized_amount: totalAmount,
-        finalized_on: new Date().toISOString(),
-        paid_amount: null,
-        paid_on: null,
-        payroll_module: "Standard Monthly Payroll",
-        payroll_group_name: selectedGroup?.name || "Monthly Payroll (No Compliance)",
-        status: "Finalized",
-      };
-      const existing = JSON.parse(localStorage.getItem("finalized_payroll_history_list") || "[]");
-      const updated = [newRecord, ...existing.filter((r: any) => r.from_date !== fromDate || r.to_date !== toDate)];
-      localStorage.setItem("finalized_payroll_history_list", JSON.stringify(updated));
     }
     toast.success("Payroll run locked & finalized successfully!");
     refetchProcessMatrix();
@@ -781,9 +586,7 @@ function ProcessPayrollContent() {
     if (typeof window !== "undefined") {
       localStorage.removeItem(storageKey);
       localStorage.removeItem(paidStorageKey);
-      const existing = JSON.parse(localStorage.getItem("finalized_payroll_history_list") || "[]");
-      const updated = existing.filter((r: any) => r.from_date !== fromDate || r.to_date !== toDate);
-      localStorage.setItem("finalized_payroll_history_list", JSON.stringify(updated));
+      localStorage.removeItem("finalized_payroll_history_list");
     }
     toast.success("Payroll run definalized & unlocked for editing!");
   };
@@ -794,22 +597,7 @@ function ProcessPayrollContent() {
     if (typeof window !== "undefined") {
       localStorage.setItem(storageKey, "true");
       localStorage.setItem(paidStorageKey, "true");
-      const totalAmount = mergedRecords.reduce((acc, r) => acc + (r.net_payable || 0), 0);
-      const newRecord = {
-        id: Date.now(),
-        from_date: fromDate,
-        to_date: toDate,
-        finalized_amount: totalAmount,
-        finalized_on: new Date().toISOString(),
-        paid_amount: totalAmount,
-        paid_on: new Date().toISOString(),
-        payroll_module: "Standard Monthly Payroll",
-        payroll_group_name: selectedGroup?.name || "Monthly Payroll (No Compliance)",
-        status: "Paid",
-      };
-      const existing = JSON.parse(localStorage.getItem("finalized_payroll_history_list") || "[]");
-      const updated = [newRecord, ...existing.filter((r: any) => r.from_date !== fromDate || r.to_date !== toDate)];
-      localStorage.setItem("finalized_payroll_history_list", JSON.stringify(updated));
+      localStorage.removeItem("finalized_payroll_history_list");
     }
     toast.success("Payroll run marked as paid successfully!");
     router.push("/payroll/finalized-payroll-details");

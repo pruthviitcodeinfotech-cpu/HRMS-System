@@ -154,6 +154,8 @@ export default function LeaveBalancePage() {
           isOpen={isBulkAdjustOpen}
           onClose={() => setIsBulkAdjustOpen(false)}
           selectedCount={selectedIds.length}
+          selectedEmployeeIds={selectedIds.map(Number)}
+          leaveTypes={leaveTypesResponse?.items ?? []}
           leaveOptions={leaveColumns}
           onSuccess={handleBulkUpdateSuccess}
         />
@@ -163,6 +165,8 @@ export default function LeaveBalancePage() {
           isOpen={isBulkUpdateOpen}
           onClose={() => setIsBulkUpdateOpen(false)}
           selectedCount={selectedIds.length}
+          selectedEmployeeIds={selectedIds.map(Number)}
+          leaveTypes={leaveTypesResponse?.items ?? []}
           leaveOptions={leaveColumns}
           onSuccess={handleBulkUpdateSuccess}
         />

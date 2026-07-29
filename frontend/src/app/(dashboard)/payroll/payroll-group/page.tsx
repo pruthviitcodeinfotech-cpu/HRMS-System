@@ -112,13 +112,23 @@ export default function PayrollGroupManagementPage() {
     setShowMembersDrawer(true);
   };
 
+  // Helper to normalize payroll_type enum string
+  const normalizePayrollType = (val?: string): string => {
+    if (!val) return "monthly_without_compliance";
+    const lower = val.toLowerCase();
+    if (lower.includes("without")) return "monthly_without_compliance";
+    if (lower.includes("with")) return "monthly_with_compliance";
+    if (lower.includes("hourly")) return "hourly_payroll";
+    return "monthly_without_compliance";
+  };
+
   // Open Edit Modal
   const handleOpenEdit = (group: PayrollGroupItem) => {
     setActiveActionId(null);
     setEditingGroupId(group.id);
     setCreateForm({
       name: group.name,
-      payroll_type: group.payroll_type,
+      payroll_type: normalizePayrollType(group.payroll_type),
       is_default: group.is_default,
     });
     setFormErrors({});
@@ -147,8 +157,12 @@ export default function PayrollGroupManagementPage() {
       toast.success(`Deleted "${deleteConfirmGroup.name}" successfully.`);
       setDeleteConfirmGroup(null);
     } catch (err: unknown) {
-      const errorObj = err as { response?: { data?: { message?: string } }; message?: string };
-      const msg = errorObj?.response?.data?.message || errorObj?.message || "Failed to delete group.";
+      const errorObj = err as { message?: string; response?: { data?: { message?: string; detail?: string } } };
+      const msg =
+        errorObj?.message ||
+        errorObj?.response?.data?.message ||
+        errorObj?.response?.data?.detail ||
+        "Failed to delete group.";
       toast.error(msg);
     }
   };
@@ -166,23 +180,21 @@ export default function PayrollGroupManagementPage() {
       return;
     }
 
+    const payload = {
+      name: createForm.name.trim(),
+      payroll_type: normalizePayrollType(createForm.payroll_type),
+      is_default: createForm.is_default,
+    };
+
     try {
       if (editingGroupId) {
         await updateGroupMutation.mutateAsync({
           id: editingGroupId,
-          data: {
-            name: createForm.name.trim(),
-            payroll_type: createForm.payroll_type,
-            is_default: createForm.is_default,
-          },
+          data: payload,
         });
         toast.success("Payroll group updated successfully.");
       } else {
-        await createGroupMutation.mutateAsync({
-          name: createForm.name.trim(),
-          payroll_type: createForm.payroll_type,
-          is_default: createForm.is_default,
-        });
+        await createGroupMutation.mutateAsync(payload);
         toast.success("Payroll group created successfully.");
       }
 
@@ -194,8 +206,13 @@ export default function PayrollGroupManagementPage() {
         is_default: false,
       });
     } catch (err: unknown) {
-      const errorObj = err as { response?: { data?: { message?: string } }; message?: string };
-      const msg = errorObj?.response?.data?.message || errorObj?.message || "Failed to save payroll group.";
+      console.error("Failed to save payroll group:", err);
+      const errorObj = err as { message?: string; response?: { data?: { message?: string; detail?: string } } };
+      const msg =
+        errorObj?.message ||
+        errorObj?.response?.data?.message ||
+        errorObj?.response?.data?.detail ||
+        "Failed to save payroll group.";
       toast.error(msg);
     }
   };

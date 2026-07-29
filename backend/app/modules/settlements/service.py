@@ -58,10 +58,12 @@ from app.modules.settlements.repository import (
 )
 from app.modules.settlements.schemas import (
     ArrearsSearchQuery,
+    ArrearsTransactionSchema,
     ArrearsTransactionSearchQuery,
     EditInstallmentResponse,
     EmployeeArrearsListResponse,
     EmployeeArrearsSchema,
+    LoanAdvanceSchema,
     LoanAdvanceSearchQuery,
     LoanAdvanceTransactionListResponse,
     LoanAdvanceTransactionSchema,
@@ -208,7 +210,7 @@ class SettlementService(BaseService):
 
     async def search_loans_advances(
         self, org_id: int, query: LoanAdvanceSearchQuery
-    ) -> PaginatedResponse[EmployeeLoanAdvance]:
+    ) -> PaginatedResponse[LoanAdvanceSchema]:
         """Search and paginate loan/advance registry headers."""
         items = await self.loans_advances.search(
             org_id,
@@ -236,7 +238,52 @@ class SettlementService(BaseService):
             branch_id=query.branch_id,
             dept_id=query.dept_id,
         )
-        return self.paginate(items, page=query.page, page_size=query.page_size, total_records=total)
+        # Enrich with Employee data
+        emp_ids = list({item.employee_id for item in items if getattr(item, "employee_id", None)})
+        emp_map: dict[int, dict[str, Any]] = {}
+        if emp_ids:
+            from app.modules.employee.models.organization import Branch, Department, Designation
+            stmt_emp = (
+                select(
+                    Employee.employee_id,
+                    Employee.employee_code,
+                    Employee.employee_name,
+                    Employee.display_name,
+                    Branch.branch_name,
+                    Department.dept_name,
+                    Designation.designation_name,
+                )
+                .join(Branch, Employee.master_branch_id == Branch.branch_id, isouter=True)
+                .join(Department, Employee.dept_id == Department.dept_id, isouter=True)
+                .join(Designation, Employee.designation_id == Designation.designation_id, isouter=True)
+                .where(Employee.org_id == org_id, Employee.employee_id.in_(emp_ids))
+            )
+            rows = (await self.session.execute(stmt_emp)).all()
+            for r in rows:
+                emp_map[r[0]] = {
+                    "code": r[1] or str(r[0]),
+                    "name": r[2] or r[3] or f"Employee #{r[0]}",
+                    "branch": r[4] or None,
+                    "dept": r[5] or None,
+                    "desig": r[6] or None,
+                }
+
+        enriched: list[LoanAdvanceSchema] = []
+        for item in items:
+            s = LoanAdvanceSchema.model_validate(item)
+            info = emp_map.get(item.employee_id)
+            if info:
+                s.employee_code = info["code"]
+                s.employee_name = info["name"]
+                s.branch_name = info["branch"]
+                s.department_name = info["dept"]
+                s.designation_name = info["desig"]
+            else:
+                s.employee_code = f"EMP-{item.employee_id}"
+                s.employee_name = f"Employee #{item.employee_id}"
+            enriched.append(s)
+
+        return self.paginate(enriched, page=query.page, page_size=query.page_size, total_records=total)
 
     async def update_loan_advance(
         self, org_id: int, loan_advance_id: int, data: dict[str, Any], user_id: int
@@ -597,18 +644,24 @@ class SettlementService(BaseService):
             branch_id=query.branch_id,
         )
         emp_ids = {tx.employee_id for tx in items if tx.employee_id}
-        emp_map = {}
+        emp_map: dict[int, Employee] = {}
         if emp_ids:
             stmt_emp = select(Employee).where(
                 Employee.org_id == org_id, Employee.employee_id.in_(emp_ids)
             )
             emps = (await self.session.execute(stmt_emp)).scalars().all()
-            emp_map = {e.employee_id: e.employee_name for e in emps}
+            emp_map = {e.employee_id: e for e in emps}
 
         schema_items = []
         for tx in items:
             s = LoanAdvanceTransactionSchema.model_validate(tx)
-            s.employee_name = emp_map.get(tx.employee_id, f"Employee #{tx.employee_id}")
+            emp = emp_map.get(tx.employee_id)
+            if emp:
+                s.employee_name = emp.employee_name or emp.display_name or f"Employee #{tx.employee_id}"
+                s.employee_code = emp.employee_code or f"EMP-{tx.employee_id}"
+            else:
+                s.employee_name = f"Employee #{tx.employee_id}"
+                s.employee_code = f"EMP-{tx.employee_id}"
             schema_items.append(s)
 
         paginated = self.paginate(schema_items, page=query.page, page_size=query.page_size, total_records=total)
@@ -905,7 +958,28 @@ class SettlementService(BaseService):
             date_to=query.date_to,
             search=query.search,
         )
-        return self.paginate(items, page=query.page, page_size=query.page_size, total_records=total)
+        emp_ids = {tx.employee_id for tx in items if getattr(tx, "employee_id", None)}
+        emp_map: dict[int, Employee] = {}
+        if emp_ids:
+            stmt_emp = select(Employee).where(
+                Employee.org_id == org_id, Employee.employee_id.in_(emp_ids)
+            )
+            emps = (await self.session.execute(stmt_emp)).scalars().all()
+            emp_map = {e.employee_id: e for e in emps}
+
+        schema_items = []
+        for tx in items:
+            s = ArrearsTransactionSchema.model_validate(tx)
+            emp = emp_map.get(tx.employee_id)
+            if emp:
+                s.employee_name = emp.employee_name or emp.display_name or f"Employee #{tx.employee_id}"
+                s.employee_code = emp.employee_code or f"EMP-{tx.employee_id}"
+            else:
+                s.employee_name = f"Employee #{tx.employee_id}"
+                s.employee_code = f"EMP-{tx.employee_id}"
+            schema_items.append(s)
+
+        return self.paginate(schema_items, page=query.page, page_size=query.page_size, total_records=total)
 
     # =========================================================================
     # 4. Arrears Ledger Transactions

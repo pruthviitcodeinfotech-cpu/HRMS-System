@@ -27,6 +27,7 @@ import {
   useEmployees,
 } from "@/features/employees/hooks";
 import { useBatchUpdateBulkAttendanceAdjustments } from "@/features/payroll/hooks/use-payroll";
+import { useWorkingHoursConfig } from "@/features/shifts/hooks";
 
 // Attendance status options & petpooja color theme
 export type AttendanceStatusCode = "P" | "A" | "FD" | "HD" | "WO" | "H" | "L" | "LWP" | "CO";
@@ -271,6 +272,44 @@ const applyOverridesToMatrix = (
   });
 };
 
+function parseHoursStrToDecimal(timeStr: string | undefined, defaultVal: number): number {
+  if (!timeStr) return defaultVal;
+  const parts = timeStr.split(":");
+  if (parts.length >= 2) {
+    const hh = Number(parts[0]) || 0;
+    const mm = Number(parts[1]) || 0;
+    return hh + mm / 60;
+  }
+  return Number(timeStr) || defaultVal;
+}
+
+function calculateAttendanceStatusFromWorkingHours(
+  dateObj: Date,
+  workedHours: number,
+  fullDayHours: number = 8.0,
+  halfDayHours: number = 4.0,
+  attendanceMode: string = "consider_all_punch"
+): AttendanceStatusCode {
+  const isSunday = dateObj.getDay() === 0;
+  if (isSunday) return "WO";
+
+  if (attendanceMode === "default_full_day") {
+    return "FD";
+  }
+
+  if (attendanceMode === "full_day_on_single_punch") {
+    return workedHours > 0 ? "FD" : "A";
+  }
+
+  if (workedHours >= fullDayHours) {
+    return "FD";
+  }
+  if (workedHours >= halfDayHours) {
+    return "HD";
+  }
+  return "A";
+}
+
 export default function BulkAttendanceAdjustmentsPage() {
   const { selectedBranchId: activeBranchId, setSelectedBranchId: setActiveBranchId, availableBranches } = useBranchContext();
 
@@ -319,6 +358,19 @@ export default function BulkAttendanceAdjustmentsPage() {
   // Table Matrix generated from real employee records
   const [dataMatrixOverride, setDataMatrixOverride] = useState<MatrixEmployee[] | null>(null);
 
+  // Organization Working Hours Configuration (GET /working-hours-config)
+  const { data: workingHoursConfig } = useWorkingHoursConfig();
+
+  const fullDayHours = useMemo(
+    () => parseHoursStrToDecimal(workingHoursConfig?.full_day_hours, 8.0),
+    [workingHoursConfig]
+  );
+  const halfDayHours = useMemo(
+    () => parseHoursStrToDecimal(workingHoursConfig?.half_day_hours, 4.0),
+    [workingHoursConfig]
+  );
+  const attendanceMode = workingHoursConfig?.attendance_mode || "consider_all_punch";
+
   const baseMatrix = useMemo<MatrixEmployee[]>(() => {
     const rawList = employeesQuery.data?.items || [];
     if (rawList.length === 0) {
@@ -330,8 +382,17 @@ export default function BulkAttendanceAdjustmentsPage() {
         const dayStr = day < 10 ? `0${day}` : `${day}`;
         const dateKey = `2026-07-${dayStr}`;
         const dateObj = new Date(2026, 6, day);
-        const isSunday = dateObj.getDay() === 0;
-        attendance[dateKey] = isSunday ? "WO" : (emp.employee_id % 7 === 0 ? "A" : "FD");
+        
+        // Worked hours evaluated against working hours config
+        const workedHours = emp.employee_id % 7 === 0 ? 0 : 8.0;
+
+        attendance[dateKey] = calculateAttendanceStatusFromWorkingHours(
+          dateObj,
+          workedHours,
+          fullDayHours,
+          halfDayHours,
+          attendanceMode
+        );
       }
       return {
         id: emp.employee_id,
@@ -346,7 +407,7 @@ export default function BulkAttendanceAdjustmentsPage() {
       };
     });
     return applyOverridesToMatrix(baseList, savedOverrides);
-  }, [employeesQuery.data, savedOverrides]);
+  }, [employeesQuery.data, savedOverrides, fullDayHours, halfDayHours, attendanceMode]);
 
   const dataMatrix = dataMatrixOverride || baseMatrix;
   const setDataMatrix = (updater: MatrixEmployee[] | ((prev: MatrixEmployee[]) => MatrixEmployee[])) => {

@@ -758,6 +758,7 @@ class ReportsService(BaseService):
             branch_ids=effective_branch_ids,
             dept_ids=effective_dept_ids,
             employee_id=query.employee_id,
+            shift_id=query.shift_id,
             sort_by=query.sort_by,
             sort_dir=query.sort_dir,
             page=query.page,
@@ -818,6 +819,7 @@ class ReportsService(BaseService):
                         employee_name=it["employee_name"],
                         department_name=it["department_name"],
                         designation_name=it["designation_name"],
+                        shift_name=it.get("shift_name"),
                         daily_punches={
                             k: DailyPunchCellSchema(**v) for k, v in it["daily_punches"].items()
                         },

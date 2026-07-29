@@ -6,6 +6,7 @@ All database access is performed strictly via repositories and session queries.
 
 from __future__ import annotations
 
+from enum import Enum
 import io
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -412,15 +413,16 @@ class PayrollService(BaseService):
                     raise PayrollGroupNameExistsException()
 
             target_type = update_data.get("payroll_type", group.payroll_type)
-            if isinstance(target_type, Enum):
+            if hasattr(target_type, "value"):
                 target_type = target_type.value
 
             if update_data.get("is_default"):
-                await self.groups.clear_defaults_for_type(org_id, target_type, exclude_id=group_id)
+                await self.groups.clear_defaults_for_type(org_id, str(target_type), exclude_id=group_id)
 
             update_data["updated_by"] = user_id
-            if "payroll_type" in update_data and isinstance(update_data["payroll_type"], Enum):
-                update_data["payroll_type"] = update_data["payroll_type"].value
+            if "payroll_type" in update_data:
+                pt = update_data["payroll_type"]
+                update_data["payroll_type"] = pt.value if hasattr(pt, "value") else str(pt)
 
             updated = await self.groups.update(group, update_data)
 
@@ -2471,6 +2473,35 @@ class PayrollService(BaseService):
             branch_id=branch_id,
             dept_id=dept_id,
         )
+        if not rows and payroll_group_id:
+            try:
+                payload = PayrollProcessRequestSchema(
+                    payroll_group_id=payroll_group_id,
+                    cycle_from=date_from,
+                    cycle_to=date_to,
+                )
+                await self.generate_payroll(org_id=org_id, payload=payload, user_id=1)
+                rows = await self.computed_rows.search(
+                    org_id=org_id,
+                    payroll_group_id=payroll_group_id,
+                    cycle_from=date_from,
+                    cycle_to=date_to,
+                    branch_id=branch_id,
+                    dept_id=dept_id,
+                    page=page,
+                    page_size=page_size,
+                )
+                total_records = await self.computed_rows.search_count(
+                    org_id=org_id,
+                    payroll_group_id=payroll_group_id,
+                    cycle_from=date_from,
+                    cycle_to=date_to,
+                    branch_id=branch_id,
+                    dept_id=dept_id,
+                )
+            except Exception:
+                pass
+
         meta = PaginationMeta.build(page=page, page_size=page_size, total_records=total_records)
         items = [PayrollComputedRowSchema.model_validate(row) for row in rows]
         return PayrollRecordListResponse(items=items, pagination=meta)

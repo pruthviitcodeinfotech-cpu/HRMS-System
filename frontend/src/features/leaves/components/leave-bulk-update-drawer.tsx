@@ -5,11 +5,14 @@ import { X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useAssignLeaveTypes, useAdjustLeaveBalance } from "../hooks";
 
 interface LeaveBulkUpdateDrawerProps {
   isOpen: boolean;
   onClose: () => void;
   selectedCount: number;
+  selectedEmployeeIds?: number[];
+  leaveTypes?: Array<{ id: number; name: string }>;
   leaveOptions?: string[];
   onSuccess?: (leaveType: string, balanceCount: number) => void;
 }
@@ -18,17 +21,24 @@ export function LeaveBulkUpdateDrawer({
   isOpen,
   onClose,
   selectedCount,
+  selectedEmployeeIds = [],
+  leaveTypes = [],
   leaveOptions = ["Comp Off", "Casual Leave", "Sick Leave", "Paid Leave"],
   onSuccess,
 }: LeaveBulkUpdateDrawerProps) {
   const [chooseLeave, setChooseLeave] = useState<string>("");
   const [balanceCount, setBalanceCount] = useState<string>("");
   const [remarks, setRemarks] = useState<string>("");
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+
+  const assignMutation = useAssignLeaveTypes();
+  const adjustMutation = useAdjustLeaveBalance();
 
   const handleClose = useCallback(() => {
     setChooseLeave("");
     setBalanceCount("");
     setRemarks("");
+    setIsSubmitting(false);
     onClose();
   }, [onClose]);
 
@@ -43,7 +53,7 @@ export function LeaveBulkUpdateDrawer({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isOpen, handleClose]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!chooseLeave) {
@@ -51,20 +61,65 @@ export function LeaveBulkUpdateDrawer({
       return;
     }
 
-    if (!balanceCount || isNaN(Number(balanceCount))) {
+    if (balanceCount === "" || isNaN(Number(balanceCount))) {
       toast.error("Please enter a valid balance count.");
       return;
     }
 
-    const countNum = Number(balanceCount);
-    toast.success(
-      `Leave balance for "${chooseLeave}" updated to ${countNum} for ${selectedCount} employee(s) successfully!`
-    );
-
-    if (onSuccess) {
-      onSuccess(chooseLeave, countNum);
+    if (!selectedEmployeeIds || selectedEmployeeIds.length === 0) {
+      toast.error("Please select at least one employee for bulk leave update.");
+      return;
     }
-    handleClose();
+
+    const countNum = Number(balanceCount);
+    const matchedType = leaveTypes.find((lt) => lt.name === chooseLeave);
+    const leaveTypeId = matchedType?.id;
+
+    if (!leaveTypeId) {
+      toast.error(`Leave type "${chooseLeave}" not found.`);
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      // 1. Assign leave type to target employees with allocated days
+      await assignMutation.mutateAsync({
+        employee_ids: selectedEmployeeIds,
+        leave_type_ids: [leaveTypeId],
+        allocated_days: countNum,
+        is_assigned: true,
+      });
+
+      // 2. Adjust closing balance to countNum for each target employee
+      await Promise.all(
+        selectedEmployeeIds.map((empId) =>
+          adjustMutation.mutateAsync({
+            employeeId: empId,
+            data: {
+              leave_type_id: leaveTypeId,
+              new_balance: countNum,
+              cycle_year: new Date().getFullYear(),
+              remarks: remarks.trim() || `Bulk leave update to ${countNum}`,
+            },
+          })
+        )
+      );
+
+      toast.success(
+        `Leave balance for "${chooseLeave}" updated to ${countNum} for ${selectedEmployeeIds.length} employee(s) successfully!`
+      );
+
+      if (onSuccess) {
+        onSuccess(chooseLeave, countNum);
+      }
+      handleClose();
+    } catch (err: unknown) {
+      console.error("Bulk leave update failed:", err);
+      const msg = (err as { message?: string })?.message || "Failed to update leave balances.";
+      toast.error(msg);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   if (!isOpen) return null;
@@ -167,10 +222,11 @@ export function LeaveBulkUpdateDrawer({
             <Button
               type="submit"
               form="bulk-update-form"
+              disabled={isSubmitting}
               size="sm"
-              className="h-8 px-5 text-xs font-semibold bg-[#0B85C9] hover:bg-[#0974b0] text-white rounded shadow-2xs cursor-pointer"
+              className="h-8 px-5 text-xs font-semibold bg-[#0B85C9] hover:bg-[#0974b0] text-white rounded shadow-2xs cursor-pointer disabled:opacity-50"
             >
-              Update Leave Balance
+              {isSubmitting ? "Updating..." : "Update Leave Balance"}
             </Button>
           </div>
         </div>

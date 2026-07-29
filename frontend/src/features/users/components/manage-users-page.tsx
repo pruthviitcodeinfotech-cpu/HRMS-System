@@ -4,7 +4,6 @@ import { useState, useRef, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import {
   Search,
-  RotateCw,
   MoreVertical,
   ChevronsUpDown,
   Eye,
@@ -14,11 +13,9 @@ import {
   UserX,
   Trash2,
   AlertTriangle,
-  ChevronDown,
   User,
   X,
   Plus,
-  RefreshCw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -36,8 +33,6 @@ import {
   useAssignUserRole,
   useRemoveUserRole,
 } from "../hooks/use-users";
-import { useDepartmentOptions, useDesignationOptions } from "@/features/employees/hooks";
-import { useRightsTemplates } from "../hooks/use-rights-templates";
 
 // Dialog Components
 import { UserFormModal, UserFormData } from "./user-form-modal";
@@ -53,20 +48,13 @@ import { UserSummary } from "../services/user-service";
 type SortField = "name" | "phone" | "email" | "template";
 type SortOrder = "asc" | "desc";
 
-const STATUS_OPTIONS = ["All", "Active", "Inactive"];
-
 export function ManageUsersPage() {
   const router = useRouter();
   const { user: currentUser } = useAuth();
 
-  // Search & Filter State
+  // Search State
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
-
-  const [selectedDept, setSelectedDept] = useState("All Departments");
-  const [selectedDesig, setSelectedDesig] = useState("All Designations");
-  const [selectedTemplate, setSelectedTemplate] = useState("All Templates");
-  const [selectedStatus, setSelectedStatus] = useState("All");
 
   // Pagination State
   const [currentPage, setCurrentPage] = useState(1);
@@ -120,10 +108,6 @@ export function ManageUsersPage() {
     };
   }, []);
 
-  // Compute status filter param
-  const isActiveParam =
-    selectedStatus === "Active" ? true : selectedStatus === "Inactive" ? false : undefined;
-
   // React Query Hook - Live Backend API GET /api/v1/users
   const {
     data: paginatedData,
@@ -131,18 +115,11 @@ export function ManageUsersPage() {
     isError,
     error,
     refetch,
-    isFetching,
   } = useUsers({
     page: currentPage,
     page_size: pageSize,
     search: debouncedSearch || undefined,
-    is_active: isActiveParam,
   });
-
-  // Live Master Data Lookups
-  const { data: departmentOptions } = useDepartmentOptions();
-  const { data: designationOptions } = useDesignationOptions();
-  const { data: templateData } = useRightsTemplates({});
 
   const rawUsersList = paginatedData?.items || [];
   const totalRecords = paginatedData?.pagination?.total_records ?? paginatedData?.total_records ?? rawUsersList.length;
@@ -157,14 +134,9 @@ export function ManageUsersPage() {
   const assignRoleMutation = useAssignUserRole();
   const removeRoleMutation = useRemoveUserRole();
 
-  // Client-side Sorting & Filtering by department/designation/template
+  // Client-side Sorting
   const filteredAndSortedUsers = useMemo(() => {
     let result = [...rawUsersList];
-
-    // Filter by Template if selected
-    if (selectedTemplate !== "All Templates") {
-      result = result.filter((u) => u.template?.name === selectedTemplate);
-    }
 
     // Sort by field
     return result.sort((a, b) => {
@@ -189,7 +161,7 @@ export function ManageUsersPage() {
       if (aVal > bVal) return sortOrder === "asc" ? 1 : -1;
       return 0;
     });
-  }, [rawUsersList, selectedTemplate, sortField, sortOrder]);
+  }, [rawUsersList, sortField, sortOrder]);
 
   const handleSortToggle = (field: SortField) => {
     if (sortField === field) {
@@ -198,14 +170,6 @@ export function ManageUsersPage() {
       setSortField(field);
       setSortOrder("asc");
     }
-  };
-
-  const handleResetFilters = () => {
-    setSearchQuery("");
-    setSelectedDept("All Departments");
-    setSelectedDesig("All Designations");
-    setSelectedTemplate("All Templates");
-    setSelectedStatus("All");
   };
 
   // Handlers for Opening Modals
@@ -343,137 +307,27 @@ export function ManageUsersPage() {
         </div>
       </div>
 
-      {/* Toolbar: Search Input + Filter Dropdowns + Action Buttons */}
-      <div className="bg-white dark:bg-slate-900 p-4 border border-slate-200 dark:border-slate-800 rounded-lg shadow-2xs space-y-3">
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 items-center">
-          {/* Search Bar Input */}
-          <div className="relative lg:col-span-2">
-            <Search className="h-4 w-4 text-slate-400 absolute left-3 top-2.5 pointer-events-none" />
-            <Input
-              type="text"
-              placeholder="Search by Name, Phone Number or Email"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              aria-label="Search by Name, Phone Number or Email"
-              className="pl-9 pr-8 text-xs bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 h-9 rounded-md focus-visible:ring-2 focus-visible:ring-blue-500"
-            />
-            {searchQuery && (
-              <button
-                onClick={() => setSearchQuery("")}
-                aria-label="Clear search input"
-                className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            )}
-          </div>
-
-          {/* Department Filter */}
-          <div>
-            <div className="relative">
-              <select
-                value={selectedDept}
-                onChange={(e) => setSelectedDept(e.target.value)}
-                aria-label="Department Filter"
-                className="w-full appearance-none bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-md px-3 py-2 pr-8 text-xs font-medium text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
-              >
-                <option value="All Departments">All Departments</option>
-                {departmentOptions?.map((dept: any) => (
-                  <option key={dept.id || dept.dept_name} value={dept.dept_name}>
-                    {dept.dept_name}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown className="h-3.5 w-3.5 text-slate-500 absolute right-2.5 top-2.5 pointer-events-none" />
-            </div>
-          </div>
-
-          {/* Designation Filter */}
-          <div>
-            <div className="relative">
-              <select
-                value={selectedDesig}
-                onChange={(e) => setSelectedDesig(e.target.value)}
-                aria-label="Designation Filter"
-                className="w-full appearance-none bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-md px-3 py-2 pr-8 text-xs font-medium text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
-              >
-                <option value="All Designations">All Designations</option>
-                {designationOptions?.map((desig: any) => (
-                  <option key={desig.id || desig.designation_name} value={desig.designation_name}>
-                    {desig.designation_name}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown className="h-3.5 w-3.5 text-slate-500 absolute right-2.5 top-2.5 pointer-events-none" />
-            </div>
-          </div>
-
-          {/* Rights Template Filter */}
-          <div>
-            <div className="relative">
-              <select
-                value={selectedTemplate}
-                onChange={(e) => setSelectedTemplate(e.target.value)}
-                aria-label="Rights Template Filter"
-                className="w-full appearance-none bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-md px-3 py-2 pr-8 text-xs font-medium text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
-              >
-                <option value="All Templates">All Templates</option>
-                {templateData?.items?.map((tmpl) => (
-                  <option key={tmpl.id} value={tmpl.name}>
-                    {tmpl.name}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown className="h-3.5 w-3.5 text-slate-500 absolute right-2.5 top-2.5 pointer-events-none" />
-            </div>
-          </div>
-
-          {/* Status Filter */}
-          <div>
-            <div className="relative">
-              <select
-                value={selectedStatus}
-                onChange={(e) => setSelectedStatus(e.target.value)}
-                aria-label="Status Filter"
-                className="w-full appearance-none bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-md px-3 py-2 pr-8 text-xs font-medium text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
-              >
-                {STATUS_OPTIONS.map((opt) => (
-                  <option key={opt} value={opt}>
-                    {opt}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown className="h-3.5 w-3.5 text-slate-500 absolute right-2.5 top-2.5 pointer-events-none" />
-            </div>
-          </div>
-        </div>
-
-        {/* Action Buttons Row */}
-        <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-slate-800">
-          <div className="flex items-center space-x-2">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => refetch()}
-              disabled={isFetching}
-              aria-label="Refresh Data"
-              className="bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold px-3 py-1.5 h-8 rounded-md hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer"
+      {/* Toolbar: Search Input */}
+      <div className="bg-white dark:bg-slate-900 p-4 border border-slate-200 dark:border-slate-800 rounded-lg shadow-2xs">
+        <div className="relative max-w-md">
+          <Search className="h-4 w-4 text-slate-400 absolute left-3 top-2.5 pointer-events-none" />
+          <Input
+            type="text"
+            placeholder="Search by Name, Phone Number or Email"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            aria-label="Search by Name, Phone Number or Email"
+            className="pl-9 pr-8 text-xs bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 h-9 rounded-md focus-visible:ring-2 focus-visible:ring-blue-500"
+          />
+          {searchQuery && (
+            <button
+              onClick={() => setSearchQuery("")}
+              aria-label="Clear search input"
+              className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
             >
-              <RotateCw className={`h-3.5 w-3.5 mr-1.5 text-slate-500 ${isFetching ? "animate-spin" : ""}`} />
-              <span>Refresh</span>
-            </Button>
-
-            <Button
-              type="button"
-              variant="outline"
-              onClick={handleResetFilters}
-              aria-label="Reset Filters"
-              className="bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold px-3 py-1.5 h-8 rounded-md hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer"
-            >
-              <RefreshCw className="h-3.5 w-3.5 mr-1.5 text-slate-500" />
-              <span>Reset Filters</span>
-            </Button>
-          </div>
+              <X className="h-4 w-4" />
+            </button>
+          )}
         </div>
       </div>
 

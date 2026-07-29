@@ -58,6 +58,10 @@ class ReportQueryRequest(PaginationRequest):
         default=None,
         description="Filter records by employee identifier.",
     )
+    shift_id: int | None = Field(
+        default=None,
+        description="Filter records by shift identifier.",
+    )
     status: str | None = Field(
         default=None,
         description="Filter records by status value.",
@@ -340,6 +344,7 @@ class DailyPunchMatrixRowSchema(BaseSchema):
     employee_name: str = Field(..., description="Full employee name.")
     department_name: str = Field(..., description="Department name.")
     designation_name: str = Field(..., description="Designation name.")
+    shift_name: str | None = Field(default=None, description="Assigned shift name.")
     daily_punches: dict[str, DailyPunchCellSchema] = Field(
         default_factory=dict,
         description="Map of date string (YYYY-MM-DD) to punch cell details.",

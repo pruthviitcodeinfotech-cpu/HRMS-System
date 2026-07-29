@@ -193,6 +193,27 @@ export const useAdjustLeaveBalance = () => {
   });
 };
 
+/**
+ * Assign leave types to employees (POST /leaves/assign).
+ */
+export const useAssignLeaveTypes = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (data: {
+      employee_ids: number[];
+      leave_type_ids: number[];
+      allocated_days?: number;
+      is_assigned?: boolean;
+    }) => {
+      const response = await leaveService.assignLeaveTypes(data);
+      return response.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: leaveKeys.all });
+    },
+  });
+};
+
 export const useLeaveRequests = (
   params: { page?: number; page_size?: number; employee_id?: number; status?: string; branch_id?: number } = {}
 ) => {
