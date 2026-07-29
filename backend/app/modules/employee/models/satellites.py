@@ -78,9 +78,31 @@ class EmployeeDocument(Base):
         nullable=False,
     )
     document_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    category: Mapped[str] = mapped_column(
+        String(50), nullable=False, server_default=text("'other'")
+    )
     file_url: Mapped[str] = mapped_column(Text, nullable=False)
     original_filename: Mapped[str | None] = mapped_column(String(255))
-    file_size_bytes: Mapped[int | None] = mapped_column(Integer)  # data column (not a key)
+    file_size_bytes: Mapped[int | None] = mapped_column(Integer)
+    mime_type: Mapped[str | None] = mapped_column(String(100))
+    version_number: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("1")
+    )
+    previous_version_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "employee_documents.document_id",
+            name="fk_employee_documents_previous_version_id",
+            ondelete="SET NULL",
+        ),
+    )
+    expiry_date: Mapped[date | None] = mapped_column(Date)
+    is_confidential: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    approval_status: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default=text("'approved'")
+    )
     # DEFERRED cross-module FK -> users.id
     uploaded_by: Mapped[int | None] = mapped_column(BigInteger)
     is_deleted: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))

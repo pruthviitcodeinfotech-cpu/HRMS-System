@@ -24,6 +24,8 @@ import {
   useCreateShift,
   useUpdateShift,
   useDeleteShift,
+  useWorkingHoursConfig,
+  useUpdateWorkingHoursConfig,
 } from "@/features/shifts/hooks";
 import type {
   ShiftSummarySchema,
@@ -106,6 +108,43 @@ export default function ShiftsPage() {
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   // ---- React Query ----
+  const workingHoursConfigQuery = useWorkingHoursConfig(isWorkingHoursOpen);
+  const updateWorkingHoursMutation = useUpdateWorkingHoursConfig();
+
+  useEffect(() => {
+    if (workingHoursConfigQuery.data) {
+      const config = workingHoursConfigQuery.data;
+      setWorkingHoursType(config.working_hours_mode || "fixed");
+      setFullDayHours(config.full_day_hours || "08:00");
+      setHalfDayHours(config.half_day_hours || "04:00");
+      let modeKey: "all" | "first_last" | "single" | "default" = "all";
+      if (config.attendance_mode === "first_and_last_punch_only") modeKey = "first_last";
+      else if (config.attendance_mode === "full_day_on_single_punch") modeKey = "single";
+      else if (config.attendance_mode === "default_full_day") modeKey = "default";
+      setAttendanceMode(modeKey);
+    }
+  }, [workingHoursConfigQuery.data]);
+
+  const handleSaveWorkingHours = async () => {
+    let modeBackend = "consider_all_punch";
+    if (attendanceMode === "first_last") modeBackend = "first_and_last_punch_only";
+    else if (attendanceMode === "single") modeBackend = "full_day_on_single_punch";
+    else if (attendanceMode === "default") modeBackend = "default_full_day";
+
+    try {
+      await updateWorkingHoursMutation.mutateAsync({
+        working_hours_mode: workingHoursType,
+        full_day_hours: fullDayHours,
+        half_day_hours: halfDayHours,
+        attendance_mode: modeBackend as any,
+      });
+      toast.success("Working hours setting updated successfully.");
+      setIsWorkingHoursOpen(false);
+    } catch (err) {
+      toast.error(getErrMsg(err, "Failed to update working hours setting."));
+    }
+  };
+
   const shiftsQuery = useShifts({
     page: currentPage,
     page_size: pageSize,
@@ -898,21 +937,28 @@ export default function ShiftsPage() {
                   <div className="border border-blue-100 dark:border-blue-900/50 rounded-xl overflow-hidden">
                     <button
                       onClick={() => setIsConfigHistoryOpen(!isConfigHistoryOpen)}
-                      className="w-full flex items-center justify-between p-3.5 bg-blue-50 dark:bg-slate-950 text-xs font-bold text-slate-700 dark:text-slate-205 focus:outline-none"
+                      className="w-full flex items-center justify-between p-3.5 bg-blue-50 dark:bg-slate-950 text-xs font-bold text-slate-700 dark:text-slate-200 focus:outline-none"
                     >
                       <span>Configuration History</span>
                       {isConfigHistoryOpen ? <ChevronUp className="h-4 w-4 text-slate-400" /> : <ChevronDown className="h-4 w-4 text-slate-400" />}
                     </button>
                     {isConfigHistoryOpen && (
                       <div className="p-3.5 bg-white dark:bg-slate-900 border-t border-blue-50 dark:border-blue-900/50 space-y-2 text-[11px] text-slate-500 dark:text-slate-400">
-                        <div className="flex justify-between border-b border-slate-50 dark:border-slate-800 pb-1.5">
-                          <span className="font-semibold">Fixed Working Hours: 08:00</span>
-                          <span>Today, 12:44 PM</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="font-semibold">Attendance Mode: Consider All Punch</span>
-                          <span>Yesterday, 09:30 AM</span>
-                        </div>
+                        {workingHoursConfigQuery.data?.history && workingHoursConfigQuery.data.history.length > 0 ? (
+                          workingHoursConfigQuery.data.history.map(h => (
+                            <div key={h.history_id} className="flex justify-between border-b border-slate-50 dark:border-slate-800 pb-1.5 last:border-0">
+                              <span className="font-semibold">
+                                {h.working_hours_mode === "fixed" ? "Fixed Hours" : "Shift-wise"}: Full {h.full_day_hours || "08:00"} / Half {h.half_day_hours || "04:00"} ({h.attendance_mode})
+                              </span>
+                              <span>{h.effective_from || (h.changed_at ? new Date(h.changed_at).toLocaleDateString() : "")}</span>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="flex justify-between">
+                            <span className="font-semibold">Mode: {workingHoursType === "fixed" ? "Fixed Working Hours" : "Shift Wise"} ({fullDayHours} / {halfDayHours})</span>
+                            <span>Active Policy</span>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -925,13 +971,11 @@ export default function ShiftsPage() {
                 <Button
                   variant="primary"
                   size="sm"
-                  onClick={() => {
-                    toast.success("Working hours setting updated.");
-                    setIsWorkingHoursOpen(false);
-                  }}
+                  onClick={handleSaveWorkingHours}
+                  disabled={updateWorkingHoursMutation.isPending}
                   className="text-xs h-9 px-6 font-semibold bg-[#0B85C9] hover:bg-[#0974b0] text-white shadow-sm rounded-lg"
                 >
-                  Save
+                  {updateWorkingHoursMutation.isPending ? "Saving..." : "Save"}
                 </Button>
               </div>
             </div>

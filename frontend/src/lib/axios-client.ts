@@ -107,8 +107,10 @@ axiosClient.interceptors.response.use(
         // Clear auth store session since refresh failed (expired or invalid refresh token)
         useAuthStore.getState().clearSession();
         if (typeof window !== "undefined") {
-          const currentPath = window.location.pathname + window.location.search;
-          window.location.href = `/login?redirectTo=${encodeURIComponent(currentPath)}`;
+          const currentPath = window.location.pathname;
+          if (!currentPath.startsWith("/login")) {
+            window.location.href = `/login?redirectTo=${encodeURIComponent(currentPath + window.location.search)}`;
+          }
         }
         return Promise.reject(handleApiError(refreshError));
       } finally {

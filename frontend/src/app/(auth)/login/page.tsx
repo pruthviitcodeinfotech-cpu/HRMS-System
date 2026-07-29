@@ -85,7 +85,10 @@ export default function LoginPage() {
           }
 
           const redirectTo = searchParams.get("redirectTo") || "/dashboard";
-          const targetUrl = redirectTo.startsWith("/") ? redirectTo : "/dashboard";
+          const targetUrl =
+            redirectTo.startsWith("/") && !redirectTo.startsWith("/login")
+              ? redirectTo
+              : "/dashboard";
 
           toast.success("Welcome back! Loading your dashboard workspace...");
           window.location.href = targetUrl;

@@ -26,9 +26,9 @@ const buildListQuery = (params: EmployeeListParams): string => {
   if (params.page) query.append("page", String(params.page));
   if (params.page_size) query.append("page_size", String(params.page_size));
   if (params.q) query.append("q", params.q);
-  if (params.branch_id) query.append("branch_id", String(params.branch_id));
-  if (params.department_id) query.append("department_id", String(params.department_id));
-  if (params.designation_id) query.append("designation_id", String(params.designation_id));
+  if (params.branch_id !== undefined && params.branch_id !== null) query.append("branch_id", String(params.branch_id));
+  if (params.department_id !== undefined && params.department_id !== null) query.append("department_id", String(params.department_id));
+  if (params.designation_id !== undefined && params.designation_id !== null) query.append("designation_id", String(params.designation_id));
   if (params.status) query.append("status", params.status);
   if (params.sort_by) query.append("sort_by", params.sort_by);
   if (params.sort_order) query.append("sort_order", params.sort_order);
@@ -53,14 +53,14 @@ export const employeeService = {
   },
 
   getDepartmentOptions: async (params?: { branch_id?: number }): Promise<ApiResponse<LookupListResponse<DepartmentOption>>> => {
-    const branchParam = params?.branch_id ? `&branch_id=${params.branch_id}` : "";
+    const branchParam = params?.branch_id !== undefined && params?.branch_id !== null ? `&branch_id=${params.branch_id}` : "";
     return apiClient.get<ApiResponse<LookupListResponse<DepartmentOption>>>(
       `/departments?page_size=200&is_active=true&sort_by=dept_name&sort_order=asc${branchParam}`
     );
   },
 
   getDesignationOptions: async (params?: { branch_id?: number }): Promise<ApiResponse<LookupListResponse<DesignationOption>>> => {
-    const branchParam = params?.branch_id ? `&branch_id=${params.branch_id}` : "";
+    const branchParam = params?.branch_id !== undefined && params?.branch_id !== null ? `&branch_id=${params.branch_id}` : "";
     return apiClient.get<ApiResponse<LookupListResponse<DesignationOption>>>(
       `/designations?page_size=200&is_active=true&sort_by=designation_name&sort_order=asc${branchParam}`
     );

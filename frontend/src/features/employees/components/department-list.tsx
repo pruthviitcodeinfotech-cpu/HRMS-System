@@ -290,17 +290,6 @@ export function DepartmentList() {
               className="pl-9 pr-4 h-9 w-full text-xs"
             />
           </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => {
-                departmentsQuery.refetch();
-              }}
-              className="text-[10px] text-muted-foreground hover:text-foreground px-2 py-1 border border-border rounded-md transition-colors cursor-pointer"
-            >
-              Reload Data
-            </button>
-          </div>
         </div>
 
         {/* Table representation */}

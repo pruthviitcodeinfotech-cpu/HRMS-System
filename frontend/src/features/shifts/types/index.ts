@@ -326,4 +326,38 @@ export interface ShiftResolveResponse {
   resolution_source: "roster" | "weekoff" | "assignment" | "default";
 }
 
+// ---------------------------------------------------------------------------
+// Working Hours Configuration
+// ---------------------------------------------------------------------------
+
+export interface WorkingHoursConfigHistorySchema {
+  history_id: number;
+  working_hours_mode: "fixed" | "shift_wise";
+  full_day_hours: string | null;
+  half_day_hours: string | null;
+  attendance_mode: string;
+  effective_from: string;
+  effective_to?: string | null;
+  changed_at?: string | null;
+}
+
+export interface WorkingHoursConfigResponse {
+  config_id?: number | null;
+  org_id: number;
+  working_hours_mode: "fixed" | "shift_wise";
+  full_day_hours: string;
+  half_day_hours: string;
+  attendance_mode: "consider_all_punch" | "first_and_last_punch_only" | "full_day_on_single_punch" | "default_full_day";
+  effective_from?: string | null;
+  history: WorkingHoursConfigHistorySchema[];
+}
+
+export interface WorkingHoursConfigUpdateRequest {
+  working_hours_mode: "fixed" | "shift_wise";
+  full_day_hours: string;
+  half_day_hours: string;
+  attendance_mode: "consider_all_punch" | "first_and_last_punch_only" | "full_day_on_single_punch" | "default_full_day";
+  effective_from?: string | null;
+}
+
 

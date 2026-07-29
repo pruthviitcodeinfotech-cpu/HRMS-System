@@ -292,11 +292,15 @@ class DashboardRepository(BaseRepository[Employee]):
         """Fetch target date's attendance counts grouped by shift."""
         from app.modules.shift.models import Shift, ShiftAssignment
 
-        # 1. Fetch all non-deleted shifts in the organization
-        shifts_stmt = select(Shift).where(
+        # 1. Fetch non-deleted shifts in the organization matching branch scope
+        shifts_conds = [
             Shift.org_id == org_id,
             Shift.is_deleted.is_(False),
-        )
+        ]
+        if branch_ids:
+            shifts_conds.append(or_(Shift.branch_id.in_(branch_ids), Shift.branch_id.is_(None)))
+
+        shifts_stmt = select(Shift).where(*shifts_conds)
         shifts_res = await self.session.execute(shifts_stmt)
         shifts = shifts_res.scalars().all()
 

@@ -28,6 +28,7 @@ organizations (RESTRICT), updated_by -> users (SET NULL). Nothing deferred.
 """
 
 from datetime import datetime, time
+from decimal import Decimal
 
 from sqlalchemy import (
     BigInteger,
@@ -35,6 +36,8 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Index,
+    Integer,
+    Numeric,
     String,
     Text,
     Time,
@@ -173,4 +176,92 @@ class OrgSalarySlipSettings(Base):
 
     __table_args__ = (
         Index("ix_org_salary_slip_settings_org_id_branch_id", "org_id", "branch_id"),
+    )
+
+
+class OrgPolicySettings(Base):
+    __tablename__ = "org_policy_settings"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    org_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "organizations.org_id",
+            name="fk_org_policy_settings_org_id_organizations",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+    )
+    branch_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "branches.branch_id",
+            name="fk_org_policy_settings_branch_id_branches",
+            ondelete="RESTRICT",
+        ),
+        nullable=True,
+    )
+
+    # Attendance Policy
+    grace_period_minutes: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("15")
+    )
+    late_penalty_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    overtime_buffer_minutes: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("30")
+    )
+    overtime_multiplier: Mapped[Decimal] = mapped_column(
+        Numeric(4, 2), nullable=False, server_default=text("1.50")
+    )
+
+    # Security Policy
+    password_min_length: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("8")
+    )
+    password_require_special: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("true")
+    )
+    session_timeout_minutes: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("60")
+    )
+    max_failed_login_attempts: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("5")
+    )
+    lockout_duration_minutes: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("15")
+    )
+
+    # Notification Policy
+    email_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("true")
+    )
+    sms_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    push_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("true")
+    )
+    sender_email: Mapped[str] = mapped_column(
+        String(200), nullable=False, server_default=text("'noreply@hrms.com'")
+    )
+
+    updated_by: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "users.id",
+            name="fk_org_policy_settings_updated_by_users",
+            ondelete="SET NULL",
+        ),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+
+    __table_args__ = (
+        Index("ix_org_policy_settings_org_id_branch_id", "org_id", "branch_id"),
     )

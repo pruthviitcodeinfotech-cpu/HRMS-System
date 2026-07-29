@@ -168,7 +168,7 @@ export const EmployeeList = () => {
       page: currentPage,
       page_size: pageSize,
       q: debouncedSearch.trim() || undefined,
-      branch_id: selectedBranch ? Number(selectedBranch) : undefined,
+      branch_id: selectedBranch ? Number(selectedBranch) : 0,
       department_id: selectedDept ? Number(selectedDept) : undefined,
       designation_id: selectedDesignation ? Number(selectedDesignation) : undefined,
       status: selectedStatusFilter ? (selectedStatusFilter as EmploymentStatus) : undefined,
@@ -196,8 +196,8 @@ export const EmployeeList = () => {
 
   // Filter dropdown sources (organization lookups) + page-heading count
   const { data: branchOptions } = useBranchOptions();
-  const { data: departmentOptions } = useDepartmentOptions();
-  const { data: designationOptions } = useDesignationOptions();
+  const { data: departmentOptions } = useDepartmentOptions(selectedBranch ? Number(selectedBranch) : 0);
+  const { data: designationOptions } = useDesignationOptions(selectedBranch ? Number(selectedBranch) : 0);
   const { data: activeEmployeeCount } = useActiveEmployeeCount();
 
   // Active Dropdowns state
@@ -396,6 +396,7 @@ export const EmployeeList = () => {
 
   const [formData, setFormData] = useState({
     employee_id: "",
+    employee_code: "",
     name: "",
     display_name: "",
     mobile_number: "",
@@ -591,6 +592,7 @@ export const EmployeeList = () => {
             if (details) {
               setFormData({
                 employee_id: String(details.employee_id),
+                employee_code: details.employee_code || "",
                 name: details.employee_name || "",
                 display_name: details.display_name || "",
                 mobile_number: details.mobile_number || "",
@@ -727,6 +729,7 @@ export const EmployeeList = () => {
       const { axiosClient } = await import("@/lib/axios-client");
 
       const payload = {
+        employee_code: formData.employee_code.trim() || undefined,
         employee_name: formData.name.trim(),
         display_name: formData.display_name.trim() || formData.name.trim(),
         gender: formData.gender,
@@ -803,6 +806,7 @@ export const EmployeeList = () => {
       const { axiosClient } = await import("@/lib/axios-client");
 
       const payload = {
+        employee_code: formData.employee_code.trim() || undefined,
         employee_name: formData.name.trim(),
         display_name: formData.display_name.trim() || formData.name.trim(),
         gender: formData.gender,
@@ -1203,6 +1207,7 @@ export const EmployeeList = () => {
               onClick={() => {
                 setFormData({
                   employee_id: "",
+                  employee_code: "",
                   name: "",
                   display_name: "",
                   mobile_number: "",
@@ -1528,7 +1533,7 @@ export const EmployeeList = () => {
         // NORMAL DATA STATE UI
         return (
           <div className="space-y-4">
-            <div className="w-full overflow-x-auto rounded-xl border border-border bg-card shadow-xs">
+            <div className="w-full overflow-x-auto rounded-xl border border-border bg-card shadow-xs min-h-[220px]">
               <table className="w-full text-left border-collapse text-sm text-foreground">
                 <thead className="bg-[#f0f4f9] dark:bg-slate-900 border-b border-border font-semibold text-xs text-muted-foreground uppercase tracking-wider">
                   <tr>
@@ -1560,7 +1565,9 @@ export const EmployeeList = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
-                  {paginatedEmployees.map(emp => (
+                  {paginatedEmployees.map((emp, index) => {
+                    const isNearBottom = index >= Math.max(0, paginatedEmployees.length - 3);
+                    return (
                     <tr
                       key={emp.id}
                       className={`hover:bg-muted/20 transition-colors ${
@@ -1657,7 +1664,9 @@ export const EmployeeList = () => {
                                   {activeStatusRowId === emp.id && (
                                     <div
                                       ref={statusMenuRef}
-                                      className="absolute left-4 top-10 mt-1 w-44 bg-card border border-border rounded-xl shadow-lg p-1.5 z-50 animate-in fade-in duration-100 space-y-0.5"
+                                      className={`absolute left-4 w-44 bg-card border border-border rounded-xl shadow-lg p-1.5 z-50 animate-in fade-in duration-100 space-y-0.5 ${
+                                        isNearBottom ? "bottom-full mb-1" : "top-10 mt-1"
+                                      }`}
                                     >
                                       {UI_STATUSES.map((statusVal) => {
                                         const isSelected = emp.status === statusVal;
@@ -1715,7 +1724,9 @@ export const EmployeeList = () => {
                         {activeActionRowId === emp.id && (
                           <div
                             ref={actionMenuRef}
-                            className="absolute right-12 top-2 mt-1 w-44 bg-card border border-border rounded-lg shadow-lg py-1.5 z-50 animate-in fade-in duration-100"
+                            className={`absolute right-12 w-44 bg-card border border-border rounded-lg shadow-lg py-1.5 z-50 animate-in fade-in duration-100 ${
+                              isNearBottom ? "bottom-1" : "top-2 mt-1"
+                            }`}
                           >
                             <button
                               onClick={() => handleActionClick("shift_logs", emp)}
@@ -1761,77 +1772,78 @@ export const EmployeeList = () => {
                         )}
                       </td>
                     </tr>
-                  ))}
+                  );
+                  })}
                 </tbody>
               </table>
-            </div>
 
-            {/* Table Footer / Pagination */}
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pt-2.5">
-              <span className="text-xs font-semibold text-muted-foreground/80">
-                Showing {Math.min((currentPage - 1) * pageSize + 1, totalRecords)} to{" "}
-                {Math.min(currentPage * pageSize, totalRecords)} of {totalRecords} Results
-              </span>
+              {/* Table Footer / Pagination */}
+              <div className="p-4 border-t border-border flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-muted/5">
+                <span className="text-xs font-semibold text-muted-foreground/80">
+                  Showing {Math.min((currentPage - 1) * pageSize + 1, totalRecords)} to{" "}
+                  {Math.min(currentPage * pageSize, totalRecords)} of {totalRecords} Results
+                </span>
 
-              <div className="flex flex-wrap items-center gap-3">
-                {/* Page Size select */}
-                <div className="flex items-center space-x-1.5">
-                  <select
-                    value={pageSize}
-                    onChange={e => {
-                      setPageSize(Number(e.target.value));
-                      setCurrentPage(1);
-                    }}
-                    className="px-2.5 py-1 text-xs rounded-md border border-input bg-card text-foreground font-semibold focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary cursor-pointer"
-                  >
-                    <option value={10}>10 / Page</option>
-                    <option value={20}>20 / Page</option>
-                    <option value={50}>50 / Page</option>
-                  </select>
-                </div>
+                <div className="flex flex-wrap items-center gap-3">
+                  {/* Page Size select */}
+                  <div className="flex items-center space-x-1.5">
+                    <select
+                      value={pageSize}
+                      onChange={e => {
+                        setPageSize(Number(e.target.value));
+                        setCurrentPage(1);
+                      }}
+                      className="px-2.5 py-1 text-xs rounded-md border border-input bg-card text-foreground font-semibold focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary cursor-pointer"
+                    >
+                      <option value={10}>10 / Page</option>
+                      <option value={20}>20 / Page</option>
+                      <option value={50}>50 / Page</option>
+                    </select>
+                  </div>
 
-                {/* Pagination Controls */}
-                <div className="flex items-center space-x-1">
-                  <button
-                    onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
-                    disabled={currentPage === 1}
-                    className="p-1 px-2.5 text-xs font-semibold border border-border bg-card rounded-md hover:bg-muted/40 disabled:opacity-40 disabled:pointer-events-none transition-colors cursor-pointer flex items-center gap-1"
-                  >
-                    <ChevronLeft className="h-3.5 w-3.5" />
-                    Previous
-                  </button>
+                  {/* Pagination Controls */}
+                  <div className="flex items-center space-x-1">
+                    <button
+                      onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                      disabled={currentPage === 1}
+                      className="p-1 px-2.5 text-xs font-semibold border border-border bg-card rounded-md hover:bg-muted/40 disabled:opacity-40 disabled:pointer-events-none transition-colors cursor-pointer flex items-center gap-1"
+                    >
+                      <ChevronLeft className="h-3.5 w-3.5" />
+                      Previous
+                    </button>
 
-                  {Array.from({ length: totalPages }, (_, i) => i + 1).map(p => {
-                    // Show only around current page if there are many pages
-                    if (totalPages > 5 && Math.abs(currentPage - p) > 1 && p !== 1 && p !== totalPages) {
-                      if (p === 2 || p === totalPages - 1) {
-                        return <span key={p} className="text-xs text-muted-foreground px-1">...</span>;
+                    {Array.from({ length: totalPages }, (_, i) => i + 1).map(p => {
+                      // Show only around current page if there are many pages
+                      if (totalPages > 5 && Math.abs(currentPage - p) > 1 && p !== 1 && p !== totalPages) {
+                        if (p === 2 || p === totalPages - 1) {
+                          return <span key={p} className="text-xs text-muted-foreground px-1">...</span>;
+                        }
+                        return null;
                       }
-                      return null;
-                    }
-                    return (
-                      <button
-                        key={p}
-                        onClick={() => setCurrentPage(p)}
-                        className={`h-8 w-8 text-xs font-bold rounded-md transition-all cursor-pointer ${
-                          currentPage === p
-                            ? "bg-primary text-primary-foreground font-extrabold shadow-sm"
-                            : "border border-border bg-card hover:bg-muted/40 text-foreground"
-                        }`}
-                      >
-                        {p}
-                      </button>
-                    );
-                  })}
+                      return (
+                        <button
+                          key={p}
+                          onClick={() => setCurrentPage(p)}
+                          className={`h-8 w-8 text-xs font-bold rounded-md transition-all cursor-pointer ${
+                            currentPage === p
+                              ? "bg-primary text-primary-foreground font-extrabold shadow-sm"
+                              : "border border-border bg-card hover:bg-muted/40 text-foreground"
+                          }`}
+                        >
+                          {p}
+                        </button>
+                      );
+                    })}
 
-                  <button
-                    onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
-                    disabled={currentPage === totalPages}
-                    className="p-1 px-2.5 text-xs font-semibold border border-border bg-card rounded-md hover:bg-muted/40 disabled:opacity-40 disabled:pointer-events-none transition-colors cursor-pointer flex items-center gap-1"
-                  >
-                    Next
-                    <ChevronRight className="h-3.5 w-3.5" />
-                  </button>
+                    <button
+                      onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                      disabled={currentPage === totalPages}
+                      className="p-1 px-2.5 text-xs font-semibold border border-border bg-card rounded-md hover:bg-muted/40 disabled:opacity-40 disabled:pointer-events-none transition-colors cursor-pointer flex items-center gap-1"
+                    >
+                      Next
+                      <ChevronRight className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1877,10 +1889,9 @@ export const EmployeeList = () => {
                           Employee Code
                         </label>
                         <Input
-                          disabled
-                          readOnly
-                          value="Auto Generated"
-                          className="bg-muted text-muted-foreground cursor-not-allowed"
+                          value={formData.employee_code}
+                          onChange={e => setFormData({ ...formData, employee_code: e.target.value })}
+                          placeholder="Enter Employee Code (Leave empty to auto-generate)"
                         />
                       </div>
 
@@ -2465,10 +2476,9 @@ export const EmployeeList = () => {
                 <div className="space-y-1">
                   <label className="text-xs font-semibold text-foreground/80">Employee Code</label>
                   <Input
-                    disabled
-                    readOnly
-                    value={formData.employee_id}
-                    className="bg-muted text-muted-foreground cursor-not-allowed"
+                    value={formData.employee_code}
+                    onChange={e => setFormData({ ...formData, employee_code: e.target.value })}
+                    placeholder="Enter Employee Code"
                   />
                 </div>
                 <div className="space-y-1">

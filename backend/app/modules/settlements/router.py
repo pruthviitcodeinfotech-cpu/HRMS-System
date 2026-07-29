@@ -56,6 +56,9 @@ from app.modules.settlements.schemas import (
     LoanAdvanceTransactionSchema,
     LoanAdvanceTransactionSearchQuery,
     LoanAdvanceUpdateRequest,
+    LoanEarlyClosureRequest,
+    LoanInstallmentScheduleSchema,
+    LoanRequestCreate,
     UpdateInstallmentRequest,
     SettlementHistoryQuery,
     SettlementHistoryResponse,
@@ -1082,3 +1085,87 @@ async def finalize_ff_settlement(
         org_id=org_id, employee_id=employee_id, user_id=current_user.user_id
     )
     return _ok(result, "F&F Settlement finalized successfully.")
+
+
+# =========================================================================
+# 7. Enterprise Loan Request & Disbursement Endpoints
+# =========================================================================
+
+
+@router.post(
+    "/employees/{employee_id}/loan-request",
+    response_model=SuccessResponse[LoanAdvanceSchema],
+    status_code=status.HTTP_201_CREATED,
+    summary="Submit Loan Request",
+    dependencies=[Depends(require_permission(_LOAN_ADVANCE, A.CREATE))],
+)
+async def submit_loan_request(
+    employee_id: int,
+    payload: LoanRequestCreate,
+    service: SettlementServiceDep,
+    org_id: OrgIdDep,
+    current_user: CurrentUserDep,
+) -> dict[str, Any]:
+    """Submit a new personal loan, salary advance, or emergency loan request."""
+    result = await service.request_loan(
+        org_id=org_id,
+        employee_id=employee_id,
+        user_id=current_user.user_id,
+        data=payload,
+    )
+    return _ok(result, "Loan request submitted successfully.")
+
+
+@router.post(
+    "/loans/{id}/disburse",
+    response_model=SuccessResponse[LoanAdvanceSchema],
+    summary="Disburse Loan",
+    dependencies=[Depends(require_permission(_LOAN_ADVANCE, A.EDIT))],
+)
+async def disburse_loan(
+    id: int,
+    service: SettlementServiceDep,
+    org_id: OrgIdDep,
+    current_user: CurrentUserDep,
+) -> dict[str, Any]:
+    """Disburse approved loan and generate monthly installment schedule."""
+    result = await service.disburse_loan(
+        org_id=org_id, loan_id=id, user_id=current_user.user_id
+    )
+    return _ok(result, "Loan disbursed successfully.")
+
+
+@router.post(
+    "/loans/{id}/early-closure",
+    response_model=SuccessResponse[LoanAdvanceSchema],
+    summary="Early Loan Closure",
+    dependencies=[Depends(require_permission(_LOAN_ADVANCE, A.EDIT))],
+)
+async def early_closure(
+    id: int,
+    payload: LoanEarlyClosureRequest,
+    service: SettlementServiceDep,
+    org_id: OrgIdDep,
+    current_user: CurrentUserDep,
+) -> dict[str, Any]:
+    """Settle remaining loan balance early."""
+    result = await service.early_closure(
+        org_id=org_id, loan_id=id, user_id=current_user.user_id, data=payload
+    )
+    return _ok(result, "Loan closed early successfully.")
+
+
+@router.get(
+    "/loans/{id}/schedule",
+    response_model=SuccessResponse[list[LoanInstallmentScheduleSchema]],
+    summary="Get Loan Installment Schedule",
+    dependencies=[Depends(require_permission(_LOAN_ADVANCE, A.READ))],
+)
+async def get_loan_schedule(
+    id: int,
+    service: SettlementServiceDep,
+    org_id: OrgIdDep,
+) -> dict[str, Any]:
+    """Fetch monthly installment repayment schedule for a loan."""
+    result = await service.get_loan_schedules(org_id=org_id, loan_id=id)
+    return _ok(result)

@@ -214,6 +214,21 @@ export const shiftService = {
       `/shifts/resolve?${query.toString()}`
     );
   },
+
+  /** GET /working-hours-config — Fetch working hours configuration */
+  getWorkingHoursConfig: async (): Promise<ApiResponse<import("../types").WorkingHoursConfigResponse>> => {
+    return apiClient.get<ApiResponse<import("../types").WorkingHoursConfigResponse>>("/working-hours-config");
+  },
+
+  /** PUT /working-hours-config — Update working hours configuration */
+  updateWorkingHoursConfig: async (
+    payload: import("../types").WorkingHoursConfigUpdateRequest
+  ): Promise<ApiResponse<import("../types").WorkingHoursConfigResponse>> => {
+    return apiClient.put<ApiResponse<import("../types").WorkingHoursConfigResponse>>(
+      "/working-hours-config",
+      payload
+    );
+  },
 };
 
 

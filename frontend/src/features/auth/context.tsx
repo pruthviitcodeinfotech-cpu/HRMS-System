@@ -73,7 +73,18 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   useEffect(() => {
     const initializeAuth = async () => {
       try {
-        const { refreshSession, fetchCurrentUser } = await import("./services");
+        const { refreshSession, fetchCurrentUser, getCookie } = await import("./services");
+        const refreshToken =
+          typeof window !== "undefined"
+            ? getCookie("refresh_token") || localStorage.getItem("refresh_token")
+            : null;
+
+        if (!refreshToken) {
+          clearSession();
+          setLoading(false);
+          return;
+        }
+
         const { access_token } = await refreshSession();
         setSession(access_token);
 

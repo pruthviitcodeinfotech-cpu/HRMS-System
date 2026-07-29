@@ -34,6 +34,8 @@ from app.modules.shift.models import (
     Shift,
     ShiftAssignment,
     ShiftDayTiming,
+    WorkingHoursConfig,
+    WorkingHoursConfigHistory,
 )
 from app.shared.base.repository import BaseRepository
 from app.shared.utils.query import apply_sorting
@@ -722,10 +724,82 @@ class WeeklyOffRepository(BaseRepository[EmployeeWeekoff]):
         return instances
 
 
+class WorkingHoursConfigRepository(BaseRepository[WorkingHoursConfig]):
+    """Data-access for working_hours_config and working_hours_config_history."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        super().__init__(session, WorkingHoursConfig)
+
+    async def get_by_org(self, org_id: int) -> WorkingHoursConfig | None:
+        """Fetch working hours config for org."""
+        stmt = select(WorkingHoursConfig).where(WorkingHoursConfig.org_id == org_id)
+        return (await self.session.execute(stmt.limit(1))).scalar_one_or_none()
+
+    async def get_history(self, org_id: int) -> list[WorkingHoursConfigHistory]:
+        """Fetch working hours history records for org."""
+        stmt = (
+            select(WorkingHoursConfigHistory)
+            .where(WorkingHoursConfigHistory.org_id == org_id)
+            .order_by(WorkingHoursConfigHistory.history_id.desc())
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def save_config(
+        self,
+        org_id: int,
+        working_hours_mode: str,
+        full_day_hours: time | None,
+        half_day_hours: time | None,
+        attendance_mode: str,
+        effective_from: date,
+        user_id: int | None = None,
+    ) -> WorkingHoursConfig:
+        """Create or update working hours config and log history record."""
+        existing = await self.get_by_org(org_id)
+        if existing:
+            # Log history entry before updating
+            history_entry = WorkingHoursConfigHistory(
+                org_id=org_id,
+                config_id=existing.config_id,
+                working_hours_mode=existing.working_hours_mode,
+                full_day_hours=existing.full_day_hours,
+                half_day_hours=existing.half_day_hours,
+                attendance_mode=existing.attendance_mode,
+                effective_from=existing.effective_from,
+                effective_to=effective_from,
+                changed_by=user_id,
+            )
+            self.session.add(history_entry)
+
+            existing.working_hours_mode = working_hours_mode
+            existing.full_day_hours = full_day_hours
+            existing.half_day_hours = half_day_hours
+            existing.attendance_mode = attendance_mode
+            existing.effective_from = effective_from
+            if user_id:
+                existing.created_by = user_id
+            await self.session.flush()
+            return existing
+        else:
+            new_config = WorkingHoursConfig(
+                org_id=org_id,
+                working_hours_mode=working_hours_mode,
+                full_day_hours=full_day_hours,
+                half_day_hours=half_day_hours,
+                attendance_mode=attendance_mode,
+                effective_from=effective_from,
+                created_by=user_id,
+            )
+            self.session.add(new_config)
+            await self.session.flush()
+            return new_config
+
+
 __all__ = [
     "ShiftRepository",
     "ShiftDayTimingRepository",
     "ShiftAssignmentRepository",
     "RosterRepository",
     "WeeklyOffRepository",
+    "WorkingHoursConfigRepository",
 ]

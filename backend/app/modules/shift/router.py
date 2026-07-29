@@ -67,6 +67,8 @@ from app.modules.shift.schemas import (
     WeeklyOffSchema,
     WeekoffConfigureRequest,
     WeekoffPatchRequest,
+    WorkingHoursConfigResponse,
+    WorkingHoursConfigUpdateRequest,
 )
 from app.modules.shift.service import ShiftService
 from app.shared.schemas.response import SuccessResponse, success_response
@@ -720,3 +722,41 @@ async def get_employee_roster(
     return _ok(
         await service.get_employee_roster(org_id=org_id, employee_id=employee_id, query=query)
     )
+
+
+# ===========================================================================
+# Working Hours Configuration Endpoints
+# ===========================================================================
+
+@router.get(
+    "/working-hours-config",
+    response_model=SuccessResponse[WorkingHoursConfigResponse],
+    summary="Get Working Hours Configuration",
+    dependencies=[Depends(require_permission(_SHIFT, A.READ))],
+)
+async def get_working_hours_config(
+    service: ServiceDep,
+    org_id: OrgIdDep,
+) -> dict[str, Any]:
+    """Fetch org working hours config and configuration history."""
+    config = await service.get_working_hours_config(org_id)
+    return _ok(config)
+
+
+@router.put(
+    "/working-hours-config",
+    response_model=SuccessResponse[WorkingHoursConfigResponse],
+    summary="Update Working Hours Configuration",
+    dependencies=[Depends(require_permission(_SHIFT, A.EDIT))],
+)
+async def update_working_hours_config(
+    payload: WorkingHoursConfigUpdateRequest,
+    service: ServiceDep,
+    current_user: CurrentUserDep,
+    org_id: OrgIdDep,
+) -> dict[str, Any]:
+    """Update org working hours config (fixed/shift-wise, full/half day hours, attendance mode)."""
+    result = await service.update_working_hours_config(
+        org_id=org_id, actor_id=current_user.user_id, payload=payload
+    )
+    return _ok(result, "Working hours configuration updated successfully.")

@@ -32,14 +32,20 @@ from app.core.exceptions.base import AppException
 from app.core.middleware.request_context import get_request_id
 from app.modules.settings.dependencies import SettingsServiceDep
 from app.modules.settings.schemas import (
+    AttendancePolicyResponse,
+    AttendancePolicyUpdateRequest,
     ConfigurationViewResponse,
     FeaturesResponse,
     FeatureToggleRequest,
     ModulePointerSchema,
+    NotificationPolicyResponse,
+    NotificationPolicyUpdateRequest,
     OrgSalarySlipResponse,
     OrgSalarySlipUpdateRequest,
     OrgSettingsResponse,
     OrgSettingsUpdateRequest,
+    SecurityPolicyResponse,
+    SecurityPolicyUpdateRequest,
 )
 from app.shared.schemas.response import SuccessResponse, success_response
 
@@ -337,3 +343,125 @@ async def set_feature(
         FeaturesResponse(features=updated),
         f"Feature '{feature_key}' {action}.",
     )
+
+
+# ===========================================================================
+# 9. Policy Management Endpoints
+# ===========================================================================
+
+
+@router.get(
+    "/attendance-policy",
+    response_model=SuccessResponse[AttendancePolicyResponse],
+    summary="Get Attendance Policy Settings",
+    dependencies=[Depends(require_permission(_FEATURE_KEY, A.READ))],
+)
+async def get_attendance_policy(
+    service: SettingsServiceDep,
+    org_id: OrgIdDep,
+    branch_id: BranchIdDep = None,
+) -> dict[str, Any]:
+    """Fetch attendance policy configuration."""
+    policy = await service.get_attendance_policy(org_id, branch_id=branch_id)
+    return _ok(policy)
+
+
+@router.patch(
+    "/attendance-policy",
+    response_model=SuccessResponse[AttendancePolicyResponse],
+    summary="Update Attendance Policy Settings",
+    dependencies=[Depends(require_permission(_FEATURE_KEY, A.EDIT))],
+)
+async def update_attendance_policy(
+    payload: AttendancePolicyUpdateRequest,
+    service: SettingsServiceDep,
+    current_user: CurrentUserDep,
+    org_id: OrgIdDep,
+    branch_id: BranchIdDep = None,
+) -> dict[str, Any]:
+    """Update attendance policy configuration."""
+    updated = await service.update_attendance_policy(
+        org_id=org_id,
+        data=payload,
+        updated_by=current_user.user_id,
+        branch_id=branch_id,
+    )
+    return _ok(updated, "Attendance policy updated successfully.")
+
+
+@router.get(
+    "/security-policy",
+    response_model=SuccessResponse[SecurityPolicyResponse],
+    summary="Get Security Policy Settings",
+    dependencies=[Depends(require_permission(_FEATURE_KEY, A.READ))],
+)
+async def get_security_policy(
+    service: SettingsServiceDep,
+    org_id: OrgIdDep,
+    branch_id: BranchIdDep = None,
+) -> dict[str, Any]:
+    """Fetch security policy configuration."""
+    policy = await service.get_security_policy(org_id, branch_id=branch_id)
+    return _ok(policy)
+
+
+@router.patch(
+    "/security-policy",
+    response_model=SuccessResponse[SecurityPolicyResponse],
+    summary="Update Security Policy Settings",
+    dependencies=[Depends(require_permission(_FEATURE_KEY, A.EDIT))],
+)
+async def update_security_policy(
+    payload: SecurityPolicyUpdateRequest,
+    service: SettingsServiceDep,
+    current_user: CurrentUserDep,
+    org_id: OrgIdDep,
+    branch_id: BranchIdDep = None,
+) -> dict[str, Any]:
+    """Update security policy configuration."""
+    updated = await service.update_security_policy(
+        org_id=org_id,
+        data=payload,
+        updated_by=current_user.user_id,
+        branch_id=branch_id,
+    )
+    return _ok(updated, "Security policy updated successfully.")
+
+
+@router.get(
+    "/notification-policy",
+    response_model=SuccessResponse[NotificationPolicyResponse],
+    summary="Get Notification Policy Settings",
+    dependencies=[Depends(require_permission(_FEATURE_KEY, A.READ))],
+)
+async def get_notification_policy(
+    service: SettingsServiceDep,
+    org_id: OrgIdDep,
+    branch_id: BranchIdDep = None,
+) -> dict[str, Any]:
+    """Fetch notification policy configuration."""
+    policy = await service.get_notification_policy(org_id, branch_id=branch_id)
+    return _ok(policy)
+
+
+@router.patch(
+    "/notification-policy",
+    response_model=SuccessResponse[NotificationPolicyResponse],
+    summary="Update Notification Policy Settings",
+    dependencies=[Depends(require_permission(_FEATURE_KEY, A.EDIT))],
+)
+async def update_notification_policy(
+    payload: NotificationPolicyUpdateRequest,
+    service: SettingsServiceDep,
+    current_user: CurrentUserDep,
+    org_id: OrgIdDep,
+    branch_id: BranchIdDep = None,
+) -> dict[str, Any]:
+    """Update notification policy configuration."""
+    updated = await service.update_notification_policy(
+        org_id=org_id,
+        data=payload,
+        updated_by=current_user.user_id,
+        branch_id=branch_id,
+    )
+    return _ok(updated, "Notification policy updated successfully.")

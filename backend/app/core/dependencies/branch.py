@@ -16,6 +16,9 @@ async def get_current_branch_id(
     x_branch_id: Annotated[str | None, Header(alias="x-branch-id", description="Filter by branch ID header.")] = None,
 ) -> int | None:
     """Resolve current branch_id from Query or Header and enforce RBAC permission isolation."""
+    if branch_id == 0 or branch_id == -1:
+        return None
+
     resolved_id: int | None = branch_id
 
     if resolved_id is None and x_branch_id:

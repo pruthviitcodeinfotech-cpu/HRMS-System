@@ -640,6 +640,48 @@ class RosterListResponse(PaginatedResponse[RosterEntrySchema]):
     """Paginated roster calendar result (``GET /roster``, ``GET /employees/{id}/roster``)."""
 
 
+# ===========================================================================
+# Working Hours Configuration DTOs
+# ===========================================================================
+
+
+class WorkingHoursConfigHistorySchema(BaseSchema):
+    history_id: int
+    working_hours_mode: str
+    full_day_hours: str | None = None
+    half_day_hours: str | None = None
+    attendance_mode: str
+    effective_from: date
+    effective_to: date | None = None
+    changed_at: datetime | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class WorkingHoursConfigResponse(BaseSchema):
+    config_id: int | None = None
+    org_id: int
+    working_hours_mode: str = "fixed"
+    full_day_hours: str = "08:00"
+    half_day_hours: str = "04:00"
+    attendance_mode: str = "consider_all_punch"
+    effective_from: date | None = None
+    history: list[WorkingHoursConfigHistorySchema] = []
+
+    model_config = {"from_attributes": True}
+
+
+class WorkingHoursConfigUpdateRequest(BaseSchema):
+    working_hours_mode: str = Field("fixed", description="fixed or shift_wise")
+    full_day_hours: str = Field("08:00", description="Full day hours formatted as HH:MM")
+    half_day_hours: str = Field("04:00", description="Half day hours formatted as HH:MM")
+    attendance_mode: str = Field(
+        "consider_all_punch",
+        description="consider_all_punch, first_and_last_punch_only, full_day_on_single_punch, default_full_day",
+    )
+    effective_from: date | None = None
+
+
 __all__ = [
     # day timings
     "ShiftDayTimingInput",
@@ -690,4 +732,8 @@ __all__ = [
     "ShiftAssignmentListResponse",
     "WeeklyOffListResponse",
     "RosterListResponse",
+    # working hours config
+    "WorkingHoursConfigHistorySchema",
+    "WorkingHoursConfigResponse",
+    "WorkingHoursConfigUpdateRequest",
 ]

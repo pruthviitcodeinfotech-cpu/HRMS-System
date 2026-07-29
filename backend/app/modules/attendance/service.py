@@ -410,10 +410,25 @@ class AttendanceService(BaseService):
         query: AttendanceDailyQuery,
         branch_scope: list[int] | None = None,
     ) -> AttendanceDailyListResponse:
-        """List and search paginated attendance day summaries (Endpoint 3).
-        
-        READ ONLY: Performs no write operations or attendance record generation.
-        """
+        """List and search paginated attendance day summaries (Endpoint 3)."""
+        target_dt = query.date or query.date_to
+        if target_dt and target_dt <= utcnow().date():
+            from sqlalchemy import func, select
+            from app.modules.attendance.models import AttendanceDay
+            stmt_check = select(func.count()).select_from(AttendanceDay).where(
+                AttendanceDay.org_id == org_id,
+                AttendanceDay.attendance_date == target_dt,
+            )
+            count = (await self.session.execute(stmt_check)).scalar_one()
+            if count == 0:
+                await self.generate_daily_attendance_for_range(
+                    org_id=org_id,
+                    date_from=target_dt,
+                    date_to=target_dt,
+                    branch_id=query.branch_id,
+                    department_id=query.department_id,
+                )
+
         rows = await self.days.search(
             org_id,
             date=query.date,
@@ -1869,16 +1884,53 @@ class AttendanceService(BaseService):
                 if ptype == PunchType.BREAK_OUT.value:
                     current_break_out = ptime
 
+        # Working hours configuration lookup
+        full_day_mins = 480
+        half_day_mins = 240
+        att_mode = "consider_all_punch"
+
+        try:
+            from app.modules.shift.repository import WorkingHoursConfigRepository
+            wh_config = await WorkingHoursConfigRepository(self.session).get_by_org(org_id)
+            if wh_config:
+                att_mode = wh_config.attendance_mode or "consider_all_punch"
+                if wh_config.full_day_hours:
+                    full_day_mins = wh_config.full_day_hours.hour * 60 + wh_config.full_day_hours.minute
+                if wh_config.half_day_hours:
+                    half_day_mins = wh_config.half_day_hours.hour * 60 + wh_config.half_day_hours.minute
+        except Exception:
+            pass
+
+        # Apply attendance mode calculations
+        if att_mode in ("first_and_last_punch_only", "first_last"):
+            if first_in and last_out:
+                raw_dur = int((last_out - first_in).total_seconds() / 60)
+                total_working = max(0, raw_dur - total_break)
+        elif att_mode in ("full_day_on_single_punch", "single", "default_full_day", "default"):
+            if valid_punches:
+                total_working = max(total_working, full_day_mins)
+
         late_min = 0
         early_min = 0
         overtime_min = 0
+
+        grace_period = 0
+        overtime_buffer = 0
+        try:
+            from app.modules.settings.service import SettingsService
+            policy = await SettingsService(self.session).get_attendance_policy(org_id)
+            grace_period = policy.grace_period_minutes
+            overtime_buffer = policy.overtime_buffer_minutes
+        except Exception:
+            pass
 
         if first_in and day.expected_start_time:
             tz = first_in.tzinfo
             expected_start = datetime.combine(day.attendance_date, day.expected_start_time).replace(
                 tzinfo=tz
             )
-            if first_in > expected_start:
+            allowed_start = expected_start + timedelta(minutes=grace_period)
+            if first_in > allowed_start:
                 late_min = int((first_in - expected_start).total_seconds() / 60)
 
         if last_out and day.expected_end_time:
@@ -1892,7 +1944,9 @@ class AttendanceService(BaseService):
             if last_out < expected_end:
                 early_min = int((expected_end - last_out).total_seconds() / 60)
             elif last_out > expected_end:
-                overtime_min = int((last_out - expected_end).total_seconds() / 60)
+                raw_ot = int((last_out - expected_end).total_seconds() / 60)
+                if raw_ot >= overtime_buffer:
+                    overtime_min = raw_ot
 
         # Determine daily status if not overridden
         status = day.status
@@ -1917,12 +1971,12 @@ class AttendanceService(BaseService):
                             status = day.status
                         else:
                             status = AttendanceDayStatus.ABSENT.value
-                    elif total_working >= 480:
+                    elif total_working >= full_day_mins:
                         status = AttendanceDayStatus.PRESENT.value
-                    elif total_working >= 240:
+                    elif total_working >= half_day_mins:
                         status = AttendanceDayStatus.HALF_DAY.value
                     else:
-                        status = AttendanceDayStatus.PRESENT.value
+                        status = AttendanceDayStatus.ABSENT.value
 
         await self.days.update(
             day,

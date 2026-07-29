@@ -132,20 +132,29 @@ class EmployeeBankDetailSchema(BaseSchema):
 
 
 class EmployeeDocumentSchema(BaseSchema):
-    """A persisted ``employee_documents`` row (metadata only; binary in storage).
-
-    The storage key (``employee_documents.file_url``) is **never** exposed — the
-    contract (§7 #34) requires "document metadata (no filesystem path)". Clients fetch
-    the bytes through ``GET /employees/{id}/documents/{document_id}``.
-    """
+    """A persisted ``employee_documents`` row (metadata only; binary in storage)."""
 
     document_id: int
-    document_type: DocumentType
+    document_type: str
+    category: str | None = "other"
     original_filename: str | None = None
     file_size_bytes: int | None = None
+    mime_type: str | None = None
+    version_number: int = 1
+    previous_version_id: int | None = None
+    expiry_date: date | None = None
+    is_confidential: bool = False
+    approval_status: str = "approved"
     uploaded_by: int | None = None
     created_at: datetime
     updated_at: datetime
+
+
+class DocumentApprovalRequest(BaseSchema):
+    """Action payload for approving or rejecting a document."""
+
+    approval_status: str = Field(..., description="Action: approved or rejected.")
+    comment: str | None = Field(default=None, description="Approval/rejection comment.")
 
 
 class EmployeeEmergencyContactSchema(BaseSchema):
@@ -264,12 +273,13 @@ class EmployeeListQuery(PaginationRequest):
 class EmployeeCreateRequest(BaseSchema):
     """Body for ``POST /employees`` (onboard an employee).
 
-    ``employee_code`` is auto-generated server-side and is not accepted here.
+    ``employee_code`` is supplied by admin or auto-generated server-side if omitted.
     ``device_ids`` and ``create_self_service_user`` are transport-only fields that
     drive async device enrollment and optional self-service user creation.
     """
 
     # Identity
+    employee_code: str | None = Field(default=None, max_length=30)
     employee_name: str = Field(..., min_length=2, max_length=200)
     display_name: str | None = Field(default=None, max_length=200)
     employee_uid: str | None = Field(default=None, max_length=50)
@@ -324,11 +334,10 @@ class EmployeeCreateRequest(BaseSchema):
 class EmployeeUpdateRequest(BaseSchema):
     """Body for ``PUT /employees/{id}`` (partial update; all fields optional).
 
-    Excludes ``employee_code`` (immutable) and ``employment_status`` (driven by the
-    exit/rehire endpoints). Org reassignment re-validates hierarchy consistency in
-    the service layer.
+    Org reassignment re-validates hierarchy consistency in the service layer.
     """
 
+    employee_code: str | None = Field(default=None, max_length=30)
     employee_name: str | None = Field(default=None, min_length=2, max_length=200)
     display_name: str | None = Field(default=None, max_length=200)
     employee_uid: str | None = Field(default=None, max_length=50)
@@ -368,18 +377,21 @@ class EmployeeUpdateRequest(BaseSchema):
 
 
 class EmployeeDocumentCreateRequest(BaseSchema):
-    """Metadata part of ``POST /employees/{id}/documents`` (``multipart/form-data``).
+    """Metadata part of ``POST /employees/{id}/documents`` (``multipart/form-data``)."""
 
-    The binary arrives as the multipart ``file`` part; the **server** validates it
-    (size / extension / content type) and generates the storage key. A client-supplied
-    path is never accepted — it would be a path-traversal primitive (contract §7 #34:
-    "Server validates content-type/size from config, generates the storage key (does
-    not trust client filename)").
-    """
-
-    document_type: DocumentType
+    document_type: str = Field(..., description="Type of document.")
+    category: str | None = Field(
+        default="other",
+        description="Category: id_proof, certificate, contract, payslip, tax_document, other.",
+    )
     expires_at: date | None = Field(
         default=None, description="Optional expiry for ID / contract documents."
+    )
+    expiry_date: date | None = Field(
+        default=None, description="Alias for document expiration date."
+    )
+    is_confidential: bool = Field(
+        default=False, description="Confidential document flag."
     )
 
 

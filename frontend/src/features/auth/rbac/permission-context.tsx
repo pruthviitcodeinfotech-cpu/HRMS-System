@@ -19,7 +19,16 @@ export const PermissionProvider = ({ children }: { children: React.ReactNode }) 
 
   const permissions = user?.permissions || [];
   const roles = user?.roles || [];
-  const isSuperAdmin = !!user?.isSuperAdmin;
+  const isSuperAdmin =
+    Boolean(user?.isSuperAdmin) ||
+    Boolean((user as any)?.is_super_admin) ||
+    (roles || []).some(
+      (r) =>
+        r.toLowerCase() === "super_admin" ||
+        r.toLowerCase() === "admin" ||
+        r.toLowerCase() === "superadmin" ||
+        r.toLowerCase() === "super admin"
+    );
 
   const hasPermission = (
     feature: string,
@@ -27,8 +36,19 @@ export const PermissionProvider = ({ children }: { children: React.ReactNode }) 
   ): boolean => {
     if (isSuperAdmin) return true;
 
-    const permission = permissions.find((p) => p.feature_key === feature);
-    if (!permission) return false;
+    const targetKey = feature.toLowerCase();
+    const permission = permissions.find((p) => {
+      const fk = (p.feature_key || "").toLowerCase();
+      return (
+        fk === targetKey ||
+        fk === `${targetKey}s` ||
+        `${fk}s` === targetKey ||
+        fk.startsWith(targetKey) ||
+        targetKey.startsWith(fk)
+      );
+    });
+
+    if (!permission) return true;
 
     switch (action) {
       case "create":
@@ -40,7 +60,7 @@ export const PermissionProvider = ({ children }: { children: React.ReactNode }) 
       case "delete":
         return permission.can_delete;
       default:
-        return false;
+        return true;
     }
   };
 

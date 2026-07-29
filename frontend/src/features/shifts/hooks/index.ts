@@ -13,6 +13,7 @@ export const shiftKeys = {
   detail: (id: number) => [...shiftKeys.all, "detail", id] as const,
   weekoffs: (employeeId: number) => [...shiftKeys.all, "weekoffs", employeeId] as const,
   allWeekoffs: () => [...shiftKeys.all, "weekoffs"] as const,
+  workingHours: () => [...shiftKeys.all, "workingHours"] as const,
 };
 
 // ---------------------------------------------------------------------------
@@ -386,6 +387,36 @@ export const useResolveShift = (params: import("../types").ShiftResolveQuery, en
       return response.data;
     },
     enabled: enabled && !!params.employee_id && !!params.date,
+  });
+};
+
+/**
+ * Fetch organization working hours configuration (GET /working-hours-config).
+ */
+export const useWorkingHoursConfig = (enabled = true) => {
+  return useQuery({
+    queryKey: shiftKeys.workingHours(),
+    queryFn: async () => {
+      const response = await shiftService.getWorkingHoursConfig();
+      return response.data;
+    },
+    enabled,
+  });
+};
+
+/**
+ * Update organization working hours configuration (PUT /working-hours-config).
+ */
+export const useUpdateWorkingHoursConfig = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (data: import("../types").WorkingHoursConfigUpdateRequest) => {
+      const response = await shiftService.updateWorkingHoursConfig(data);
+      return response.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: shiftKeys.workingHours() });
+    },
   });
 };
 

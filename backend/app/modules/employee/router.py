@@ -43,6 +43,7 @@ from app.core.exceptions.base import AppException
 from app.core.middleware.request_context import get_request_id
 from app.modules.employee.constants import DocumentType, EmploymentStatus
 from app.modules.employee.schemas import (
+    DocumentApprovalRequest,
     EmployeeBankDetailCreateRequest,
     EmployeeBankDetailSchema,
     EmployeeBankDetailUpdateRequest,
@@ -153,7 +154,7 @@ async def list_employees(
     service: ServiceDep,
     current_user: CurrentUserDep,
     org_id: OrgIdDep,
-    branch_id: RequiredBranchIdDep,
+    branch_id: BranchIdDep,
     pagination: Annotated[PaginationParams, Depends(pagination_params)],
     department_id: Annotated[int | None, Query(description="Filter by department.")] = None,
     designation_id: Annotated[int | None, Query(description="Filter by designation.")] = None,
@@ -537,6 +538,30 @@ async def delete_employee_document(
         document_id=document_id,
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/employees/documents/{document_id}/approve",
+    response_model=SuccessResponse[EmployeeDocumentSchema],
+    summary="Approve or Reject Employee Document",
+    dependencies=[Depends(require_permission(_EMPLOYEE_DOCUMENT, A.EDIT))],
+)
+async def approve_employee_document(
+    document_id: int,
+    payload: DocumentApprovalRequest,
+    service: ServiceDep,
+    current_user: CurrentUserDep,
+    org_id: OrgIdDep,
+) -> dict[str, Any]:
+    """Approve or reject an uploaded document."""
+    result = await service.approve_document(
+        org_id=org_id,
+        actor_id=current_user.user_id,
+        document_id=document_id,
+        approval_status=payload.approval_status,
+        comment=payload.comment,
+    )
+    return _ok(result, f"Document approval status updated to '{payload.approval_status}'.")
 
 
 @router.post(

@@ -38,7 +38,7 @@ Schema-reconciliation notes (the models are the source of truth):
 from __future__ import annotations
 
 import calendar
-from datetime import date, timedelta
+from datetime import date, time, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -76,6 +76,7 @@ from app.modules.shift.repository import (
     ShiftDayTimingRepository,
     ShiftRepository,
     WeeklyOffRepository,
+    WorkingHoursConfigRepository,
 )
 from app.modules.shift.schemas import (
     RosterBulkItemResult,
@@ -147,6 +148,7 @@ class ShiftService(BaseService):
         from app.modules.attendance.repository import AttendanceLockRepository
 
         self.locks = AttendanceLockRepository(session)
+        self.working_hours = WorkingHoursConfigRepository(session)
 
     # =====================================================================
     # Shifts — CRUD
@@ -1595,6 +1597,91 @@ class ShiftService(BaseService):
             employee_id=employee_id,
             employee_name=employee_name,
         )
+    # =====================================================================
+    # Working Hours Configuration
+    # =====================================================================
+    async def get_working_hours_config(self, org_id: int) -> WorkingHoursConfigResponse:
+        """Fetch org working hours config and history logs."""
+        config = await self.working_hours.get_by_org(org_id)
+        history_rows = await self.working_hours.get_history(org_id)
+
+        def _fmt_t(t: time | None, default_val: str) -> str:
+            if not t:
+                return default_val
+            return f"{t.hour:02d}:{t.minute:02d}"
+
+        history_dtos = [
+            WorkingHoursConfigHistorySchema(
+                history_id=h.history_id,
+                working_hours_mode=h.working_hours_mode,
+                full_day_hours=_fmt_t(h.full_day_hours, "08:00"),
+                half_day_hours=_fmt_t(h.half_day_hours, "04:00"),
+                attendance_mode=h.attendance_mode,
+                effective_from=h.effective_from,
+                effective_to=h.effective_to,
+                changed_at=h.changed_at,
+            )
+            for h in history_rows
+        ]
+
+        if not config:
+            return WorkingHoursConfigResponse(
+                org_id=org_id,
+                working_hours_mode="fixed",
+                full_day_hours="08:00",
+                half_day_hours="04:00",
+                attendance_mode="consider_all_punch",
+                effective_from=date.today(),
+                history=history_dtos,
+            )
+
+        return WorkingHoursConfigResponse(
+            config_id=config.config_id,
+            org_id=config.org_id,
+            working_hours_mode=config.working_hours_mode,
+            full_day_hours=_fmt_t(config.full_day_hours, "08:00"),
+            half_day_hours=_fmt_t(config.half_day_hours, "04:00"),
+            attendance_mode=config.attendance_mode,
+            effective_from=config.effective_from,
+            history=history_dtos,
+        )
+
+    async def update_working_hours_config(
+        self, org_id: int, actor_id: int, payload: WorkingHoursConfigUpdateRequest
+    ) -> WorkingHoursConfigResponse:
+        """Save org working hours configuration and log to audit history."""
+        def _parse_t(s: str | None) -> time | None:
+            if not s:
+                return None
+            try:
+                parts = s.split(":")
+                return time(int(parts[0]), int(parts[1]))
+            except Exception:
+                return None
+
+        effective_date = payload.effective_from or date.today()
+        full_time = _parse_t(payload.full_day_hours) or time(8, 0)
+        half_time = _parse_t(payload.half_day_hours) or time(4, 0)
+
+        await self.working_hours.save_config(
+            org_id=org_id,
+            working_hours_mode=payload.working_hours_mode,
+            full_day_hours=full_time,
+            half_day_hours=half_time,
+            attendance_mode=payload.attendance_mode,
+            effective_from=effective_date,
+            user_id=actor_id,
+        )
+
+        await self._audit(
+            org_id=org_id,
+            actor_id=actor_id,
+            action_type=ActionType.UPDATE,
+            title="Updated Working Hours Configuration",
+            description=f"Mode: {payload.working_hours_mode}, Full: {payload.full_day_hours}, Half: {payload.half_day_hours}, Attendance Mode: {payload.attendance_mode}",
+        )
+        await self.session.commit()
+        return await self.get_working_hours_config(org_id)
 
 
 __all__ = ["ShiftService"]

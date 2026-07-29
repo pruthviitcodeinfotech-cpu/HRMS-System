@@ -42,6 +42,7 @@ import {
   useRejectApproval,
   usePendingBiometrics,
 } from "@/features/dashboard";
+import { useShifts } from "@/features/shifts/hooks";
 
 // Helper formatters
 const formatPunchTime = (dateStr: string | null) => {
@@ -214,14 +215,16 @@ const ErrorWidget = ({ title, error }: { title: string; error: { message?: strin
 
 export default function DashboardPage() {
   const router = useRouter();
-  const [targetDate, setTargetDate] = useState<string>("2026-07-15");
+  const queryClient = useQueryClient();
+  const [targetDate, setTargetDate] = useState<string>(() => formatDateStr(new Date()));
   const [isCalendarOpen, setIsCalendarOpen] = useState(false);
-  const [viewDate, setViewDate] = useState<Date>(new Date(2026, 6, 15)); // July 15, 2026
+  const [viewDate, setViewDate] = useState<Date>(() => new Date());
   const calendarRef = useRef<HTMLDivElement>(null);
 
-  // Restore saved targetDate from localStorage on mount
+  // Restore saved targetDate from localStorage on mount (defaults to today if unset or stale)
   useEffect(() => {
     try {
+      const todayStr = formatDateStr(new Date());
       const savedDate = localStorage.getItem("dashboard_target_date");
       if (savedDate && /^\d{4}-\d{2}-\d{2}$/.test(savedDate)) {
         setTargetDate(savedDate);
@@ -229,11 +232,54 @@ export default function DashboardPage() {
         if (!isNaN(y) && !isNaN(m) && !isNaN(d)) {
           setViewDate(new Date(y, m - 1, d));
         }
+      } else {
+        setTargetDate(todayStr);
+        setViewDate(new Date());
       }
     } catch (err) {
       console.error("Failed to restore dashboard_target_date from localStorage", err);
     }
   }, []);
+
+  // Dynamic Day-Change Auto-Refresh: Monitors date rollover (e.g. midnight or tab focus on a new day)
+  useEffect(() => {
+    let lastKnownDate = formatDateStr(new Date());
+
+    const checkAndRefreshDate = () => {
+      const currentDateStr = formatDateStr(new Date());
+      if (currentDateStr !== lastKnownDate) {
+        lastKnownDate = currentDateStr;
+        setTargetDate(currentDateStr);
+        setViewDate(new Date());
+        try {
+          localStorage.setItem("dashboard_target_date", currentDateStr);
+        } catch {
+          // ignore storage errors
+        }
+        queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+        toast.info(`Date changed to ${formatDateForButton(currentDateStr)}. Dashboard auto-refreshed.`);
+      }
+    };
+
+    // Periodic check every 30 seconds
+    const interval = setInterval(checkAndRefreshDate, 30000);
+
+    // Immediate check when window regains focus or tab becomes visible
+    const handleFocusOrVisibility = () => {
+      if (document.visibilityState === "visible") {
+        checkAndRefreshDate();
+      }
+    };
+
+    window.addEventListener("focus", handleFocusOrVisibility);
+    document.addEventListener("visibilitychange", handleFocusOrVisibility);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("focus", handleFocusOrVisibility);
+      document.removeEventListener("visibilitychange", handleFocusOrVisibility);
+    };
+  }, [queryClient]);
 
   // Close calendar popover on click outside
   useEffect(() => {
@@ -253,10 +299,28 @@ export default function DashboardPage() {
   };
 
   const handleNextMonth = () => {
-    setViewDate(prev => new Date(prev.getFullYear(), prev.getMonth() + 1, 1));
+    const today = new Date();
+    const nextMonth = new Date(viewDate.getFullYear(), viewDate.getMonth() + 1, 1);
+    if (
+      nextMonth.getFullYear() > today.getFullYear() ||
+      (nextMonth.getFullYear() === today.getFullYear() && nextMonth.getMonth() > today.getMonth())
+    ) {
+      return;
+    }
+    setViewDate(nextMonth);
   };
 
   const handleSelectDay = (date: Date) => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const checkDate = new Date(date);
+    checkDate.setHours(0, 0, 0, 0);
+
+    if (checkDate > today) {
+      toast.error("Upcoming dates cannot be accessed for attendance monitoring.");
+      return;
+    }
+
     const formattedDate = formatDateStr(date);
     setTargetDate(formattedDate);
     try {
@@ -274,8 +338,8 @@ export default function DashboardPage() {
   const calendarDays = getCalendarGridDays(viewDate);
 
   // Tab and Filter selection states
-  const [activeTab, setActiveTab] = useState<"all" | "open" | "khushi" | "night" | "daily">("all");
-  const [selectedFilter, setSelectedFilter] = useState<"on-time" | "late" | "not-in" | "time-off">("on-time");
+  const [activeTab, setActiveTab] = useState<string>("all");
+  const [selectedFilter, setSelectedFilter] = useState<"checked-in" | "not-in" | "time-off">("checked-in");
   const [isSyncing, setIsSyncing] = useState(false);
 
   // Filter visibility states
@@ -314,6 +378,8 @@ export default function DashboardPage() {
     page_size: 150, // Fetch all records for drawer matching
   });
   const { data: shiftData, isLoading: isShiftsLoading, error: shiftsError, refetch: refetchShifts } = useShiftSummary(targetDate, selectedBranchId);
+  // Fetch real shifts from DB for dynamic shift tabs (filtered by branch)
+  const { data: shiftsListData } = useShifts({ page: 1, page_size: 100, branch_id: selectedBranchId ?? undefined });
   const { data: deptChartData, isLoading: isDeptLoading, error: deptError } = useDepartmentAttendance(targetDate, selectedBranchId);
   const { data: devicesData, isLoading: isDevicesLoading, error: devicesError, refetch: refetchDevices } = useDevicesList({
     page: 1,
@@ -330,7 +396,6 @@ export default function DashboardPage() {
   const { data: pendingBioData } = usePendingBiometrics({ page: 1, page_size: 100, branch_id: selectedBranchId });
 
   // Query Client & Mutations
-  const queryClient = useQueryClient();
   const approveMutation = useApproveApproval();
   const rejectMutation = useRejectApproval();
 
@@ -423,20 +488,23 @@ export default function DashboardPage() {
     return <ArrowDown className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400 shrink-0" />;
   };
 
+  // Dynamic shift tabs built from real DB shifts
+  const dynamicShiftTabs = [
+    { id: "all", label: "All" },
+    ...(shiftsListData?.items ?? []).map((s: any) => ({
+      id: String(s.shift_id),
+      label: s.shift_name,
+    })),
+  ];
+
   const getFilteredItemsByShift = () => {
     if (!attendanceData?.items) return [];
     let items = attendanceData.items;
     if (activeTab !== "all") {
-      const tabToShiftName: Record<string, string> = {
-        open: "Open Shift",
-        khushi: "Khushi maam 8 to 6",
-        night: "Night Shift Developer",
-        daily: "Daily",
-      };
-      const targetShiftName = tabToShiftName[activeTab];
-      if (targetShiftName) {
+      const tab = dynamicShiftTabs.find((t) => t.id === activeTab);
+      if (tab) {
         items = items.filter(
-          (row) => (row.shift_name || "").toLowerCase() === targetShiftName.toLowerCase()
+          (row) => (row.shift_name || "").toLowerCase() === tab.label.toLowerCase()
         );
       }
     }
@@ -446,18 +514,10 @@ export default function DashboardPage() {
   const getShiftTotalCount = (tabId: string) => {
     if (!attendanceData?.items) return 0;
     if (tabId === "all") return attendanceData.items.length;
-    
-    const tabToShiftName: Record<string, string> = {
-      open: "Open Shift",
-      khushi: "Khushi maam 8 to 6",
-      night: "Night Shift Developer",
-      daily: "Daily",
-    };
-    const targetShiftName = tabToShiftName[tabId];
-    if (!targetShiftName) return 0;
-    
+    const tab = dynamicShiftTabs.find((t) => t.id === tabId);
+    if (!tab) return 0;
     return attendanceData.items.filter(
-      (row) => (row.shift_name || "").toLowerCase() === targetShiftName.toLowerCase()
+      (row) => (row.shift_name || "").toLowerCase() === tab.label.toLowerCase()
     ).length;
   };
 
@@ -466,14 +526,12 @@ export default function DashboardPage() {
     
     let data = getFilteredItemsByShift();
     
-    if (selectedFilter === "on-time") {
-      data = data.filter((row) => (row.status === "present" || row.status === "half_day") && (row.late_minutes || 0) === 0);
-    } else if (selectedFilter === "late") {
-      data = data.filter((row) => (row.status === "present" || row.status === "half_day") && (row.late_minutes || 0) > 0);
+    if (selectedFilter === "checked-in") {
+      data = data.filter((row) => row.status === "present" || row.status === "half_day" || Boolean(row.first_punch));
     } else if (selectedFilter === "not-in") {
-      data = data.filter((row) => row.status === "absent" || row.status === "not_marked");
+      data = data.filter((row) => (row.status === "absent" || row.status === "not_marked") && !row.first_punch);
     } else if (selectedFilter === "time-off") {
-      data = data.filter((row) => row.status === "on_leave");
+      data = data.filter((row) => row.status === "on_leave" || row.status === "holiday");
     }
 
     if (selectedEmpId) {
@@ -807,7 +865,14 @@ export default function DashboardPage() {
                       </span>
                       <button
                         onClick={handleNextMonth}
-                        className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-slate-500 dark:text-slate-400 transition-colors"
+                        disabled={(() => {
+                          const today = new Date();
+                          return (
+                            viewDate.getFullYear() > today.getFullYear() ||
+                            (viewDate.getFullYear() === today.getFullYear() && viewDate.getMonth() >= today.getMonth())
+                          );
+                        })()}
+                        className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed rounded-lg text-slate-500 dark:text-slate-400 transition-colors"
                       >
                         <ChevronRight className="h-4 w-4" />
                       </button>
@@ -829,12 +894,21 @@ export default function DashboardPage() {
                     <div className="grid grid-cols-7 gap-1">
                       {calendarDays.map((cell, idx) => {
                         const selected = isSelected(cell.date);
+                        const todayDate = new Date();
+                        todayDate.setHours(0, 0, 0, 0);
+                        const cellDate = new Date(cell.date);
+                        cellDate.setHours(0, 0, 0, 0);
+                        const isFuture = cellDate > todayDate;
+
                         return (
                           <button
                             key={idx}
+                            disabled={isFuture}
                             onClick={() => handleSelectDay(cell.date)}
                             className={`h-9 w-9 rounded-full flex items-center justify-center text-xs transition-all duration-200 focus:outline-none ${
-                              selected
+                              isFuture
+                                ? "opacity-25 cursor-not-allowed text-slate-400 dark:text-slate-600 select-none"
+                                : selected
                                 ? "bg-blue-500 dark:bg-blue-600 text-white font-semibold shadow-xs"
                                 : cell.isCurrentMonth
                                 ? "text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
@@ -852,20 +926,14 @@ export default function DashboardPage() {
             </div>
             {/* Shift Tabs */}
             <div className="px-5 border-b border-border flex items-center space-x-6 overflow-x-auto scrollbar-none py-1">
-              {[
-                { id: "all", label: "All" },
-                { id: "open", label: "Open Shift" },
-                { id: "khushi", label: "Khushi maam 8 to 6" },
-                { id: "night", label: "Night Shift Developer" },
-                { id: "daily", label: "Daily" },
-              ].map((tab) => {
+              {dynamicShiftTabs.map((tab) => {
                 const count = getShiftTotalCount(tab.id);
                 return (
                   <button
                     key={tab.id}
                     onClick={() => {
-                      setActiveTab(tab.id as any);
-                      setSelectedFilter("on-time");
+                      setActiveTab(tab.id);
+                      setSelectedFilter("checked-in");
                     }}
                     className={`py-3.5 text-xs font-semibold tracking-wide border-b-2 relative transition-all duration-200 shrink-0 cursor-pointer ${
                       activeTab === tab.id
@@ -889,54 +957,33 @@ export default function DashboardPage() {
             {/* Sub-filters Cards */}
             {(() => {
               const items = getFilteredItemsByShift();
-              const onTimeCount = items.filter(
-                (row) => (row.status === "present" || row.status === "half_day") && (row.late_minutes || 0) === 0
-              ).length;
-              const lateCount = items.filter(
-                (row) => (row.status === "present" || row.status === "half_day") && (row.late_minutes || 0) > 0
+              const checkedInCount = items.filter(
+                (row) => row.status === "present" || row.status === "half_day" || Boolean(row.first_punch)
               ).length;
               const notInYetCount = items.filter(
-                (row) => row.status === "absent" || row.status === "not_marked"
+                (row) => (row.status === "absent" || row.status === "not_marked") && !row.first_punch
               ).length;
               const timeOffCount = items.filter(
-                (row) => row.status === "on_leave"
+                (row) => row.status === "on_leave" || row.status === "holiday"
               ).length;
 
               return (
                 <div className="p-5 flex flex-wrap gap-4 border-b border-slate-50 dark:border-slate-850 bg-slate-50/10 dark:bg-slate-900/5">
-                  {/* On Time Filter */}
+                  {/* Checked In Filter */}
                   <button
-                    onClick={() => setSelectedFilter("on-time")}
+                    onClick={() => setSelectedFilter("checked-in")}
                     className={`flex-1 min-w-[200px] flex items-center space-x-3 p-4 rounded-xl border-2 text-left transition-all duration-200 cursor-pointer ${
-                      selectedFilter === "on-time"
+                      selectedFilter === "checked-in"
                         ? "border-blue-500 bg-blue-50/20 dark:bg-blue-950/20 shadow-md shadow-blue-500/5"
                         : "border-border hover:border-slate-350 dark:hover:border-slate-700 bg-card"
                     }`}
                   >
-                    <CircleDot className={`h-4.5 w-4.5 ${selectedFilter === "on-time" ? "text-blue-500 fill-blue-500" : "text-slate-400 dark:text-slate-500"}`} />
+                    <CircleDot className={`h-4.5 w-4.5 ${selectedFilter === "checked-in" ? "text-blue-500 fill-blue-500" : "text-slate-400 dark:text-slate-500"}`} />
                     <div>
                       <p className="text-xl font-bold text-slate-800 dark:text-slate-100 leading-none">
-                        {onTimeCount}
+                        {checkedInCount}
                       </p>
-                      <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 mt-1">On Time</p>
-                    </div>
-                  </button>
-
-                  {/* Late Filter */}
-                  <button
-                    onClick={() => setSelectedFilter("late")}
-                    className={`flex-1 min-w-[200px] flex items-center space-x-3 p-4 rounded-xl border-2 text-left transition-all duration-200 cursor-pointer ${
-                      selectedFilter === "late"
-                        ? "border-rose-500 bg-rose-50/10 dark:bg-rose-950/10 shadow-md shadow-rose-500/5"
-                        : "border-border hover:border-slate-350 dark:hover:border-slate-700 bg-card"
-                    }`}
-                  >
-                    <CircleDot className={`h-4.5 w-4.5 ${selectedFilter === "late" ? "text-rose-500 fill-rose-500" : "text-slate-400 dark:text-slate-500"}`} />
-                    <div>
-                      <p className="text-xl font-bold text-slate-800 dark:text-slate-100 leading-none">
-                        {lateCount}
-                      </p>
-                      <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 mt-1">Late</p>
+                      <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 mt-1">Checked In</p>
                     </div>
                   </button>
 
@@ -1551,15 +1598,7 @@ export default function DashboardPage() {
           )}
 
           {/* Widget 4: Pending Approvals */}
-          {!canReadApprovals ? (
-            <div className="bg-card text-card-foreground rounded-xl border border-border shadow-xs overflow-hidden p-6 text-center text-slate-500 dark:text-slate-400 flex flex-col items-center justify-center min-h-[220px]">
-              <ShieldAlert className="h-8 w-8 text-amber-500 mb-2 mx-auto" />
-              <h4 className="font-bold text-xs text-slate-800 dark:text-slate-200">Pending Approvals Access Restricted</h4>
-              <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-1 max-w-xs">
-                You do not have permission to view pending approvals (missing &apos;approval:read&apos; permission).
-              </p>
-            </div>
-          ) : isApprovalsLoading ? (
+          {!canReadApprovals ? null : isApprovalsLoading ? (
             <WidgetSkeleton title="Pending Approvals" />
           ) : approvalsError ? (
             <ErrorWidget title="Pending Approvals" error={approvalsError} />

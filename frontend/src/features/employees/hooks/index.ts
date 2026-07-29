@@ -29,7 +29,7 @@ export const useEmployees = (params: EmployeeListParams) => {
   const { selectedBranchId } = useBranchContext();
   const effectiveParams = {
     ...params,
-    branch_id: params.branch_id || selectedBranchId || undefined,
+    branch_id: params.branch_id !== undefined ? params.branch_id : (selectedBranchId || undefined),
   };
   return useQuery({
     queryKey: employeeKeys.list(effectiveParams),
@@ -81,7 +81,7 @@ export const useBranchOptions = () => {
 
 export const useDepartmentOptions = (overrideBranchId?: number) => {
   const { selectedBranchId } = useBranchContext();
-  const effectiveBranchId = overrideBranchId ?? selectedBranchId;
+  const effectiveBranchId = overrideBranchId !== undefined ? overrideBranchId : selectedBranchId;
   return useQuery({
     queryKey: [...employeeKeys.lookup("departments"), effectiveBranchId],
     queryFn: async () => {
@@ -95,7 +95,7 @@ export const useDepartmentOptions = (overrideBranchId?: number) => {
 
 export const useDesignationOptions = (overrideBranchId?: number) => {
   const { selectedBranchId } = useBranchContext();
-  const effectiveBranchId = overrideBranchId ?? selectedBranchId;
+  const effectiveBranchId = overrideBranchId !== undefined ? overrideBranchId : selectedBranchId;
   return useQuery({
     queryKey: [...employeeKeys.lookup("designations"), effectiveBranchId],
     queryFn: async () => {

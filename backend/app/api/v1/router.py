@@ -32,6 +32,7 @@ from app.modules.reports.router import router as reports_router
 from app.modules.settings.router import router as settings_router
 from app.modules.settlements.router import router as settlements_router
 from app.modules.shift.router import router as shift_router
+from app.modules.system.router import router as system_router
 
 api_router = APIRouter()
 api_router.include_router(auth_router)
@@ -52,5 +53,6 @@ api_router.include_router(audit_router)
 api_router.include_router(dashboard_router)
 api_router.include_router(reports_router)
 api_router.include_router(jobs_router)
+api_router.include_router(system_router)
 
 __all__ = ["api_router"]

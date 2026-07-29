@@ -882,16 +882,11 @@ export function BranchList() {
                   {/* Industry Type */}
                   <div className="space-y-1.5">
                     <label className="text-xs font-semibold text-foreground/80">Industry Type</label>
-                    <select
+                    <Input
                       value={formIndustryType}
                       onChange={e => setFormIndustryType(e.target.value)}
-                      className="w-full rounded-md border border-input bg-card h-10 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
-                    >
-                      <option value="">Select Industry Type</option>
-                      <option value="IT">Information Technology</option>
-                      <option value="Retail">Retail</option>
-                      <option value="Manufacturing">Manufacturing</option>
-                    </select>
+                      placeholder="Enter Industry Type"
+                    />
                   </div>
                 </div>
 
@@ -904,9 +899,7 @@ export function BranchList() {
                   {/* Latitude, Longitude, Radius row */}
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div className="space-y-1.5">
-                      <label className="text-xs font-semibold text-foreground/80">
-                        Latitude <span className="text-red-500">*</span>
-                      </label>
+                      <label className="text-xs font-semibold text-foreground/80">Latitude</label>
                       <Input
                         value={formLatitude}
                         onChange={e => {
@@ -929,9 +922,7 @@ export function BranchList() {
                     </div>
 
                     <div className="space-y-1.5">
-                      <label className="text-xs font-semibold text-foreground/80">
-                        Longitude <span className="text-red-500">*</span>
-                      </label>
+                      <label className="text-xs font-semibold text-foreground/80">Longitude</label>
                       <Input
                         value={formLongitude}
                         onChange={e => {
@@ -955,7 +946,7 @@ export function BranchList() {
 
                     <div className="space-y-1.5">
                       <label className="text-xs font-semibold text-foreground/80">
-                        Allowed Radius (max 200 meter) <span className="text-red-500">*</span>
+                        Allowed Radius (max 200 meter)
                       </label>
                       <Input
                         value={formAllowedRadius}

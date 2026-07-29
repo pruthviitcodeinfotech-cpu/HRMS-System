@@ -76,6 +76,41 @@ class LoanAdvanceCreateRequest(BaseSchema):
         return self
 
 
+class LoanRequestCreate(BaseSchema):
+    """Payload for submitting a new loan request for approval."""
+
+    name: str = Field(..., min_length=1, max_length=50, description="Loan title / description.")
+    category: str = Field(
+        default="personal_loan",
+        description="Category: personal_loan, salary_advance, emergency_loan.",
+    )
+    principal_amount: Decimal = Field(..., gt=0, description="Requested principal loan amount.")
+    tenure_months: int = Field(default=12, ge=1, le=60, description="Repayment tenure in months.")
+    interest_rate: Decimal = Field(default=Decimal("0.00"), ge=0, le=50, description="Annual interest rate percentage.")
+    interest_type: str = Field(default="flat", description="Interest type: flat, reducing.")
+    comment: str | None = Field(default=None, description="Reason / notes.")
+
+
+class LoanInstallmentScheduleSchema(BaseSchema):
+    """Monthly installment schedule projection."""
+
+    id: int = Field(..., description="Schedule PK.")
+    installment_number: int = Field(..., description="1-indexed installment number.")
+    due_date: datetime.date = Field(..., description="Installment due date.")
+    principal_amount: Decimal = Field(..., description="Principal portion.")
+    interest_amount: Decimal = Field(..., description="Interest portion.")
+    total_installment: Decimal = Field(..., description="Total monthly installment.")
+    status: str = Field(..., description="Status: pending, paid, waived.")
+
+
+class LoanEarlyClosureRequest(BaseSchema):
+    """Payload for settling outstanding loan early."""
+
+    payoff_amount: Decimal = Field(..., gt=0, description="Amount paid to settle remaining loan balance.")
+    discount_amount: Decimal = Field(default=Decimal("0.00"), ge=0, description="Waiver or discount amount.")
+    comment: str | None = Field(default=None, description="Early closure notes.")
+
+
 class LoanAdvanceUpdateRequest(BaseSchema):
     """Payload for patching / updating an existing active loan/advance registry."""
 

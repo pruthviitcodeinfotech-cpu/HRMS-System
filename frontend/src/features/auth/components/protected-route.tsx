@@ -19,8 +19,14 @@ export const ProtectedRoute = ({ children, requiredPermission }: ProtectedRouteP
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
-      const currentPath = window.location.pathname + window.location.search;
-      router.replace(`/login?redirectTo=${encodeURIComponent(currentPath)}`);
+      if (typeof window !== "undefined") {
+        const path = window.location.pathname;
+        if (path.startsWith("/login")) return;
+
+        const currentPath = path + window.location.search;
+        const target = currentPath === "/" || currentPath.startsWith("/login") ? "/dashboard" : currentPath;
+        router.replace(`/login?redirectTo=${encodeURIComponent(target)}`);
+      }
     } else if (!isLoading && isAuthenticated && requiredPermission && user) {
       if (!user.isSuperAdmin) {
         const perm = user.permissions.find((p) => p.feature_key === requiredPermission.feature);

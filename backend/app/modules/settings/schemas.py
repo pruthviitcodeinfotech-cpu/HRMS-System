@@ -191,3 +191,64 @@ class FeatureToggleRequest(BaseSchema):
     enabled: bool = Field(
         ..., description="Set to true to enable, or false to disable the feature."
     )
+
+
+# ===========================================================================
+# 4. Policy DTOs (Attendance, Security, Notifications)
+# ===========================================================================
+
+
+class AttendancePolicyResponse(BaseSchema):
+    """Response DTO for attendance policy settings."""
+
+    grace_period_minutes: int = Field(..., description="Grace period in minutes before late penalty.")
+    late_penalty_enabled: bool = Field(..., description="Whether late arrival penalty deduction is enabled.")
+    overtime_buffer_minutes: int = Field(..., description="Buffer period before overtime starts counting.")
+    overtime_multiplier: float = Field(..., description="Multiplier rate applied to overtime hours.")
+
+
+class AttendancePolicyUpdateRequest(BaseSchema):
+    """Update DTO for attendance policy settings."""
+
+    grace_period_minutes: int | None = Field(default=None, ge=0, le=120)
+    late_penalty_enabled: bool | None = Field(default=None)
+    overtime_buffer_minutes: int | None = Field(default=None, ge=0, le=240)
+    overtime_multiplier: float | None = Field(default=None, ge=1.0, le=5.0)
+
+
+class SecurityPolicyResponse(BaseSchema):
+    """Response DTO for security and account policies."""
+
+    password_min_length: int = Field(..., description="Minimum password character length.")
+    password_require_special: bool = Field(..., description="Require at least one special character.")
+    session_timeout_minutes: int = Field(..., description="Session idle timeout in minutes.")
+    max_failed_login_attempts: int = Field(..., description="Failed login attempts before lockout.")
+    lockout_duration_minutes: int = Field(..., description="Account lockout duration in minutes.")
+
+
+class SecurityPolicyUpdateRequest(BaseSchema):
+    """Update DTO for security and account policies."""
+
+    password_min_length: int | None = Field(default=None, ge=6, le=32)
+    password_require_special: bool | None = Field(default=None)
+    session_timeout_minutes: int | None = Field(default=None, ge=15, le=1440)
+    max_failed_login_attempts: int | None = Field(default=None, ge=3, le=10)
+    lockout_duration_minutes: int | None = Field(default=None, ge=5, le=120)
+
+
+class NotificationPolicyResponse(BaseSchema):
+    """Response DTO for notification channel settings."""
+
+    email_enabled: bool = Field(..., description="Global email notification dispatch switch.")
+    sms_enabled: bool = Field(..., description="Global SMS notification dispatch switch.")
+    push_enabled: bool = Field(..., description="Global mobile push notification dispatch switch.")
+    sender_email: str = Field(..., description="Default sender email address.")
+
+
+class NotificationPolicyUpdateRequest(BaseSchema):
+    """Update DTO for notification channel settings."""
+
+    email_enabled: bool | None = Field(default=None)
+    sms_enabled: bool | None = Field(default=None)
+    push_enabled: bool | None = Field(default=None)
+    sender_email: str | None = Field(default=None, max_length=200)

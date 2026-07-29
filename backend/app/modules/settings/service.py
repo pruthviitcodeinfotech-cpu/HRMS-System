@@ -15,6 +15,7 @@ Sections:
 from __future__ import annotations
 
 import datetime
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -32,11 +33,20 @@ from app.modules.settings.exceptions import (
     SettingsValidationException,
     UnknownFeatureException,
 )
-from app.modules.settings.models import OrgSalarySlipSettings, OrgSettings
+from app.modules.settings.models import OrgPolicySettings, OrgSalarySlipSettings, OrgSettings
 from app.modules.settings.repository import (
+    OrgPolicySettingsRepository,
     OrgSalarySlipSettingsRepository,
     OrgSettingsRepository,
     SettingsCrossModuleRepository,
+)
+from app.modules.settings.schemas import (
+    AttendancePolicyResponse,
+    AttendancePolicyUpdateRequest,
+    NotificationPolicyResponse,
+    NotificationPolicyUpdateRequest,
+    SecurityPolicyResponse,
+    SecurityPolicyUpdateRequest,
 )
 from app.shared.base.service import BaseService
 
@@ -56,6 +66,7 @@ class SettingsService(BaseService):
         super().__init__(session)
         self.org_settings = OrgSettingsRepository(session)
         self.salary_slip = OrgSalarySlipSettingsRepository(session)
+        self.policy_settings = OrgPolicySettingsRepository(session)
         self.cross_module = SettingsCrossModuleRepository(session)
         self.users = UserRepository(session)
         self.audit = AuditService(session)
@@ -484,13 +495,184 @@ class SettingsService(BaseService):
     # =========================================================================
 
     async def cross_module_settings_present(self, org_id: int) -> dict[str, bool]:
-        """Check which cross-module settings rows exist for this org.
-
-        Used by the service/router to enrich the configuration view with
-        pointer availability flags.
-        """
+        """Check which cross-module settings rows exist for this org."""
         return {
             "attendance": await self.cross_module.attendance_settings_exists(org_id),
             "payroll": await self.cross_module.payroll_settings_exists(org_id),
             "leave": await self.cross_module.leave_settings_exists(org_id),
         }
+
+    # =========================================================================
+    # 7. Enterprise Policy Management (Attendance, Security, Notifications)
+    # =========================================================================
+
+    async def _get_or_create_policy_settings(
+        self, org_id: int, branch_id: int | None = None
+    ) -> OrgPolicySettings:
+        policy = await self.policy_settings.get_by_org_id(org_id, branch_id=branch_id)
+        if policy is None:
+            policy = OrgPolicySettings(
+                org_id=org_id,
+                branch_id=branch_id,
+                grace_period_minutes=15,
+                late_penalty_enabled=False,
+                overtime_buffer_minutes=30,
+                overtime_multiplier=Decimal("1.50"),
+                password_min_length=8,
+                password_require_special=True,
+                session_timeout_minutes=60,
+                max_failed_login_attempts=5,
+                lockout_duration_minutes=15,
+                email_enabled=True,
+                sms_enabled=False,
+                push_enabled=True,
+                sender_email="noreply@hrms.com",
+            )
+            self.session.add(policy)
+            await self.session.flush()
+        return policy
+
+    async def get_attendance_policy(
+        self, org_id: int, branch_id: int | None = None
+    ) -> AttendancePolicyResponse:
+        """Fetch attendance policy configuration."""
+        policy = await self._get_or_create_policy_settings(org_id, branch_id)
+        return AttendancePolicyResponse(
+            grace_period_minutes=policy.grace_period_minutes,
+            late_penalty_enabled=policy.late_penalty_enabled,
+            overtime_buffer_minutes=policy.overtime_buffer_minutes,
+            overtime_multiplier=float(policy.overtime_multiplier),
+        )
+
+    async def update_attendance_policy(
+        self,
+        org_id: int,
+        data: AttendancePolicyUpdateRequest,
+        updated_by: int | None = None,
+        branch_id: int | None = None,
+    ) -> AttendancePolicyResponse:
+        """Update attendance policy configuration."""
+        policy = await self._get_or_create_policy_settings(org_id, branch_id)
+        updates = data.model_dump(exclude_unset=True, exclude_none=True)
+        if updates:
+            async with self.transaction():
+                if "grace_period_minutes" in updates:
+                    policy.grace_period_minutes = updates["grace_period_minutes"]
+                if "late_penalty_enabled" in updates:
+                    policy.late_penalty_enabled = updates["late_penalty_enabled"]
+                if "overtime_buffer_minutes" in updates:
+                    policy.overtime_buffer_minutes = updates["overtime_buffer_minutes"]
+                if "overtime_multiplier" in updates:
+                    policy.overtime_multiplier = Decimal(str(updates["overtime_multiplier"]))
+                policy.updated_by = updated_by
+                await self._audit_policy_change(
+                    org_id=org_id,
+                    actor_id=updated_by,
+                    title="Attendance Policy updated",
+                    description="Updated grace period, late penalty, or overtime rules.",
+                )
+        return await self.get_attendance_policy(org_id, branch_id)
+
+    async def get_security_policy(
+        self, org_id: int, branch_id: int | None = None
+    ) -> SecurityPolicyResponse:
+        """Fetch security and password policy configuration."""
+        policy = await self._get_or_create_policy_settings(org_id, branch_id)
+        return SecurityPolicyResponse(
+            password_min_length=policy.password_min_length,
+            password_require_special=policy.password_require_special,
+            session_timeout_minutes=policy.session_timeout_minutes,
+            max_failed_login_attempts=policy.max_failed_login_attempts,
+            lockout_duration_minutes=policy.lockout_duration_minutes,
+        )
+
+    async def update_security_policy(
+        self,
+        org_id: int,
+        data: SecurityPolicyUpdateRequest,
+        updated_by: int | None = None,
+        branch_id: int | None = None,
+    ) -> SecurityPolicyResponse:
+        """Update security and password policy configuration."""
+        policy = await self._get_or_create_policy_settings(org_id, branch_id)
+        updates = data.model_dump(exclude_unset=True, exclude_none=True)
+        if updates:
+            async with self.transaction():
+                if "password_min_length" in updates:
+                    policy.password_min_length = updates["password_min_length"]
+                if "password_require_special" in updates:
+                    policy.password_require_special = updates["password_require_special"]
+                if "session_timeout_minutes" in updates:
+                    policy.session_timeout_minutes = updates["session_timeout_minutes"]
+                if "max_failed_login_attempts" in updates:
+                    policy.max_failed_login_attempts = updates["max_failed_login_attempts"]
+                if "lockout_duration_minutes" in updates:
+                    policy.lockout_duration_minutes = updates["lockout_duration_minutes"]
+                policy.updated_by = updated_by
+                await self._audit_policy_change(
+                    org_id=org_id,
+                    actor_id=updated_by,
+                    title="Security Policy updated",
+                    description="Updated password complexity, session timeout, or lockout policy.",
+                )
+        return await self.get_security_policy(org_id, branch_id)
+
+    async def get_notification_policy(
+        self, org_id: int, branch_id: int | None = None
+    ) -> NotificationPolicyResponse:
+        """Fetch notification channel configuration."""
+        policy = await self._get_or_create_policy_settings(org_id, branch_id)
+        return NotificationPolicyResponse(
+            email_enabled=policy.email_enabled,
+            sms_enabled=policy.sms_enabled,
+            push_enabled=policy.push_enabled,
+            sender_email=policy.sender_email,
+        )
+
+    async def update_notification_policy(
+        self,
+        org_id: int,
+        data: NotificationPolicyUpdateRequest,
+        updated_by: int | None = None,
+        branch_id: int | None = None,
+    ) -> NotificationPolicyResponse:
+        """Update notification channel configuration."""
+        policy = await self._get_or_create_policy_settings(org_id, branch_id)
+        updates = data.model_dump(exclude_unset=True, exclude_none=True)
+        if updates:
+            async with self.transaction():
+                if "email_enabled" in updates:
+                    policy.email_enabled = updates["email_enabled"]
+                if "sms_enabled" in updates:
+                    policy.sms_enabled = updates["sms_enabled"]
+                if "push_enabled" in updates:
+                    policy.push_enabled = updates["push_enabled"]
+                if "sender_email" in updates:
+                    policy.sender_email = updates["sender_email"]
+                policy.updated_by = updated_by
+                await self._audit_policy_change(
+                    org_id=org_id,
+                    actor_id=updated_by,
+                    title="Notification Policy updated",
+                    description="Updated notification channel switches or sender email.",
+                )
+        return await self.get_notification_policy(org_id, branch_id)
+
+    async def _audit_policy_change(
+        self,
+        *,
+        org_id: int,
+        actor_id: int | None,
+        title: str,
+        description: str,
+    ) -> None:
+        await self.audit.record(
+            org_id=org_id,
+            module="settings",
+            sub_module="policy",
+            action_type=ActionType.UPDATE,
+            title=title,
+            description=description,
+            performed_by_user_id=actor_id or 0,
+            performed_by_name=f"User #{actor_id}" if actor_id else "System",
+        )

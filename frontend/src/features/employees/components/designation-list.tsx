@@ -358,11 +358,6 @@ export function DesignationList() {
     setIsCountFilterOpen(false);
   };
 
-  // Reload data from query
-  const handleReload = () => {
-    designationsQuery.refetch();
-  };
-
   return (
     <div className="space-y-4">
       {/* Top Header */}
@@ -372,12 +367,6 @@ export function DesignationList() {
           <span className="text-[#0b5cff] font-bold">({totalRecords})</span>
         </div>
         <div className="flex items-center gap-2">
-          <button
-            onClick={handleReload}
-            className="text-[10px] text-muted-foreground hover:text-foreground px-2 py-1.5 border border-border rounded-md transition-colors cursor-pointer mr-1"
-          >
-            Reload Data
-          </button>
           {canCreate && (
             <Button variant="primary" size="sm" onClick={handleAddClick} className="shadow-xs bg-[#0b5cff] hover:bg-[#094ed9] text-white font-medium text-xs rounded-md h-9 px-4">
               Add New

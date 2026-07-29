@@ -36,6 +36,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants.enums import SortOrder
@@ -62,6 +63,7 @@ from app.modules.employee.exceptions import (
     DocumentNotFoundException,
     EmergencyContactNotFoundException,
     EmployeeAlreadyTerminatedException,
+    EmployeeCodeExistsException,
     ReferenceNotFoundException,
     TagNotFoundException,
 )
@@ -233,11 +235,19 @@ class EmployeeService(BaseService):
             payload["monthly_salary"] = data.monthly_salary
             payload["payroll_group_id"] = data.payroll_group_id
 
+        if data.employee_code and data.employee_code.strip():
+            code = data.employee_code.strip()
+            existing_code = await self.employees.get_by_code(org_id, code, include_deleted=True)
+            if existing_code is not None:
+                raise EmployeeCodeExistsException(code)
+            payload["employee_code"] = code
+        else:
+            payload["employee_code"] = await self._next_employee_code(org_id)
+
         if data.create_self_service_user:
             await self._validate_self_service_user(org_id, data)
 
         async with self.transaction():
-            payload["employee_code"] = await self._next_employee_code(org_id)
             employee = await self.employees.create(payload)
             if data.create_self_service_user:
                 await self._create_self_service_user(
@@ -291,9 +301,7 @@ class EmployeeService(BaseService):
     ) -> EmployeeDetailSchema:
         """Apply a partial update. Org reassignment re-validates hierarchy consistency.
 
-        ``employee_code`` and ``employment_status`` are never updated here (immutable
-        / lifecycle-driven). Salary fields are dropped when ``can_set_salary`` is
-        false.
+        Salary fields are dropped when ``can_set_salary`` is false.
         """
         employee = await self._get_active_employee(org_id, employee_id)
         updates = data.model_dump(exclude_unset=True)
@@ -301,6 +309,14 @@ class EmployeeService(BaseService):
         if not can_set_salary:
             for field in ("salary_type", "monthly_salary", "payroll_group_id"):
                 updates.pop(field, None)
+
+        if updates.get("employee_code"):
+            code = str(updates["employee_code"]).strip()
+            if code != employee.employee_code:
+                existing_code = await self.employees.get_by_code(org_id, code, include_deleted=True)
+                if existing_code is not None and existing_code.employee_id != employee_id:
+                    raise EmployeeCodeExistsException(code)
+                updates["employee_code"] = code
 
         # Re-validate the org triple whenever any leg changes.
         if {"master_branch_id", "dept_id", "designation_id"} & updates.keys():
@@ -857,6 +873,19 @@ class EmployeeService(BaseService):
         ``expires_at`` has no column in the approved schema, so it is intentionally not
         persisted.
         """
+        doc_type_val = getattr(data.document_type, "value", str(data.document_type))
+        exp_date = data.expiry_date or data.expires_at
+        category_val = data.category or "other"
+
+        existing_docs = await self.documents.list_for_employee(org_id, employee_id)
+        prev_doc = next(
+            (d for d in existing_docs if getattr(d, "document_type", None) == doc_type_val or getattr(d, "category", None) == category_val),
+            None,
+        )
+
+        version_num = (getattr(prev_doc, "version_number", 1) + 1) if prev_doc else 1
+        prev_id = getattr(prev_doc, "document_id", None) if prev_doc else None
+
         employee = await self._get_active_employee(org_id, employee_id)
         stored = await self.storage.save_upload(upload, prefix=f"employees/{employee_id}")
         try:
@@ -864,10 +893,17 @@ class EmployeeService(BaseService):
                 document = await self.documents.create(
                     {
                         "employee_id": employee_id,
-                        "document_type": data.document_type.value,
+                        "document_type": doc_type_val,
+                        "category": category_val,
                         "file_url": stored.key,
                         "original_filename": stored.original_filename,
                         "file_size_bytes": stored.size_bytes,
+                        "mime_type": stored.content_type,
+                        "version_number": version_num,
+                        "previous_version_id": prev_id,
+                        "expiry_date": exp_date,
+                        "is_confidential": data.is_confidential,
+                        "approval_status": "approved",
                         "uploaded_by": actor_id,
                     }
                 )
@@ -877,7 +913,7 @@ class EmployeeService(BaseService):
                     action_type=ActionType.INSERT,
                     title="Document uploaded",
                     description=(
-                        f"Uploaded {data.document_type.value} document "
+                        f"Uploaded {doc_type_val} document v{version_num} "
                         f"({stored.original_filename}, {stored.size_bytes} bytes)."
                     ),
                     employee=employee,
@@ -899,12 +935,7 @@ class EmployeeService(BaseService):
     async def open_document(
         self, *, org_id: int, employee_id: int, document_id: int
     ) -> DocumentDownload:
-        """Resolve a document to a streamable on-disk file (contract #36).
-
-        The row is looked up through the parent employee's ``org_id`` (tenant
-        isolation), then its stored key is re-validated against the storage root — a
-        key that tried to escape ``upload_dir`` can never be streamed back.
-        """
+        """Resolve a document to a streamable on-disk file (contract #36)."""
         document = await self.documents.get_by_id_in_org(org_id, employee_id, document_id)
         if document is None:
             raise DocumentNotFoundException()
@@ -919,6 +950,41 @@ class EmployeeService(BaseService):
             content_type=content_type_for(path.name),
             document=EmployeeDocumentSchema.model_validate(document),
         )
+
+    async def approve_document(
+        self,
+        *,
+        org_id: int,
+        actor_id: int,
+        document_id: int,
+        approval_status: str,
+        comment: str | None = None,
+    ) -> EmployeeDocumentSchema:
+        """Approve or reject an uploaded employee document."""
+        from app.modules.employee.models.satellites import EmployeeDocument
+        stmt = select(EmployeeDocument).where(
+            EmployeeDocument.document_id == document_id,
+            EmployeeDocument.is_deleted.is_(False),
+        )
+        res = await self.session.execute(stmt)
+        document = res.scalar_one_or_none()
+        if document is None:
+            raise DocumentNotFoundException()
+
+        employee = await self._get_active_employee(org_id, document.employee_id)
+        async with self.transaction():
+            document.approval_status = approval_status
+            document.updated_at = utcnow()
+            await self._audit(
+                org_id=org_id,
+                actor_id=actor_id,
+                action_type=ActionType.UPDATE,
+                title="Document Approval Updated",
+                description=f"Set approval status of document #{document_id} to '{approval_status}'. {comment or ''}",
+                employee=employee,
+                sub_module="Documents",
+            )
+        return EmployeeDocumentSchema.model_validate(document)
 
     async def delete_document(
         self, *, org_id: int, actor_id: int, employee_id: int, document_id: int

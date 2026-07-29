@@ -12,7 +12,7 @@ from typing import Any
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.settings.models import OrgSalarySlipSettings, OrgSettings
+from app.modules.settings.models import OrgPolicySettings, OrgSalarySlipSettings, OrgSettings
 from app.shared.base.repository import BaseRepository
 
 
@@ -194,3 +194,31 @@ class SettingsCrossModuleRepository:
         )
         result = await self.session.execute(stmt)
         return int(result.scalar_one())
+
+
+class OrgPolicySettingsRepository(BaseRepository[OrgPolicySettings]):
+    """Repository for managing enterprise policy settings (attendance, security, notifications)."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        super().__init__(session, OrgPolicySettings)
+
+    async def get_by_org_id(self, org_id: int, branch_id: int | None = None) -> OrgPolicySettings | None:
+        """Fetch policy settings row for org (with fallback)."""
+        if branch_id is not None:
+            stmt = select(OrgPolicySettings).where(
+                OrgPolicySettings.org_id == org_id, OrgPolicySettings.branch_id == branch_id
+            )
+            res = await self.session.execute(stmt)
+            row = res.scalar_one_or_none()
+            if row is not None:
+                return row
+        stmt = select(OrgPolicySettings).where(
+            OrgPolicySettings.org_id == org_id, OrgPolicySettings.branch_id.is_(None)
+        )
+        res = await self.session.execute(stmt)
+        row = res.scalar_one_or_none()
+        if row is None:
+            stmt = select(OrgPolicySettings).where(OrgPolicySettings.org_id == org_id).limit(1)
+            res = await self.session.execute(stmt)
+            row = res.scalar_one_or_none()
+        return row

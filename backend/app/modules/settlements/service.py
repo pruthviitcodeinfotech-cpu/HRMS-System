@@ -47,6 +47,7 @@ from app.modules.settlements.models import (
     EmployeeArrears,
     EmployeeLoanAdvance,
     LoanAdvanceTransaction,
+    LoanInstallmentSchedule,
 )
 from app.modules.settlements.repository import (
     ArrearsTransactionRepository,
@@ -65,6 +66,9 @@ from app.modules.settlements.schemas import (
     LoanAdvanceTransactionListResponse,
     LoanAdvanceTransactionSchema,
     LoanAdvanceTransactionSearchQuery,
+    LoanEarlyClosureRequest,
+    LoanInstallmentScheduleSchema,
+    LoanRequestCreate,
     SettlementHistoryQuery,
     SettlementStatementQuery,
     SettlementSummaryQuery,
@@ -1254,3 +1258,237 @@ class SettlementService(BaseService):
             "arrears_cleared_amount": arrears_cleared_amount,
             "status": "finalized",
         }
+
+    # =========================================================================
+    # Enterprise Loan & Advance Management
+    # =========================================================================
+
+    async def request_loan(
+        self,
+        *,
+        org_id: int,
+        employee_id: int,
+        user_id: int,
+        data: LoanRequestCreate,
+    ) -> EmployeeLoanAdvance:
+        """Create a new loan application in pending_approval state."""
+        await self._validate_employee(org_id, employee_id)
+
+        p = data.principal_amount
+        r = (data.interest_rate / Decimal("100.0")) / Decimal("12.0")
+        n = Decimal(str(data.tenure_months))
+        if data.interest_type == "reducing" and r > 0:
+            term = (Decimal("1.0") + r) ** int(data.tenure_months)
+            monthly_inst = (p * r * term) / (term - Decimal("1.0"))
+        else:
+            total_interest = p * (data.interest_rate / Decimal("100.0")) * (n / Decimal("12.0"))
+            monthly_inst = (p + total_interest) / n
+
+        monthly_inst = monthly_inst.quantize(Decimal("0.01"))
+
+        async with self.transaction():
+            loan = EmployeeLoanAdvance(
+                org_id=org_id,
+                employee_id=employee_id,
+                name=data.name,
+                type="loan",
+                category=data.category,
+                principal_amount=p,
+                interest_rate=data.interest_rate,
+                interest_type=data.interest_type,
+                tenure_months=data.tenure_months,
+                monthly_installment=monthly_inst,
+                total_debit=Decimal("0.00"),
+                outstanding_amount=p,
+                transaction_date=date.today(),
+                approval_status="pending_approval",
+                status="active",
+                comment=data.comment,
+                created_by=user_id,
+            )
+            self.session.add(loan)
+            await self.session.flush()
+
+            await self.audit.record(
+                org_id=org_id,
+                module="settlements",
+                sub_module="loans",
+                action_type=ActionType.UPDATE,
+                title="Loan Request Submitted",
+                description=f"Submitted {data.category} request of amount {p} for employee #{employee_id}.",
+                performed_by_user_id=user_id,
+                performed_by_name=f"User #{user_id}",
+                employee_id=employee_id,
+            )
+
+            try:
+                from app.modules.notifications.service import NotificationService
+                await NotificationService(self.session).dispatch(
+                    org_id=org_id,
+                    event_type="LOAN_REQUESTED",
+                    recipient_user_ids=[user_id],
+                    context_data={"loan_id": loan.id, "amount": str(p), "category": data.category},
+                )
+            except Exception:
+                pass
+        return loan
+
+    async def disburse_loan(
+        self,
+        *,
+        org_id: int,
+        loan_id: int,
+        user_id: int,
+    ) -> EmployeeLoanAdvance:
+        """Disburse loan and generate monthly installment schedule."""
+        loan = await self.loans_advances.get_by_id(org_id, loan_id)
+        if loan is None:
+            raise LoanAdvanceNotFoundException()
+
+        async with self.transaction():
+            loan.approval_status = "disbursed"
+            loan.status = "active"
+            loan.disbursed_at = utcnow()
+            loan.updated_by = user_id
+
+            txn = LoanAdvanceTransaction(
+                org_id=org_id,
+                loan_advance_id=loan.id,
+                employee_id=loan.employee_id,
+                transaction_date=date.today(),
+                transaction_type="debit",
+                amount=loan.principal_amount,
+                type_label=loan.type,
+                comment="Initial loan disbursement",
+                source="manual",
+                created_by=user_id,
+            )
+            self.session.add(txn)
+            loan.total_debit += loan.principal_amount
+
+            start_date = date.today()
+            inst_amount = loan.monthly_installment
+            for i in range(1, loan.tenure_months + 1):
+                month_offset = i
+                due_year = start_date.year + (start_date.month + month_offset - 1) // 12
+                due_month = (start_date.month + month_offset - 1) % 12 + 1
+                due_d = date(due_year, due_month, min(start_date.day, 28))
+
+                sch = LoanInstallmentSchedule(
+                    org_id=org_id,
+                    loan_advance_id=loan.id,
+                    installment_number=i,
+                    due_date=due_d,
+                    principal_amount=inst_amount,
+                    interest_amount=Decimal("0.00"),
+                    total_installment=inst_amount,
+                    status="pending",
+                )
+                self.session.add(sch)
+
+            await self.audit.record(
+                org_id=org_id,
+                module="settlements",
+                sub_module="loans",
+                action_type=ActionType.UPDATE,
+                title="Loan Disbursed",
+                description=f"Disbursed loan #{loan_id} of amount {loan.principal_amount}.",
+                performed_by_user_id=user_id,
+                performed_by_name=f"User #{user_id}",
+                employee_id=loan.employee_id,
+            )
+
+            try:
+                from app.modules.notifications.service import NotificationService
+                await NotificationService(self.session).dispatch(
+                    org_id=org_id,
+                    event_type="LOAN_DISBURSED",
+                    recipient_user_ids=[user_id],
+                    context_data={"loan_id": loan.id, "amount": str(loan.principal_amount)},
+                )
+            except Exception:
+                pass
+        return loan
+
+    async def early_closure(
+        self,
+        *,
+        org_id: int,
+        loan_id: int,
+        user_id: int,
+        data: LoanEarlyClosureRequest,
+    ) -> EmployeeLoanAdvance:
+        """Settle loan balance early and mark loan closed."""
+        loan = await self.loans_advances.get_by_id(org_id, loan_id)
+        if loan is None:
+            raise LoanAdvanceNotFoundException()
+
+        async with self.transaction():
+            txn = LoanAdvanceTransaction(
+                org_id=org_id,
+                loan_advance_id=loan.id,
+                employee_id=loan.employee_id,
+                transaction_date=date.today(),
+                transaction_type="credit",
+                amount=data.payoff_amount + data.discount_amount,
+                type_label=loan.type,
+                comment=f"Early loan payoff: Paid {data.payoff_amount}, Discount {data.discount_amount}. {data.comment or ''}",
+                source="manual",
+                created_by=user_id,
+            )
+            self.session.add(txn)
+
+            loan.outstanding_amount = Decimal("0.00")
+            loan.status = "closed"
+            loan.approval_status = "closed"
+            loan.updated_by = user_id
+
+            stmt = select(LoanInstallmentSchedule).where(
+                LoanInstallmentSchedule.loan_advance_id == loan.id,
+                LoanInstallmentSchedule.status == "pending",
+            )
+            schedules = (await self.session.execute(stmt)).scalars().all()
+            for sch in schedules:
+                sch.status = "paid"
+
+            await self.audit.record(
+                org_id=org_id,
+                module="settlements",
+                sub_module="loans",
+                action_type=ActionType.UPDATE,
+                title="Loan Early Closure",
+                description=f"Early closed loan #{loan_id} with payoff of {data.payoff_amount}.",
+                performed_by_user_id=user_id,
+                performed_by_name=f"User #{user_id}",
+                employee_id=loan.employee_id,
+            )
+        return loan
+
+    async def get_loan_schedules(
+        self,
+        *,
+        org_id: int,
+        loan_id: int,
+    ) -> list[LoanInstallmentScheduleSchema]:
+        """Fetch installment schedule for a loan."""
+        stmt = (
+            select(LoanInstallmentSchedule)
+            .where(
+                LoanInstallmentSchedule.org_id == org_id,
+                LoanInstallmentSchedule.loan_advance_id == loan_id,
+            )
+            .order_by(LoanInstallmentSchedule.installment_number.asc())
+        )
+        schedules = (await self.session.execute(stmt)).scalars().all()
+        return [
+            LoanInstallmentScheduleSchema(
+                id=s.id,
+                installment_number=s.installment_number,
+                due_date=s.due_date,
+                principal_amount=s.principal_amount,
+                interest_amount=s.interest_amount,
+                total_installment=s.total_installment,
+                status=s.status,
+            )
+            for s in schedules
+        ]

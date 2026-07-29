@@ -145,6 +145,10 @@ class AttendanceDayRepository(BaseRepository[AttendanceDay]):
                 .where(
                     ShiftAssignment.org_id == org_id,
                     ShiftAssignment.effective_from <= date,
+                    or_(
+                        ShiftAssignment.effective_to.is_(None),
+                        ShiftAssignment.effective_to >= date,
+                    ),
                 )
                 .group_by(ShiftAssignment.employee_id)
                 .subquery()

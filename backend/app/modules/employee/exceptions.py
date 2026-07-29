@@ -81,9 +81,19 @@ class TagNotFoundException(NotFoundException):
     message = "The requested tag was not found."
 
 
+class EmployeeCodeExistsException(ConflictException):
+    """An employee with the specified employee_code already exists in this organisation."""
+
+    code = "EMPLOYEE_CODE_EXISTS"
+
+    def __init__(self, code_val: str):
+        super().__init__(f"An employee with code '{code_val}' already exists.")
+
+
 __all__ = [
     "EmployeeNotFoundException",
     "EmployeeAlreadyTerminatedException",
+    "EmployeeCodeExistsException",
     "BranchNotFoundException",
     "DepartmentNotFoundException",
     "DesignationNotFoundException",

@@ -37,6 +37,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Index,
+    Integer,
     Numeric,
     String,
     Text,
@@ -56,14 +57,30 @@ class EmployeeLoanAdvance(Base):
     employee_id: Mapped[int] = mapped_column(BigInteger, nullable=False)  # deferred FK -> employees
     name: Mapped[str] = mapped_column(String(50), nullable=False)
     type: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'loan'"))
+    category: Mapped[str] = mapped_column(
+        String(30), nullable=False, server_default=text("'personal_loan'")
+    )
     principal_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    interest_rate: Mapped[Decimal] = mapped_column(
+        Numeric(5, 2), nullable=False, server_default=text("0.00")
+    )
+    interest_type: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default=text("'flat'")
+    )
+    tenure_months: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("1")
+    )
     monthly_installment: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     total_debit: Mapped[Decimal] = mapped_column(
         Numeric(12, 2), nullable=False, server_default=text("0.00")
     )
     outstanding_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     transaction_date: Mapped[date] = mapped_column(Date, nullable=False)
+    approval_status: Mapped[str] = mapped_column(
+        String(30), nullable=False, server_default=text("'active'")
+    )
     status: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'active'"))
+    disbursed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     comment: Mapped[str | None] = mapped_column(Text)
     # DEFERRED cross-module FKs -> users.id
     created_by: Mapped[int] = mapped_column(
@@ -98,6 +115,43 @@ class EmployeeLoanAdvance(Base):
     transactions: Mapped[list["LoanAdvanceTransaction"]] = relationship(
         back_populates="loan_advance"
     )
+    installments: Mapped[list["LoanInstallmentSchedule"]] = relationship(
+        back_populates="loan_advance"
+    )
+
+
+class LoanInstallmentSchedule(Base):
+    __tablename__ = "loan_installment_schedules"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    org_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    loan_advance_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "employee_loans_advances.id",
+            name="fk_loan_schedules_loan_advance_id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+    )
+    installment_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    due_date: Mapped[date] = mapped_column(Date, nullable=False)
+    principal_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    interest_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    total_installment: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default=text("'pending'")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+
+    __table_args__ = (
+        Index("ix_loan_schedules_loan_advance_id", "loan_advance_id"),
+        CheckConstraint("status IN ('pending', 'paid', 'waived')", name="ck_loan_schedules_status"),
+    )
+
+    loan_advance: Mapped["EmployeeLoanAdvance"] = relationship(back_populates="installments")
 
 
 class LoanAdvanceTransaction(Base):
