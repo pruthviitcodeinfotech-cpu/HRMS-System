@@ -50,7 +50,13 @@ const mapBackendStatus = (status?: string): AttendanceStatus => {
 };
 
 export const AttendanceMasterView: React.FC = () => {
-  const todayStr = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  const todayStr = useMemo(() => {
+    const d = new Date();
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  }, []);
 
   const [filter, setFilter] = useState<AttendanceFilter>({
     fromDate: todayStr,
@@ -60,7 +66,7 @@ export const AttendanceMasterView: React.FC = () => {
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [pageSize, setPageSize] = useState<number>(10);
   const [sortField, setSortField] = useState<SortField>("employeeId");
-  const [sortOrder, setSortOrder] = useState<SortOrder>("desc");
+  const [sortOrder, setSortOrder] = useState<SortOrder>("asc");
 
   // Construct query parameters for server-side pagination, searching & filtering
   const queryParams: AttendanceDailyQueryParams = useMemo(() => {

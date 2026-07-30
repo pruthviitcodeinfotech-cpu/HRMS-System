@@ -18,7 +18,6 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
-  ArrowUpDown,
   ArrowUp,
   ArrowDown,
   CircleDot,
@@ -221,20 +220,22 @@ export default function DashboardPage() {
   const [viewDate, setViewDate] = useState<Date>(() => new Date());
   const calendarRef = useRef<HTMLDivElement>(null);
 
-  // Restore saved targetDate from localStorage on mount (defaults to today if unset or stale)
+  // Restore saved targetDate from localStorage on mount (only if it matches today's date; resets stale dates to today)
   useEffect(() => {
     try {
       const todayStr = formatDateStr(new Date());
       const savedDate = localStorage.getItem("dashboard_target_date");
-      if (savedDate && /^\d{4}-\d{2}-\d{2}$/.test(savedDate)) {
+      if (savedDate && /^\d{4}-\d{2}-\d{2}$/.test(savedDate) && savedDate === todayStr) {
         setTargetDate(savedDate);
         const [y, m, d] = savedDate.split("-").map(Number);
         if (!isNaN(y) && !isNaN(m) && !isNaN(d)) {
           setViewDate(new Date(y, m - 1, d));
         }
       } else {
+        // Unset or stale date from a previous day: auto-reset to today's date
         setTargetDate(todayStr);
         setViewDate(new Date());
+        localStorage.setItem("dashboard_target_date", todayStr);
       }
     } catch (err) {
       console.error("Failed to restore dashboard_target_date from localStorage", err);
@@ -480,7 +481,7 @@ export default function DashboardPage() {
 
   const renderSortIcon = (key: string) => {
     if (sortConfig?.key !== key) {
-      return <ArrowUpDown className="h-3.5 w-3.5 opacity-50 shrink-0" />;
+      return null;
     }
     if (sortConfig.direction === "asc") {
       return <ArrowUp className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400 shrink-0" />;
@@ -1354,7 +1355,6 @@ export default function DashboardPage() {
                               className="flex items-center space-x-1 hover:text-slate-700 dark:hover:text-slate-200 cursor-pointer select-none"
                             >
                               <span>Shift Name</span>
-                              <ArrowUpDown className="h-3 w-3 opacity-50" />
                             </span>
                             
                             {(visibleFilters["shiftName"] || selectedShift) && (
@@ -1460,7 +1460,6 @@ export default function DashboardPage() {
                               className="flex items-center space-x-1 hover:text-slate-700 dark:hover:text-slate-200 cursor-pointer select-none"
                             >
                               <span>Department Name</span>
-                              <ArrowUpDown className="h-3 w-3 opacity-50" />
                             </span>
                             
                             {(visibleFilters["deptName"] || selectedDeptSummary) && (

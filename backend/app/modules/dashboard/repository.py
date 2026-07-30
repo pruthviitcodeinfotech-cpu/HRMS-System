@@ -253,17 +253,24 @@ class DashboardRepository(BaseRepository[Employee]):
         break_res = await self.session.execute(break_stmt)
         on_break_today = break_res.scalar() or 0
 
-        # Calculate pending_biometrics
+        # Calculate pending_biometrics (excludes employees with biometric satellite or valid hardware punches)
         from app.modules.employee.models.satellites import EmployeeBiometric
+        from app.modules.attendance.models import AttendancePunch
+
         biometric_stmt_in = (
             select(EmployeeBiometric.employee_id)
             .where(EmployeeBiometric.is_deleted.is_(False))
         )
+        punched_stmt_in = (
+            select(AttendancePunch.employee_id)
+            .where(AttendancePunch.is_valid.is_(True))
+        )
+        enrolled_stmt_in = biometric_stmt_in.union(punched_stmt_in)
 
         pending_stmt = (
             select(func.count(Employee.employee_id))
             .where(
-                ~Employee.employee_id.in_(biometric_stmt_in),
+                ~Employee.employee_id.in_(enrolled_stmt_in),
                 *emp_filter,
             )
         )
@@ -1160,20 +1167,24 @@ class DashboardRepository(BaseRepository[Employee]):
         """Fetch paginated list of employees with pending biometric enrollment."""
         from app.modules.employee.models.satellites import EmployeeBiometric
 
-        # Subquery to find all employees with non-deleted biometric records
+        # Subquery to find all employees with non-deleted biometric records or hardware punches
+        from app.modules.attendance.models import AttendancePunch
+
         biometric_subq = (
             select(EmployeeBiometric.employee_id)
-            .where(
-                EmployeeBiometric.is_deleted.is_(False)
-            )
-            .subquery()
+            .where(EmployeeBiometric.is_deleted.is_(False))
         )
+        punched_subq = (
+            select(AttendancePunch.employee_id)
+            .where(AttendancePunch.is_valid.is_(True))
+        )
+        enrolled_subq = biometric_subq.union(punched_subq).subquery()
 
         # Base filters
         filters = [
             Employee.org_id == org_id,
             Employee.is_deleted.is_(False),
-            ~Employee.employee_id.in_(select(biometric_subq)),
+            ~Employee.employee_id.in_(select(enrolled_subq)),
         ]
 
         if branch_ids:

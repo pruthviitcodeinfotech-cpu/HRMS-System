@@ -153,10 +153,11 @@ async def test_service_handle_cdata_post_attlog() -> None:
     # Mock employee resolution execute results
     mock_employee = Employee(employee_id=101, employee_code="1001", org_id=10, master_branch_id=1)
     mock_result_employee = MagicMock()
-    mock_result_employee.scalar_one_or_none.side_effect = [
-        mock_employee,  # First call resolves employee
-        None,           # Second call resolves duplicate punch (returns None, i.e., no duplicate)
+    mock_result_employee.scalars.return_value.first.side_effect = [
+        mock_employee,  # First call resolves employee via exact_code
+        None,           # Second call checks existing EmployeeBiometric
     ]
+    mock_result_employee.scalar_one_or_none.return_value = None  # for duplicate punch check
     session.execute.return_value = mock_result_employee
 
     payload = "1001\t2026-07-17 10:15:30\t0\t1\t0\t0\t0\r\n"
@@ -186,6 +187,85 @@ async def test_service_handle_cdata_post_attlog() -> None:
         assert service.repository.update.call_count == 2
         assert service.repository.update.call_args_list[-1][0][0] == device
         assert service.repository.update.call_args_list[-1][0][1] == {"total_logs": 1}
+
+
+@pytest.mark.asyncio
+async def test_resolve_employee_case_1_numeric_suffix_match() -> None:
+    """Case 1: PIN 1 matches EMP001 (Priority 3: Numeric Suffix)."""
+    from app.modules.employee.models.employee import Employee
+
+    session = AsyncMock()
+    service = ADMSService(session)
+    emp001 = Employee(employee_id=101, employee_code="EMP001", org_id=10)
+
+    res1 = MagicMock()
+    res1.scalars.return_value.first.return_value = None
+    res2 = MagicMock()
+    res2.scalars.return_value.first.return_value = None
+    res3 = MagicMock()
+    res3.scalars.return_value.first.return_value = emp001
+
+    session.execute.side_effect = [res1, res2, res3]
+
+    emp, strategy = await service.resolve_employee_for_adms_pin(org_id=10, pin="1", device_sn="SN123")
+    assert emp == emp001
+    assert strategy == "numeric_suffix"
+
+
+@pytest.mark.asyncio
+async def test_resolve_employee_case_2_exact_code_match() -> None:
+    """Case 2: PIN EMP001 matches directly (Priority 1: Exact Code)."""
+    from app.modules.employee.models.employee import Employee
+
+    session = AsyncMock()
+    service = ADMSService(session)
+    emp001 = Employee(employee_id=101, employee_code="EMP001", org_id=10)
+
+    res1 = MagicMock()
+    res1.scalars.return_value.first.return_value = emp001
+    session.execute.return_value = res1
+
+    emp, strategy = await service.resolve_employee_for_adms_pin(org_id=10, pin="EMP001", device_sn="SN123")
+    assert emp == emp001
+    assert strategy == "exact_code"
+
+
+@pytest.mark.asyncio
+async def test_resolve_employee_case_3_non_existent_pin() -> None:
+    """Case 3: PIN does not exist (Returns None, None)."""
+    session = AsyncMock()
+    service = ADMSService(session)
+
+    res_empty = MagicMock()
+    res_empty.scalars.return_value.first.return_value = None
+    session.execute.return_value = res_empty
+
+    emp, strategy = await service.resolve_employee_for_adms_pin(org_id=10, pin="99999", device_sn="SN123")
+    assert emp is None
+    assert strategy is None
+
+
+@pytest.mark.asyncio
+async def test_resolve_employee_case_4_duplicate_numeric_suffix_no_exception() -> None:
+    """Case 4: Duplicate numeric suffix exists (EMP001 & EMP-001). Guaranteed no MultipleResultsFound."""
+    from app.modules.employee.models.employee import Employee
+
+    session = AsyncMock()
+    service = ADMSService(session)
+    emp_active = Employee(employee_id=101, employee_code="EMP001", employment_status="active", org_id=10)
+
+    res1 = MagicMock()
+    res1.scalars.return_value.first.return_value = None
+    res2 = MagicMock()
+    res2.scalars.return_value.first.return_value = None
+    res3 = MagicMock()
+    res3.scalars.return_value.first.return_value = emp_active
+
+    session.execute.side_effect = [res1, res2, res3]
+
+    emp, strategy = await service.resolve_employee_for_adms_pin(org_id=10, pin="1", device_sn="SN123")
+    assert emp == emp_active
+    assert strategy == "numeric_suffix"
 
 
 def test_parser_device_stats() -> None:

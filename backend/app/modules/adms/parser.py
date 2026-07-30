@@ -29,36 +29,67 @@ def parse_adms_post_body(body: str) -> list[dict[str, Any]]:
 def parse_attendance_payload(body: str) -> list[dict[str, Any]]:
     """Parse raw plain-text ATTLOG payload from ADMS device.
 
-    Example line format:
-    PIN\tTime\tStatus\tVerifyType\tWorkCode\tReserved\tReserved
+    Supports tab-separated, space-separated, and comma-separated formats.
+    Example tab format:
     1001\t2026-07-17 10:15:30\t0\t1\t0\t0\t0
+
+    Example space format:
+    1001 2026-07-17 10:15:30 0 1 0 0 0
     """
-    lines = body.strip().split("\n")
+    lines = body.strip().splitlines()
     records = []
     for line in lines:
         line_str = line.strip()
         if not line_str or line_str.startswith("#"):
             continue
-        parts = line_str.split("\t")
-        if len(parts) >= 2:
-            pin = parts[0].strip()
-            time_str = parts[1].strip()
-            
-            # Status defaults to '0' (check-in)
-            status = "0"
-            if len(parts) >= 3:
-                status = parts[2].strip()
-                
-            # VerifyType defaults to '1' (fingerprint)
-            verify_type = "1"
-            if len(parts) >= 4:
-                verify_type = parts[3].strip()
 
+        pin = None
+        time_str = None
+        status = "0"
+        verify_type = "1"
+        work_code = "0"
+
+        if "\t" in line_str:
+            parts = [p.strip() for p in line_str.split("\t") if p.strip()]
+            if len(parts) >= 2:
+                pin = parts[0]
+                time_str = parts[1]
+                if len(parts) >= 3:
+                    status = parts[2]
+                if len(parts) >= 4:
+                    verify_type = parts[3]
+                if len(parts) >= 5:
+                    work_code = parts[4]
+        else:
+            # Split by whitespace
+            raw_parts = [p.strip() for p in line_str.split() if p.strip()]
+            if len(raw_parts) >= 3 and "-" in raw_parts[1] and ":" in raw_parts[2]:
+                # e.g., ["1", "2026-07-17", "10:15:30", "0", "1", "0", "0"]
+                pin = raw_parts[0]
+                time_str = f"{raw_parts[1]} {raw_parts[2]}"
+                if len(raw_parts) >= 4:
+                    status = raw_parts[3]
+                if len(raw_parts) >= 5:
+                    verify_type = raw_parts[4]
+                if len(raw_parts) >= 6:
+                    work_code = raw_parts[5]
+            elif len(raw_parts) >= 2:
+                pin = raw_parts[0]
+                time_str = raw_parts[1]
+                if len(raw_parts) >= 3:
+                    status = raw_parts[2]
+                if len(raw_parts) >= 4:
+                    verify_type = raw_parts[3]
+                if len(raw_parts) >= 5:
+                    work_code = raw_parts[4]
+
+        if pin and time_str:
             records.append({
                 "pin": pin,
                 "time_str": time_str,
                 "status": status,
                 "verify_type": verify_type,
+                "work_code": work_code,
                 "raw_line": line_str,
             })
     return records

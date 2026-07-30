@@ -1801,34 +1801,37 @@ class AttendanceService(BaseService):
         if not day:
             raise AttendanceDayNotFoundException()
 
-        async with self.transaction():
-            # Update expected times from Resolved Shift
-            shift_resolve = await ShiftService(self.session).resolve_shift(
-                org_id=org_id,
-                query=ShiftResolveQuery(employee_id=employee_id, date=date_val),
-            )
-            if shift_resolve.shift:
-                shift_detail = await self.shifts.get_active_by_id(
-                    shift_resolve.shift.shift_id, org_id
+        try:
+            async with self.session.begin_nested():
+                # Update expected times from Resolved Shift
+                shift_resolve = await ShiftService(self.session).resolve_shift(
+                    org_id=org_id,
+                    query=ShiftResolveQuery(employee_id=employee_id, on_date=date_val),
                 )
-                if shift_detail:
-                    weekday = (date_val.weekday() + 1) % 7
-                    timing = next(
-                        (t for t in shift_detail.day_timings if t.day_of_week == weekday), None
+                if shift_resolve and shift_resolve.shift:
+                    shift_detail = await self.shifts.get_active_by_id(
+                        shift_resolve.shift.shift_id, org_id
                     )
-                    if not timing:
+                    if shift_detail:
+                        weekday = (date_val.weekday() + 1) % 7
                         timing = next(
-                            (t for t in shift_detail.day_timings if t.day_of_week is None), None
+                            (t for t in shift_detail.day_timings if t.day_of_week == weekday), None
                         )
-                    if timing:
-                        await self.days.update(
-                            day,
-                            {
-                                "shift_id": shift_resolve.shift.shift_id,
-                                "expected_start_time": timing.start_time,
-                                "expected_end_time": timing.end_time,
-                            },
-                        )
+                        if not timing:
+                            timing = next(
+                                (t for t in shift_detail.day_timings if t.day_of_week is None), None
+                            )
+                        if timing:
+                            await self.days.update(
+                                day,
+                                {
+                                    "shift_id": shift_resolve.shift.shift_id,
+                                    "expected_start_time": timing.start_time,
+                                    "expected_end_time": timing.end_time,
+                                },
+                            )
+        except Exception:
+            pass
 
             await self._recompute_day_metrics(org_id, day)
 
@@ -1923,10 +1926,12 @@ class AttendanceService(BaseService):
         grace_period = 0
         overtime_buffer = 0
         try:
-            from app.modules.settings.service import SettingsService
-            policy = await SettingsService(self.session).get_attendance_policy(org_id)
-            grace_period = policy.grace_period_minutes
-            overtime_buffer = policy.overtime_buffer_minutes
+            async with self.session.begin_nested():
+                from app.modules.settings.service import SettingsService
+                policy = await SettingsService(self.session).get_attendance_policy(org_id)
+                if policy:
+                    grace_period = policy.grace_period_minutes
+                    overtime_buffer = policy.overtime_buffer_minutes
         except Exception:
             pass
 
@@ -1960,12 +1965,19 @@ class AttendanceService(BaseService):
             if day.leave_id:
                 status = AttendanceDayStatus.ON_LEAVE.value
             else:
-                # Check resolved weekly off
-                shift_resolve = await ShiftService(self.session).resolve_shift(
-                    org_id=org_id,
-                    query=ShiftResolveQuery(employee_id=day.employee_id, date=day.attendance_date),
-                )
-                if shift_resolve.is_weekly_off:
+                is_weekly_off = False
+                try:
+                    async with self.session.begin_nested():
+                        shift_resolve = await ShiftService(self.session).resolve_shift(
+                            org_id=org_id,
+                            query=ShiftResolveQuery(employee_id=day.employee_id, on_date=day.attendance_date),
+                        )
+                        if shift_resolve and shift_resolve.is_weekly_off:
+                            is_weekly_off = True
+                except Exception:
+                    is_weekly_off = False
+
+                if is_weekly_off:
                     status = (
                         AttendanceDayStatus.WEEK_OFF.value
                         if not valid_punches
@@ -1981,6 +1993,8 @@ class AttendanceService(BaseService):
                         status = AttendanceDayStatus.PRESENT.value
                     elif total_working >= half_day_mins:
                         status = AttendanceDayStatus.HALF_DAY.value
+                    elif first_in is not None and last_out is None and day.attendance_date == utcnow().date():
+                        status = AttendanceDayStatus.PRESENT.value
                     else:
                         status = AttendanceDayStatus.ABSENT.value
 

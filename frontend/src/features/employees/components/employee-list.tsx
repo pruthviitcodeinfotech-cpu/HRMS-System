@@ -310,49 +310,68 @@ export const EmployeeList = () => {
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [isColumnsModalOpen, setIsColumnsModalOpen] = useState(false);
   const [columnsSearchQuery, setColumnsSearchQuery] = useState("");
-  const [columnsList, setColumnsList] = useState([
-    { key: "employee_id", label: "Emp Id", checked: true, defaultChecked: true },
-    { key: "name", label: "Name", checked: true, defaultChecked: true },
-    { key: "display_name", label: "Display Name", checked: false, defaultChecked: false },
-    { key: "mobile_number", label: "Phone Number", checked: false, defaultChecked: false },
-    { key: "email", label: "Email", checked: false, defaultChecked: false },
-    { key: "gender", label: "Gender", checked: false, defaultChecked: false },
-    { key: "punch_in_branch", label: "Punch In Branch", checked: false, defaultChecked: false },
-    { key: "master_branch", label: "Master Branch", checked: true, defaultChecked: true },
-    { key: "department", label: "Department", checked: true, defaultChecked: true },
-    { key: "designation", label: "Designation", checked: true, defaultChecked: true },
-    { key: "employee_type", label: "Employment Type", checked: false, defaultChecked: false },
-    { key: "door_lock_permission", label: "Door Lock Permission", checked: false, defaultChecked: false },
-    { key: "salary_type", label: "Salary Type", checked: false, defaultChecked: false },
-    { key: "hourly_calc", label: "Hourly Salary Calculation", checked: false, defaultChecked: false },
-    { key: "monthly_salary", label: "Salary", checked: false, defaultChecked: false },
-    { key: "payroll_group", label: "Payroll Group", checked: false, defaultChecked: false },
-    { key: "tds_type", label: "TDS Type", checked: false, defaultChecked: false },
-    { key: "monthly_tds", label: "Monthly TDS", checked: false, defaultChecked: false },
-    { key: "prev_employer_income", label: "Previous Employer Income", checked: false, defaultChecked: false },
-    { key: "prev_tds_deducted", label: "Previous TDS Deducted", checked: false, defaultChecked: false },
-    { key: "pf_number", label: "PF", checked: false, defaultChecked: false },
-    { key: "uan_number", label: "UAN", checked: false, defaultChecked: false },
-    { key: "esic_number", label: "ESIC", checked: false, defaultChecked: false },
-    { key: "address", label: "Address", checked: false, defaultChecked: false },
-    { key: "date_of_joining", label: "Date of Joining", checked: true, defaultChecked: true },
-    { key: "bank_name", label: "Bank Name", checked: false, defaultChecked: false },
-    { key: "branch_name", label: "Branch Name", checked: false, defaultChecked: false },
-    { key: "account_no", label: "Account No", checked: false, defaultChecked: false },
-    { key: "ifsc_code", label: "IFSC Code", checked: false, defaultChecked: false },
-    { key: "documents", label: "Documents", checked: false, defaultChecked: false },
-    { key: "photo", label: "Photo", checked: false, defaultChecked: false },
-    { key: "emergency_name", label: "Emergency Contact Name", checked: false, defaultChecked: false },
-    { key: "emergency_mobile", label: "Emergency Mobile", checked: false, defaultChecked: false },
-    { key: "emergency_relation", label: "Emergency Relation", checked: false, defaultChecked: false },
-    { key: "emergency_address", label: "Emergency Address", checked: false, defaultChecked: false },
-    { key: "dob", label: "Date of Birth", checked: false, defaultChecked: false },
-    { key: "reference_details", label: "Reference Details", checked: false, defaultChecked: false },
-    { key: "fingerprint", label: "Fingerprint", checked: false, defaultChecked: false },
-    { key: "attendance_method", label: "Attendance Method", checked: false, defaultChecked: false },
-    { key: "status", label: "Tags", checked: true, defaultChecked: true },
-    { key: "created_on", label: "Created On", checked: false, defaultChecked: false },
-  ]);
+  const [columnsList, setColumnsList] = useState(() => {
+    const DEFAULT_CONFIG = [
+      { key: "employee_id", label: "Emp Id", checked: true, defaultChecked: true },
+      { key: "name", label: "Name", checked: true, defaultChecked: true },
+      { key: "display_name", label: "Display Name", checked: false, defaultChecked: false },
+      { key: "mobile_number", label: "Phone Number", checked: false, defaultChecked: false },
+      { key: "email", label: "Email", checked: false, defaultChecked: false },
+      { key: "gender", label: "Gender", checked: false, defaultChecked: false },
+      { key: "punch_in_branch", label: "Punch In Branch", checked: false, defaultChecked: false },
+      { key: "master_branch", label: "Master Branch", checked: true, defaultChecked: true },
+      { key: "department", label: "Department", checked: true, defaultChecked: true },
+      { key: "designation", label: "Designation", checked: true, defaultChecked: true },
+      { key: "employee_type", label: "Employment Type", checked: false, defaultChecked: false },
+      { key: "door_lock_permission", label: "Door Lock Permission", checked: false, defaultChecked: false },
+      { key: "salary_type", label: "Salary Type", checked: false, defaultChecked: false },
+      { key: "hourly_calc", label: "Hourly Salary Calculation", checked: false, defaultChecked: false },
+      { key: "monthly_salary", label: "Salary", checked: false, defaultChecked: false },
+      { key: "payroll_group", label: "Payroll Group", checked: false, defaultChecked: false },
+      { key: "tds_type", label: "TDS Type", checked: false, defaultChecked: false },
+      { key: "monthly_tds", label: "Monthly TDS", checked: false, defaultChecked: false },
+      { key: "prev_employer_income", label: "Previous Employer Income", checked: false, defaultChecked: false },
+      { key: "prev_tds_deducted", label: "Previous TDS Deducted", checked: false, defaultChecked: false },
+      { key: "pf_number", label: "PF", checked: false, defaultChecked: false },
+      { key: "uan_number", label: "UAN", checked: false, defaultChecked: false },
+      { key: "esic_number", label: "ESIC", checked: false, defaultChecked: false },
+      { key: "address", label: "Address", checked: false, defaultChecked: false },
+      { key: "date_of_joining", label: "Date of Joining", checked: true, defaultChecked: true },
+      { key: "bank_name", label: "Bank Name", checked: false, defaultChecked: false },
+      { key: "branch_name", label: "Branch Name", checked: false, defaultChecked: false },
+      { key: "account_no", label: "Account No", checked: false, defaultChecked: false },
+      { key: "ifsc_code", label: "IFSC Code", checked: false, defaultChecked: false },
+      { key: "documents", label: "Documents", checked: false, defaultChecked: false },
+      { key: "photo", label: "Photo", checked: false, defaultChecked: false },
+      { key: "emergency_name", label: "Emergency Contact Name", checked: false, defaultChecked: false },
+      { key: "emergency_mobile", label: "Emergency Mobile", checked: false, defaultChecked: false },
+      { key: "emergency_relation", label: "Emergency Relation", checked: false, defaultChecked: false },
+      { key: "emergency_address", label: "Emergency Address", checked: false, defaultChecked: false },
+      { key: "dob", label: "Date of Birth", checked: false, defaultChecked: false },
+      { key: "reference_details", label: "Reference Details", checked: false, defaultChecked: false },
+      { key: "fingerprint", label: "Fingerprint", checked: false, defaultChecked: false },
+      { key: "attendance_method", label: "Attendance Method", checked: false, defaultChecked: false },
+      { key: "status", label: "Tags", checked: true, defaultChecked: true },
+      { key: "created_on", label: "Created On", checked: false, defaultChecked: false },
+    ];
+    try {
+      if (typeof window !== "undefined") {
+        const saved = localStorage.getItem("employees_visible_columns_list");
+        if (saved) {
+          const savedKeys = JSON.parse(saved);
+          if (Array.isArray(savedKeys)) {
+            return DEFAULT_CONFIG.map((col) => ({
+              ...col,
+              checked: savedKeys.includes(col.key),
+            }));
+          }
+        }
+      }
+    } catch (err) {
+      console.error("Failed to restore column preferences from localStorage", err);
+    }
+    return DEFAULT_CONFIG;
+  });
 
   const handleToggleColumnByKey = (key: string) => {
     setColumnsList(prev =>
@@ -361,18 +380,24 @@ export const EmployeeList = () => {
   };
 
   const handleSaveColumns = () => {
-    const updatedVisibleColumns = Object.fromEntries(
-      Object.entries(visibleColumns).map(([key, value]) => {
-        const col = columnsList.find(c => c.key === key);
-        return [key, col ? col.checked : value];
-      })
-    ) as typeof visibleColumns;
-    setVisibleColumns(updatedVisibleColumns);
+    try {
+      const checkedKeys = columnsList.filter(col => col.checked).map(col => col.key);
+      localStorage.setItem("employees_visible_columns_list", JSON.stringify(checkedKeys));
+      toast.success("Column layout saved successfully.");
+    } catch (err) {
+      console.error("Failed to save column preferences to localStorage", err);
+    }
     setIsColumnsModalOpen(false);
   };
 
   const handleResetColumns = () => {
     setColumnsList(prev => prev.map(col => ({ ...col, checked: col.defaultChecked })));
+    try {
+      localStorage.removeItem("employees_visible_columns_list");
+      toast.success("Columns reset to default.");
+    } catch (err) {
+      console.error("Failed to reset column preferences in localStorage", err);
+    }
   };
 
   const [isAttendancePermModalOpen, setIsAttendancePermModalOpen] = useState(false);
@@ -390,6 +415,7 @@ export const EmployeeList = () => {
     "Passport Size Photo": "No file chosen"
   });
   const [isPunchBranchOpen, setIsPunchBranchOpen] = useState(false);
+  const [selectedPunchBranchIds, setSelectedPunchBranchIds] = useState<number[]>([]);
 
   // Target object state for Edit / Delete / View details
   const [targetEmployee, setTargetEmployee] = useState<Employee | null>(null);
@@ -421,17 +447,6 @@ export const EmployeeList = () => {
     branch_name: "",
     account_no: "",
     ifsc_code: "",
-  });
-
-  // Column Visibility state
-  const [visibleColumns, setVisibleColumns] = useState({
-    employee_id: true,
-    name: true,
-    master_branch: true,
-    department: true,
-    designation: true,
-    date_of_joining: true,
-    status: true,
   });
 
   // Close dropdowns on outside click
@@ -579,9 +594,15 @@ export const EmployeeList = () => {
       case "document_library":
         setIsDocLibraryOpen(true);
         break;
-      case "punch_branch":
+      case "punch_branch": {
+        const foundBranch = branchOptions?.find(b => b.branch_name.toLowerCase() === (emp.master_branch || "").toLowerCase());
+        const initialBranchIds = foundBranch
+          ? [foundBranch.branch_id]
+          : (branchOptions?.[0] ? [branchOptions[0].branch_id] : []);
+        setSelectedPunchBranchIds(initialBranchIds);
         setIsPunchBranchOpen(true);
         break;
+      }
       case "edit":
         (async () => {
           const loadingToastId = toast.loading("Loading employee details...");
@@ -2995,7 +3016,7 @@ export const EmployeeList = () => {
             <div className="p-5 border-b border-border flex items-center justify-between bg-muted/20">
               <div>
                 <h3 className="text-sm font-bold text-foreground">Punch In Branch Mapping</h3>
-                <p className="text-[10px] text-muted-foreground">{targetEmployee.name} | ID: {targetEmployee.employee_id}</p>
+                <p className="text-[10px] text-muted-foreground">{targetEmployee.name} | Code: {targetEmployee.employee_id}</p>
               </div>
               <button
                 onClick={() => {
@@ -3009,12 +3030,51 @@ export const EmployeeList = () => {
             </div>
             <div className="p-5 space-y-4">
               <p className="text-xs text-muted-foreground">
-                Define which physical branch locations {targetEmployee.name} is authorized to register biometric punches from.
+                Define which physical branch locations <span className="font-semibold text-foreground">{targetEmployee.name}</span> is authorized to register biometric punches from.
               </p>
-              <div className="space-y-2.5">
-                <Checkbox label="Itcode Infotech (HQ) - Surat" defaultChecked />
-                <Checkbox label="Itcode Infotech - Ahmedabad branch" />
-                <Checkbox label="Remote Location Allowance" defaultChecked />
+              <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                {branchOptions && branchOptions.length > 0 ? (
+                  branchOptions.map((branch) => {
+                    const isChecked = selectedPunchBranchIds.includes(branch.branch_id);
+                    const isMaster = branch.branch_name.toLowerCase() === (targetEmployee.master_branch || "").toLowerCase();
+                    return (
+                      <div
+                        key={branch.branch_id}
+                        onClick={() => {
+                          setSelectedPunchBranchIds((prev) =>
+                            prev.includes(branch.branch_id)
+                              ? prev.filter((id) => id !== branch.branch_id)
+                              : [...prev, branch.branch_id]
+                          );
+                        }}
+                        className={`flex items-center justify-between p-3 rounded-lg border cursor-pointer transition-colors ${
+                          isChecked
+                            ? "border-primary/50 bg-primary/5 dark:bg-primary/10"
+                            : "border-border bg-card hover:bg-muted/30"
+                        }`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={() => {}}
+                            className="h-4 w-4 rounded border-border text-primary focus:ring-primary cursor-pointer"
+                          />
+                          <span className="text-xs font-semibold text-foreground">
+                            {branch.branch_name}
+                          </span>
+                        </div>
+                        {isMaster && (
+                          <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-blue-500/10 text-blue-600 dark:text-blue-400">
+                            Master Branch
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })
+                ) : (
+                  <p className="text-xs text-muted-foreground italic py-2">No branches configured.</p>
+                )}
               </div>
             </div>
             <div className="p-4 bg-muted/30 border-t border-border flex items-center justify-end gap-3">
@@ -3034,7 +3094,7 @@ export const EmployeeList = () => {
                 onClick={() => {
                   setIsPunchBranchOpen(false);
                   setTargetEmployee(null);
-                  toast.success("Punch mappings updated successfully.");
+                  toast.success(`Punch branch mappings updated for ${targetEmployee.name}.`);
                 }}
               >
                 Save Mappings

@@ -70,7 +70,7 @@ export const useAttendanceDays = (params: AttendanceDailyQueryParams, enabled = 
   const { selectedBranchId } = useBranchContext();
   const effectiveParams = {
     ...params,
-    branch_id: params.branch_id || selectedBranchId || undefined,
+    branch_id: "branch_id" in params ? params.branch_id : (selectedBranchId || undefined),
   };
   return useQuery({
     queryKey: attendanceKeys.dayList(effectiveParams),

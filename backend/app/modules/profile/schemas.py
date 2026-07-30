@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 import string
 from datetime import date, datetime
+from typing import Any
 
 from pydantic import Field, field_validator, model_validator
 
@@ -114,7 +115,9 @@ class ProfileSchema(BaseSchema):
     timezone: str = Field(default="Asia/Kolkata", description="User timezone preference.")
     theme: str = Field(default="system", description="UI theme preference: light, dark, system.")
     is_2fa_enabled: bool = Field(default=False, description="Whether 2FA / TOTP is enabled.")
-    notification_preferences: str | None = Field(default=None, description="JSON string of notification channel settings.")
+    notification_preferences: dict[str, Any] | str | None = Field(
+        default=None, description="JSON object or string of notification channel settings."
+    )
     last_login_at: datetime | None = Field(default=None, description="Last successful login.")
     created_at: datetime = Field(..., description="Account creation timestamp.")
     organization: OrganizationSummary = Field(..., description="Owning organization.")
