@@ -18,8 +18,10 @@ Reconciliation notes (the SQLAlchemy models are the source of truth):
 
 from __future__ import annotations
 
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timezone
 from decimal import Decimal
+
+from app.shared.utils.datetime import utcnow
 try:
     from enum import StrEnum
 except ImportError:
@@ -352,6 +354,17 @@ class AttendanceDailySchema(BaseSchema):
                 
                 if "working_hours" not in data:
                     working_mins = data.get("total_working_minutes") or data.get("worked_minutes") or 0
+                    first_in = data.get("first_punch_in") or data.get("first_in") or data.get("first_punch")
+                    att_date = data.get("attendance_date")
+                    if att_date == utcnow().date() and first_in:
+                        try:
+                            if hasattr(first_in, "tzinfo") and first_in.tzinfo is not None:
+                                elapsed = int((utcnow() - first_in).total_seconds() / 60)
+                            else:
+                                elapsed = int((utcnow() - first_in.replace(tzinfo=timezone.utc)).total_seconds() / 60)
+                            working_mins = max(working_mins, elapsed)
+                        except Exception:
+                            pass
                     data["working_hours"] = round(working_mins / 60.0, 2)
                 if "break_hours" not in data:
                     break_mins = data.get("total_break_minutes") or data.get("break_minutes") or 0
@@ -388,6 +401,17 @@ class AttendanceDailySchema(BaseSchema):
             
             if getattr(data, "working_hours", None) is None:
                 working_mins = getattr(data, "total_working_minutes", 0) or 0
+                first_in = getattr(data, "first_punch_in", None)
+                att_date = getattr(data, "attendance_date", None)
+                if att_date == utcnow().date() and first_in:
+                    try:
+                        if hasattr(first_in, "tzinfo") and first_in.tzinfo is not None:
+                            elapsed = int((utcnow() - first_in).total_seconds() / 60)
+                        else:
+                            elapsed = int((utcnow() - first_in.replace(tzinfo=timezone.utc)).total_seconds() / 60)
+                        working_mins = max(working_mins, elapsed)
+                    except Exception:
+                        pass
                 setattr(data, "working_hours", round(working_mins / 60.0, 2))
             
             if getattr(data, "break_hours", None) is None:

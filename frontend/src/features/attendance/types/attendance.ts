@@ -8,7 +8,12 @@ export type AttendanceStatus =
   | "Leave"
   | "Late"
   | "Early Exit"
-  | "Missed Punch";
+  | "Missed Punch"
+  | "Currently Working"
+  | "Checked In"
+  | "Checked Out"
+  | "On Break"
+  | "not_marked";
 
 export interface AttendanceRecord {
   id: string;

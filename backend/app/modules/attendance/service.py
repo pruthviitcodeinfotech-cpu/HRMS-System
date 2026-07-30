@@ -1545,14 +1545,20 @@ class AttendanceService(BaseService):
     async def finalize_unclosed_days(
         self,
         org_id: int,
-        target_date: date,
+        target_date: date | None = None,
     ) -> dict[str, Any]:
-        """Finalize unclosed attendance days up to target_date for an organization."""
+        """Finalize attendance days up to target_date for an organization (runs at 12:00 AM midnight)."""
+        if target_date is None:
+            target_date = utcnow().date() - timedelta(days=1)
+
+        # Ensure target_date never includes today
+        today = utcnow().date()
+        if target_date >= today:
+            target_date = today - timedelta(days=1)
+
         stmt = select(AttendanceDay).where(
             AttendanceDay.org_id == org_id,
             AttendanceDay.attendance_date <= target_date,
-            AttendanceDay.first_punch_in.isnot(None),
-            AttendanceDay.last_punch_out.is_(None),
         )
         days = (await self.session.execute(stmt)).scalars().all()
 
@@ -1569,15 +1575,10 @@ class AttendanceService(BaseService):
             if isinstance(is_locked, bool) and is_locked:
                 continue
 
-            missing_punch_count += 1
-            if (day.total_working_minutes or 0) < 240:
-                if day.status not in (
-                    AttendanceDayStatus.ON_LEAVE.value,
-                    AttendanceDayStatus.WEEK_OFF.value,
-                    AttendanceDayStatus.HOLIDAY.value,
-                ):
-                    day.status = AttendanceDayStatus.ABSENT.value
+            if day.first_punch_in and not day.last_punch_out:
+                missing_punch_count += 1
 
+            await self._recompute_day_metrics(org_id, day)
             finalized_count += 1
 
         await self.session.commit()
@@ -1849,24 +1850,20 @@ class AttendanceService(BaseService):
     async def _recompute_day_metrics(self, org_id: int, day: AttendanceDay) -> None:
         """Compute worked minutes, break minutes, late arrival, early leaving, and overtime fields."""
         punches = await self.punches.get_for_day(org_id, day.id)
-        valid_punches = sorted([p for p in punches if p.is_valid], key=lambda p: p.punch_time)
+        valid_punches = sorted([p for p in punches if p.is_valid], key=lambda p: (p.punch_time, p.sequence_no))
 
         first_in = None
         last_out = None
         total_working = 0
         total_break = 0
 
-        # Extract first in and last out
-        ins = [p.punch_time for p in valid_punches if p.punch_type == PunchType.IN.value]
-        outs = [p.punch_time for p in valid_punches if p.punch_type == PunchType.OUT.value]
-        if ins:
-            first_in = min(ins)
-        if outs:
-            last_out = max(outs)
+        if valid_punches:
+            first_in = valid_punches[0].punch_time
+            last_out = valid_punches[-1].punch_time
 
-        # Working segments pairing calculation
+        # Multi-session Working Hours and Break Time calculation
         current_in = None
-        current_break_out = None
+        previous_out = None
 
         for p in valid_punches:
             ptype = p.punch_type
@@ -1875,21 +1872,30 @@ class AttendanceService(BaseService):
             if ptype in (PunchType.IN.value, PunchType.BREAK_IN.value):
                 if current_in is None:
                     current_in = ptime
-                if ptype == PunchType.BREAK_IN.value and current_break_out is not None:
-                    break_dur = int((ptime - current_break_out).total_seconds() / 60)
+                if previous_out is not None:
+                    break_dur = int((ptime - previous_out).total_seconds() / 60)
                     total_break += max(0, break_dur)
-                    current_break_out = None
+                    previous_out = None
             elif ptype in (PunchType.OUT.value, PunchType.BREAK_OUT.value):
                 if current_in is not None:
                     dur = int((ptime - current_in).total_seconds() / 60)
                     total_working += max(0, dur)
                     current_in = None
-                if ptype == PunchType.BREAK_OUT.value:
-                    current_break_out = ptime
+                previous_out = ptime
 
-        # Working hours configuration lookup from PayrollSettingRepository (Settings / Payroll module)
+        # If employee has an active IN session ongoing today, include live accrued working minutes
+        if current_in is not None and day.attendance_date == utcnow().date():
+            active_dur = int((utcnow() - current_in).total_seconds() / 60)
+            total_working += max(0, active_dur)
+        # If employee is currently on break ongoing today, include live accrued break minutes
+        elif previous_out is not None and day.attendance_date == utcnow().date():
+            active_break_dur = int((utcnow() - previous_out).total_seconds() / 60)
+            total_break += max(0, active_break_dur)
+
+        # Resolve shift duration and working hours configuration
         full_day_mins = 480
         half_day_mins = 240
+        shift_duration_mins = 480
         att_mode = "consider_all_punch"
 
         try:
@@ -1910,6 +1916,15 @@ class AttendanceService(BaseService):
         except Exception:
             pass
 
+        # Calculate shift duration from expected start and end time if present
+        if day.expected_start_time and day.expected_end_time:
+            exp_s = day.expected_start_time.hour * 60 + day.expected_start_time.minute
+            exp_e = day.expected_end_time.hour * 60 + day.expected_end_time.minute
+            if exp_e < exp_s:
+                exp_e += 1440  # Overnight shift
+            if exp_e > exp_s:
+                shift_duration_mins = exp_e - exp_s
+
         # Apply attendance mode calculations
         if att_mode in ("first_and_last_punch_only", "first_last"):
             if first_in and last_out:
@@ -1923,15 +1938,17 @@ class AttendanceService(BaseService):
         early_min = 0
         overtime_min = 0
 
+        # Overtime = max(Working Hours - Shift Duration, 0)
+        if total_working > shift_duration_mins:
+            overtime_min = total_working - shift_duration_mins
+
         grace_period = 0
-        overtime_buffer = 0
         try:
             async with self.session.begin_nested():
                 from app.modules.settings.service import SettingsService
                 policy = await SettingsService(self.session).get_attendance_policy(org_id)
                 if policy:
                     grace_period = policy.grace_period_minutes
-                    overtime_buffer = policy.overtime_buffer_minutes
         except Exception:
             pass
 
@@ -1954,10 +1971,6 @@ class AttendanceService(BaseService):
 
             if last_out < expected_end:
                 early_min = int((expected_end - last_out).total_seconds() / 60)
-            elif last_out > expected_end:
-                raw_ot = int((last_out - expected_end).total_seconds() / 60)
-                if raw_ot >= overtime_buffer:
-                    overtime_min = raw_ot
 
         # Determine daily status if not overridden
         status = day.status
@@ -1977,6 +1990,8 @@ class AttendanceService(BaseService):
                 except Exception:
                     is_weekly_off = False
 
+                is_today = (day.attendance_date == utcnow().date())
+
                 if is_weekly_off:
                     status = (
                         AttendanceDayStatus.WEEK_OFF.value
@@ -1985,15 +2000,19 @@ class AttendanceService(BaseService):
                     )
                 else:
                     if not valid_punches:
-                        if day.status in (AttendanceDayStatus.HOLIDAY.value, AttendanceDayStatus.NOT_MARKED.value):
+                        if day.status in (AttendanceDayStatus.HOLIDAY.value, AttendanceDayStatus.ON_LEAVE.value):
                             status = day.status
+                        elif is_today:
+                            status = AttendanceDayStatus.NOT_MARKED.value
                         else:
                             status = AttendanceDayStatus.ABSENT.value
                     elif total_working >= full_day_mins:
                         status = AttendanceDayStatus.PRESENT.value
                     elif total_working >= half_day_mins:
                         status = AttendanceDayStatus.HALF_DAY.value
-                    elif first_in is not None and last_out is None and day.attendance_date == utcnow().date():
+                    elif is_today:
+                        # For today's attendance, employees with punches are marked PRESENT (Currently Working / Checked Out / On Break)
+                        # Absent status is only assigned after 12:00 AM midnight finalization
                         status = AttendanceDayStatus.PRESENT.value
                     else:
                         status = AttendanceDayStatus.ABSENT.value

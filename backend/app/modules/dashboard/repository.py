@@ -245,7 +245,7 @@ class DashboardRepository(BaseRepository[Employee]):
             .where(
                 AttendanceDay.org_id == org_id,
                 AttendanceDay.attendance_date == target_date,
-                AttendancePunch.punch_type == "break_out",
+                AttendancePunch.punch_type.in_(["out", "break_out"]),
                 AttendancePunch.is_valid.is_(True),
                 *emp_filter,
             )

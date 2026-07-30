@@ -30,23 +30,37 @@ const formatPunchTime = (isoString?: string | null): string => {
   }
 };
 
-const mapBackendStatus = (status?: string): AttendanceStatus => {
-  switch (status) {
-    case "present":
-      return "FD";
-    case "absent":
-      return "Absent";
-    case "half_day":
-      return "Half Day";
-    case "week_off":
-      return "Weekly Off";
-    case "holiday":
-      return "Holiday";
-    case "on_leave":
-      return "Leave";
-    default:
-      return status ? (status as AttendanceStatus) : "Absent";
+const mapBackendStatus = (item: any, dateVal: string, todayStr: string): AttendanceStatus => {
+  const isToday = dateVal === todayStr;
+  const workHrs = item.working_hours ?? (item.worked_minutes ? item.worked_minutes / 60 : 0);
+  const firstPunchStr = item.first_punch || item.first_in;
+  const lastPunchStr = item.last_punch || item.last_out;
+  const hasPunch = Boolean(firstPunchStr);
+
+  if (isToday) {
+    if (!hasPunch) {
+      if (item.status === "on_leave") return "Leave";
+      if (item.status === "holiday") return "Holiday";
+      if (item.status === "week_off") return "Weekly Off";
+      return "not_marked";
+    }
+
+    if (workHrs >= 8) return "FD";
+    if (workHrs >= 4) return "Half Day";
+
+    if (item.is_on_break) return "On Break";
+    if (lastPunchStr && lastPunchStr !== firstPunchStr) return "Checked Out";
+    return "Currently Working";
   }
+
+  // Past date (finalized)
+  if (item.status === "on_leave") return "Leave";
+  if (item.status === "holiday") return "Holiday";
+  if (item.status === "week_off") return "Weekly Off";
+  if (item.status === "not_marked") return "not_marked";
+  if (workHrs >= 8 || item.status === "present") return "FD";
+  if (workHrs >= 4 || item.status === "half_day") return "Half Day";
+  return "Absent";
 };
 
 export const AttendanceMasterView: React.FC = () => {
@@ -137,8 +151,8 @@ export const AttendanceMasterView: React.FC = () => {
           item.break_hours !== undefined && item.break_hours !== null
             ? `${item.break_hours}h`
             : "-",
-        status: mapBackendStatus(item.status),
-        hasAnomaly: item.late_minutes > 0 || item.status === "absent",
+        status: mapBackendStatus(item, dateVal, todayStr),
+        hasAnomaly: (dateVal !== todayStr && item.status === "absent") || item.late_minutes > 0,
       };
     });
   }, [data, queryParams.date, todayStr]);

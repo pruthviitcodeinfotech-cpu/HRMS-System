@@ -242,6 +242,36 @@ export default function DashboardPage() {
     }
   }, []);
 
+  const [now, setNow] = useState<Date>(new Date());
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setNow(new Date());
+    }, 10000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const getLiveWorkingHours = (row: any, currentNow: Date) => {
+    const firstInStr = row.first_punch || row.first_in;
+    if (!firstInStr) return row.working_hours ?? 0;
+
+    try {
+      const firstIn = new Date(firstInStr);
+      if (isNaN(firstIn.getTime())) return row.working_hours ?? 0;
+
+      const isToday = firstIn.toDateString() === currentNow.toDateString();
+      if (isToday) {
+        const elapsedMins = Math.max(0, Math.floor((currentNow.getTime() - firstIn.getTime()) / 60000));
+        const storedMins = Math.round((row.working_hours || 0) * 60);
+        return Math.max(storedMins, elapsedMins) / 60;
+      }
+    } catch {
+      // fallback
+    }
+
+    return row.working_hours ?? 0;
+  };
+
   // Dynamic Day-Change Auto-Refresh: Monitors date rollover (e.g. midnight or tab focus on a new day)
   useEffect(() => {
     let lastKnownDate = formatDateStr(new Date());
@@ -1291,14 +1321,20 @@ export default function DashboardPage() {
                           {formatPunchTime(row.last_punch || row.last_out)}
                         </td>
                         <td className="py-3 px-5">
-                          {row.working_hours !== null && row.working_hours > 0 ? (
-                            <span className="flex items-center space-x-1 px-2 py-0.5 rounded bg-amber-50 dark:bg-amber-950/20 border border-amber-100 dark:border-amber-900/30 text-amber-700 dark:text-amber-400 font-bold w-fit text-[11px]">
-                              <span>{formatHours(row.working_hours)}</span>
-                              {row.working_hours < 8 && <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />}
-                            </span>
-                          ) : (
-                            <span className="text-slate-400">-</span>
-                          )}
+                          {(() => {
+                            const liveHours = getLiveWorkingHours(row, now);
+                            const hasPunchedIn = Boolean(row.first_punch || row.first_in);
+                            if (liveHours > 0 || hasPunchedIn) {
+                              const formatted = formatHours(liveHours);
+                              return (
+                                <span className="flex items-center space-x-1 px-2 py-0.5 rounded bg-amber-50 dark:bg-amber-950/20 border border-amber-100 dark:border-amber-900/30 text-amber-700 dark:text-amber-400 font-bold w-fit text-[11px]">
+                                  <span>{formatted === "-" ? "0m" : formatted}</span>
+                                  {liveHours < 8 && <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />}
+                                </span>
+                              );
+                            }
+                            return <span className="text-slate-400">-</span>;
+                          })()}
                         </td>
                         <td className="py-3 px-5 text-slate-400 dark:text-slate-500">{formatHours(row.break_hours)}</td>
                         <td className="py-3 px-5 text-slate-400 dark:text-slate-500">{formatHours(row.overtime)}</td>

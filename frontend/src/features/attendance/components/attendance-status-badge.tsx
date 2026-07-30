@@ -18,6 +18,13 @@ export const AttendanceStatusBadge: React.FC<AttendanceStatusBadgeProps> = ({
       case "FD":
       case "Present":
         return "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400 border-emerald-200/60 dark:border-emerald-800/40";
+      case "Currently Working":
+      case "Checked In":
+        return "bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-400 border-blue-200/60 dark:border-blue-800/40";
+      case "Checked Out":
+        return "bg-indigo-50 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-400 border-indigo-200/60 dark:border-indigo-800/40";
+      case "On Break":
+        return "bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400 border-amber-200/60 dark:border-amber-800/40";
       case "Absent":
         return "bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-400 border-rose-200/60 dark:border-rose-800/40";
       case "Half Day":
