@@ -1,0 +1,256 @@
+// =============================================================================
+// HRMS Backend — Jenkins CI/CD Pipeline
+//
+// Trigger : GitHub webhook on push/merge to 'main' branch
+// Target  : 192.168.1.60  (port 10016 → container port 8000)
+// Image   : hrms-backend:latest
+// Container: hrms-backend
+//
+// The backend requires PostgreSQL and Redis.
+// Connection strings are injected via a secret env file stored on Jenkins
+// (Jenkins Credential ID: hrms-backend-env — type: Secret File).
+//
+// DB migrations (alembic upgrade head) are run AFTER the container starts.
+// =============================================================================
+
+pipeline {
+
+    agent any
+
+    // ─── Environment ─────────────────────────────────────────────────────────
+    environment {
+        IMAGE_NAME     = 'hrms-backend'
+        IMAGE_TAG      = 'latest'
+        CONTAINER_NAME = 'hrms-backend'
+        HOST_PORT      = '10016'
+        CONTAINER_PORT = '8000'
+        HEALTH_ENDPOINT = '/health'
+
+        GIT_REPO_URL   = 'https://github.com/ITCODEHELP/Human-Resource-Management-System--Backend-.git'
+        GIT_BRANCH     = 'main'
+
+        // Path on the HOST where the backend .env file lives.
+        // Jenkins will write the secret file here, or you can pre-place it.
+        // The container mounts this at /app/.env (read-only).
+        ENV_FILE_HOST_PATH = '/etc/hrms/backend.env'
+    }
+
+    // ─── Build Triggers ──────────────────────────────────────────────────────
+    triggers {
+        githubPush()
+        pollSCM('H/5 * * * *')
+    }
+
+    // ─── Pipeline Options ────────────────────────────────────────────────────
+    options {
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        timeout(time: 25, unit: 'MINUTES')
+        timestamps()
+        disableConcurrentBuilds()
+    }
+
+    // =========================================================================
+    // STAGES
+    // =========================================================================
+    stages {
+
+        // ─── 1. Checkout ─────────────────────────────────────────────────────
+        stage('Checkout') {
+            steps {
+                echo "📥 Checking out branch: ${GIT_BRANCH}"
+                checkout([
+                    $class: 'GitSCM',
+                    branches: [[name: "*/${GIT_BRANCH}"]],
+                    userRemoteConfigs: [[
+                        url: "${GIT_REPO_URL}",
+                        credentialsId: 'github-credentials'
+                    ]]
+                ])
+                echo "✅ Checkout complete — commit: ${sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()}"
+            }
+        }
+
+        // ─── 2. Validate ─────────────────────────────────────────────────────
+        stage('Validate') {
+            steps {
+                echo "🔍 Validating required files..."
+                sh '''
+                    echo "--- Directory contents ---"
+                    ls -la
+
+                    [ -f Dockerfile ]       || { echo "❌ Dockerfile not found!";       exit 1; }
+                    [ -f requirements.txt ] || { echo "❌ requirements.txt not found!"; exit 1; }
+                    [ -f alembic.ini ]      || { echo "❌ alembic.ini not found!";      exit 1; }
+
+                    echo "✅ All required files present"
+                    echo "--- Python / pip version inside Docker (not on host) ---"
+                    echo "Building with Python 3.12 (see Dockerfile)"
+                '''
+            }
+        }
+
+        // ─── 3. Build Docker Image ────────────────────────────────────────────
+        stage('Build Docker Image') {
+            steps {
+                echo "🔨 Building Docker image: ${IMAGE_NAME}:${IMAGE_TAG}"
+                sh """
+                    docker build \\
+                        --target runtime \\
+                        --tag ${IMAGE_NAME}:${IMAGE_TAG} \\
+                        --label "build.number=${BUILD_NUMBER}" \\
+                        --label "build.commit=\$(git rev-parse --short HEAD)" \\
+                        --label "build.timestamp=\$(date -u +%Y-%m-%dT%H:%M:%SZ)" \\
+                        .
+                """
+                echo "✅ Docker image built successfully"
+                sh "docker images ${IMAGE_NAME}"
+            }
+        }
+
+        // ─── 4. Prepare Environment File ─────────────────────────────────────
+        stage('Prepare Env File') {
+            steps {
+                // Write the secret backend.env to the host path so the container can mount it
+                withCredentials([file(credentialsId: 'hrms-backend-env', variable: 'BACKEND_ENV_FILE')]) {
+                    sh """
+                        sudo mkdir -p /etc/hrms
+                        sudo cp "\${BACKEND_ENV_FILE}" ${ENV_FILE_HOST_PATH}
+                        sudo chmod 600 ${ENV_FILE_HOST_PATH}
+                        echo "✅ Backend env file deployed to ${ENV_FILE_HOST_PATH}"
+                    """
+                }
+            }
+        }
+
+        // ─── 5. Stop & Remove Old Container ──────────────────────────────────
+        stage('Replace Old Container') {
+            steps {
+                echo "🛑 Stopping old container (if running)..."
+                sh """
+                    docker stop ${CONTAINER_NAME} || true
+                    docker rm   ${CONTAINER_NAME} || true
+                    echo "✅ Old container removed"
+                """
+            }
+        }
+
+        // ─── 6. Deploy New Container ──────────────────────────────────────────
+        stage('Deploy New Container') {
+            steps {
+                echo "🚀 Starting new backend container: ${CONTAINER_NAME}"
+                sh """
+                    docker run -d \\
+                        --name    ${CONTAINER_NAME} \\
+                        --restart unless-stopped \\
+                        -p        ${HOST_PORT}:${CONTAINER_PORT} \\
+                        --env-file ${ENV_FILE_HOST_PATH} \\
+                        -e        ENVIRONMENT=production \\
+                        -v        /etc/hrms/uploads:/app/var/uploads \\
+                        --label   "app=hrms-backend" \\
+                        --label   "version=${BUILD_NUMBER}" \\
+                        ${IMAGE_NAME}:${IMAGE_TAG}
+                """
+                echo "✅ Container started"
+                sh "docker ps --filter name=${CONTAINER_NAME} --format 'table {{.Names}}\\t{{.Status}}\\t{{.Ports}}'"
+
+                // Allow FastAPI/uvicorn to initialise
+                sleep(time: 15, unit: 'SECONDS')
+            }
+        }
+
+        // ─── 7. Database Migrations ───────────────────────────────────────────
+        stage('Run DB Migrations') {
+            steps {
+                echo "📦 Running Alembic database migrations..."
+                sh """
+                    docker exec ${CONTAINER_NAME} alembic upgrade head
+                    echo "✅ DB migrations complete"
+                """
+            }
+        }
+
+        // ─── 8. Health Check ──────────────────────────────────────────────────
+        stage('Health Check') {
+            steps {
+                echo "🏥 Running health check on http://localhost:${HOST_PORT}${HEALTH_ENDPOINT} ..."
+                sh """
+                    for i in 1 2 3 4 5; do
+                        echo "Attempt \$i/5..."
+                        STATUS=\$(curl -s -o /dev/null -w "%{http_code}" http://localhost:${HOST_PORT}${HEALTH_ENDPOINT} || echo "000")
+                        echo "HTTP status: \$STATUS"
+                        if [ "\$STATUS" = "200" ]; then
+                            echo "✅ Backend is UP and healthy (HTTP 200)"
+                            exit 0
+                        fi
+                        sleep 10
+                    done
+
+                    echo "❌ Health check failed after 5 attempts"
+                    docker logs --tail 100 ${CONTAINER_NAME}
+                    exit 1
+                """
+            }
+        }
+
+        // ─── 9. Verify API Docs ───────────────────────────────────────────────
+        stage('Verify API') {
+            steps {
+                echo "📖 Verifying FastAPI /docs endpoint..."
+                sh """
+                    STATUS=\$(curl -s -o /dev/null -w "%{http_code}" http://localhost:${HOST_PORT}/docs || echo "000")
+                    echo "FastAPI /docs HTTP status: \$STATUS"
+                    if [ "\$STATUS" = "200" ]; then
+                        echo "✅ API documentation endpoint accessible"
+                    else
+                        echo "⚠️  /docs returned \$STATUS (non-fatal — production may disable docs)"
+                    fi
+                """
+            }
+        }
+
+        // ─── 10. Cleanup ─────────────────────────────────────────────────────
+        stage('Cleanup') {
+            steps {
+                echo "🧹 Removing dangling Docker images..."
+                sh "docker image prune -f || true"
+                echo "✅ Cleanup complete"
+            }
+        }
+    }
+
+    // =========================================================================
+    // POST ACTIONS
+    // =========================================================================
+    post {
+        always {
+            echo "📋 Final container status:"
+            sh "docker ps -a --filter name=${CONTAINER_NAME} --format 'table {{.Names}}\\t{{.Status}}\\t{{.Ports}}' || true"
+        }
+
+        success {
+            echo """
+            ╔══════════════════════════════════════════════════╗
+            ║  ✅ BACKEND DEPLOYMENT SUCCESSFUL                ║
+            ║  API : http://192.168.1.60:${HOST_PORT}          ║
+            ║  Docs: http://192.168.1.60:${HOST_PORT}/docs     ║
+            ║  Build: #${BUILD_NUMBER}                          ║
+            ╚══════════════════════════════════════════════════╝
+            """
+        }
+
+        failure {
+            echo """
+            ╔══════════════════════════════════════════════════╗
+            ║  ❌ BACKEND DEPLOYMENT FAILED                    ║
+            ║  Build: #${BUILD_NUMBER}                          ║
+            ║  Check console output for details                ║
+            ╚══════════════════════════════════════════════════╝
+            """
+            sh "docker logs --tail 100 ${CONTAINER_NAME} || true"
+        }
+
+        cleanup {
+            cleanWs()
+        }
+    }
+}

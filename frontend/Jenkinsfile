@@ -1,0 +1,226 @@
+// =============================================================================
+// HRMS Frontend — Jenkins CI/CD Pipeline
+//
+// Trigger : GitHub webhook on push/merge to 'main' branch
+// Target  : 192.168.1.60  (port 10015 → container port 3000)
+// Image   : hrms-frontend:latest
+// Container: hrms-frontend
+// =============================================================================
+
+pipeline {
+
+    // Run on Jenkins built-in node (or label 'docker' if you have a dedicated agent)
+    agent any
+
+    // ─── Environment ─────────────────────────────────────────────────────────
+    environment {
+        // Docker image & container identifiers
+        IMAGE_NAME      = 'hrms-frontend'
+        IMAGE_TAG       = "latest"
+        CONTAINER_NAME  = 'hrms-frontend'
+        HOST_PORT       = '10015'
+        CONTAINER_PORT  = '3000'
+
+        // GitHub repository
+        GIT_REPO_URL    = 'https://github.com/ITCODEHELP/Human-Resource-Management-System---Frontend-.git'
+        GIT_BRANCH      = 'main'
+
+        // Backend API URL baked into the Next.js build at build time
+        // Override this via Jenkins → Manage Credentials → NEXT_PUBLIC_API_URL
+        NEXT_PUBLIC_API_URL = credentials('NEXT_PUBLIC_API_URL')
+    }
+
+    // ─── Build Triggers ──────────────────────────────────────────────────────
+    triggers {
+        // GitHub webhook trigger (requires GitHub Integration Plugin)
+        githubPush()
+
+        // Fallback poll every 5 minutes if webhook is not reachable from internet
+        // Remove one of the two triggers to avoid duplicate builds
+        pollSCM('H/5 * * * *')
+    }
+
+    // ─── Pipeline Options ────────────────────────────────────────────────────
+    options {
+        // Keep last 10 builds to save disk space
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+
+        // Abort if build takes longer than 20 minutes
+        timeout(time: 20, unit: 'MINUTES')
+
+        // Add timestamps to console output
+        timestamps()
+
+        // Prevent concurrent builds (avoid race conditions on the same container)
+        disableConcurrentBuilds()
+    }
+
+    // =========================================================================
+    // STAGES
+    // =========================================================================
+    stages {
+
+        // ─── 1. Checkout ─────────────────────────────────────────────────────
+        stage('Checkout') {
+            steps {
+                echo "📥 Checking out branch: ${GIT_BRANCH}"
+                checkout([
+                    $class: 'GitSCM',
+                    branches: [[name: "*/${GIT_BRANCH}"]],
+                    userRemoteConfigs: [[
+                        url: "${GIT_REPO_URL}",
+                        credentialsId: 'github-credentials'   // set in Jenkins credentials
+                    ]]
+                ])
+                echo "✅ Checkout complete — commit: ${sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()}"
+            }
+        }
+
+        // ─── 2. Validate ─────────────────────────────────────────────────────
+        stage('Validate') {
+            steps {
+                echo "🔍 Validating required files..."
+                sh '''
+                    echo "--- Directory contents ---"
+                    ls -la
+
+                    # Ensure critical files exist before attempting a build
+                    [ -f Dockerfile ]      || { echo "❌ Dockerfile not found!"; exit 1; }
+                    [ -f package.json ]    || { echo "❌ package.json not found!"; exit 1; }
+                    [ -f next.config.ts ]  || { echo "❌ next.config.ts not found!"; exit 1; }
+
+                    echo "✅ All required files present"
+                    echo "--- Node / npm version ---"
+                    node --version 2>/dev/null || echo "Node not on PATH (running inside Docker — OK)"
+                '''
+            }
+        }
+
+        // ─── 3. Build Docker Image ────────────────────────────────────────────
+        stage('Build Docker Image') {
+            steps {
+                echo "🔨 Building Docker image: ${IMAGE_NAME}:${IMAGE_TAG}"
+                sh """
+                    docker build \\
+                        --build-arg NEXT_PUBLIC_API_URL="${NEXT_PUBLIC_API_URL}" \\
+                        --tag ${IMAGE_NAME}:${IMAGE_TAG} \\
+                        --label "build.number=${BUILD_NUMBER}" \\
+                        --label "build.commit=\$(git rev-parse --short HEAD)" \\
+                        --label "build.timestamp=\$(date -u +%Y-%m-%dT%H:%M:%SZ)" \\
+                        .
+                """
+                echo "✅ Docker image built successfully"
+                sh "docker images ${IMAGE_NAME}"
+            }
+        }
+
+        // ─── 4. Stop & Remove Old Container ──────────────────────────────────
+        stage('Replace Old Container') {
+            steps {
+                echo "🛑 Stopping old container (if running)..."
+                sh """
+                    # Stop gracefully — 'true' prevents pipeline failure if container doesn't exist
+                    docker stop ${CONTAINER_NAME} || true
+
+                    # Remove the stopped container
+                    docker rm   ${CONTAINER_NAME} || true
+
+                    echo "✅ Old container removed"
+                """
+            }
+        }
+
+        // ─── 5. Deploy New Container ──────────────────────────────────────────
+        stage('Deploy New Container') {
+            steps {
+                echo "🚀 Starting new container: ${CONTAINER_NAME}"
+                sh """
+                    docker run -d \\
+                        --name    ${CONTAINER_NAME} \\
+                        --restart unless-stopped \\
+                        -p        ${HOST_PORT}:${CONTAINER_PORT} \\
+                        -e        NODE_ENV=production \\
+                        -e        NEXT_PUBLIC_API_URL="${NEXT_PUBLIC_API_URL}" \\
+                        --label   "app=hrms-frontend" \\
+                        --label   "version=${BUILD_NUMBER}" \\
+                        ${IMAGE_NAME}:${IMAGE_TAG}
+                """
+                echo "✅ Container started"
+                sh "docker ps --filter name=${CONTAINER_NAME} --format 'table {{.Names}}\\t{{.Status}}\\t{{.Ports}}'"
+            }
+        }
+
+        // ─── 6. Health Check ──────────────────────────────────────────────────
+        stage('Health Check') {
+            steps {
+                echo "🏥 Running health check on http://localhost:${HOST_PORT} ..."
+                sh """
+                    # Give Next.js time to initialise (it needs ~10-15s for SSR)
+                    sleep 20
+
+                    # Retry up to 5 times with 10-second gaps
+                    for i in 1 2 3 4 5; do
+                        echo "Attempt \$i/5..."
+                        STATUS=\$(curl -s -o /dev/null -w "%{http_code}" http://localhost:${HOST_PORT}/ || echo "000")
+                        echo "HTTP status: \$STATUS"
+                        if [ "\$STATUS" = "200" ]; then
+                            echo "✅ Frontend is UP and serving (HTTP 200)"
+                            exit 0
+                        fi
+                        sleep 10
+                    done
+
+                    echo "❌ Health check failed after 5 attempts"
+                    docker logs --tail 50 ${CONTAINER_NAME}
+                    exit 1
+                """
+            }
+        }
+
+        // ─── 7. Cleanup Old Images ────────────────────────────────────────────
+        stage('Cleanup') {
+            steps {
+                echo "🧹 Removing dangling Docker images..."
+                sh "docker image prune -f || true"
+                echo "✅ Cleanup complete"
+            }
+        }
+    }
+
+    // =========================================================================
+    // POST ACTIONS
+    // =========================================================================
+    post {
+        always {
+            echo "📋 Final container status:"
+            sh "docker ps -a --filter name=${CONTAINER_NAME} --format 'table {{.Names}}\\t{{.Status}}\\t{{.Ports}}' || true"
+        }
+
+        success {
+            echo """
+            ╔══════════════════════════════════════════════════╗
+            ║  ✅ FRONTEND DEPLOYMENT SUCCESSFUL               ║
+            ║  URL: http://192.168.1.60:${HOST_PORT}           ║
+            ║  Build: #${BUILD_NUMBER}                          ║
+            ╚══════════════════════════════════════════════════╝
+            """
+        }
+
+        failure {
+            echo """
+            ╔══════════════════════════════════════════════════╗
+            ║  ❌ FRONTEND DEPLOYMENT FAILED                   ║
+            ║  Build: #${BUILD_NUMBER}                          ║
+            ║  Check console output for details                ║
+            ╚══════════════════════════════════════════════════╝
+            """
+            // Dump container logs for debugging
+            sh "docker logs --tail 100 ${CONTAINER_NAME} || true"
+        }
+
+        cleanup {
+            // Clean Jenkins workspace after build
+            cleanWs()
+        }
+    }
+}
