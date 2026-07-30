@@ -13,9 +13,7 @@ import {
   CheckCircle2,
   XCircle,
   ShieldCheck,
-  History,
   Search,
-  RotateCw,
   AlertCircle,
   Plus,
   X,
@@ -32,7 +30,6 @@ import {
   useActivateRightsTemplate,
   useDeactivateRightsTemplate,
   useRightsTemplateDetail,
-  useRightsTemplatesLogs,
 } from "../hooks/use-rights-templates";
 import { PermissionGuard } from "@/features/auth";
 import { RightsTemplate } from "../types";
@@ -70,7 +67,6 @@ export function UserManagementPage() {
     isError,
     error,
     refetch,
-    isFetching,
   } = useRightsTemplates({
     page: currentPage,
     page_size: pageSize,
@@ -95,15 +91,11 @@ export function UserManagementPage() {
   const [duplicateModalItem, setDuplicateModalItem] = useState<RightsTemplate | null>(null);
   const [duplicateName, setDuplicateName] = useState("");
   const [deleteConfirmItem, setDeleteConfirmItem] = useState<RightsTemplate | null>(null);
-  const [isLogsModalOpen, setIsLogsModalOpen] = useState(false);
 
   // Query detail for View modal
   const { data: detailData, isLoading: isDetailLoading } = useRightsTemplateDetail(
     viewDetailId || undefined
   );
-
-  // Query logs for Logs modal
-  const { data: logsData, isLoading: isLogsLoading } = useRightsTemplatesLogs();
 
   // Close dropdown on click outside
   useEffect(() => {
@@ -216,28 +208,6 @@ export function UserManagementPage() {
             </div>
 
             <div className="flex items-center space-x-3">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => refetch()}
-                disabled={isFetching}
-                className="bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-semibold px-3 py-2 h-9 rounded-md transition-all cursor-pointer"
-                title="Refresh Templates"
-              >
-                <RotateCw className={`h-3.5 w-3.5 mr-1.5 ${isFetching ? "animate-spin" : ""}`} />
-                <span>Refresh</span>
-              </Button>
-
-              <Button
-                type="button"
-                onClick={() => setIsLogsModalOpen(true)}
-                variant="outline"
-                className="bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-semibold px-3 py-2 h-9 rounded-md transition-all cursor-pointer"
-              >
-                <History className="h-3.5 w-3.5 mr-1.5 text-slate-500" />
-                <span>View Logs</span>
-              </Button>
-
               <PermissionGuard permission={{ feature: "user_management", action: "edit" }}>
                 <Button
                   type="button"
@@ -803,68 +773,7 @@ export function UserManagementPage() {
             </div>
           )}
 
-          {/* Audit Logs Modal */}
-          {isLogsModalOpen && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4 animate-in fade-in duration-150">
-              <div className="w-full max-w-2xl rounded-xl bg-white dark:bg-slate-900 shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden flex flex-col max-h-[85vh]">
-                <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-800">
-                  <div className="flex items-center space-x-2">
-                    <History className="h-5 w-5 text-blue-600" />
-                    <h2 className="text-base font-semibold text-slate-800 dark:text-slate-100">
-                      Rights Templates Audit Logs
-                    </h2>
-                  </div>
-                  <button
-                    onClick={() => setIsLogsModalOpen(false)}
-                    className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
-                  >
-                    <X className="h-5 w-5" />
-                  </button>
-                </div>
 
-                <div className="p-6 space-y-3 overflow-y-auto flex-1 text-xs">
-                  {isLogsLoading ? (
-                    <div className="py-8 flex justify-center">
-                      <Loader2 className="h-6 w-6 text-blue-600 animate-spin" />
-                    </div>
-                  ) : logsData && logsData.length > 0 ? (
-                    <div className="space-y-2">
-                      {logsData.map((log) => (
-                        <div
-                          key={log.id}
-                          className="p-3 border border-slate-100 dark:border-slate-800 rounded-lg bg-slate-50/50 dark:bg-slate-800/30 flex items-start justify-between"
-                        >
-                          <div className="space-y-0.5">
-                            <span className="font-semibold text-slate-800 dark:text-slate-200">
-                              {log.action}
-                            </span>
-                            <p className="text-slate-600 dark:text-slate-400">{log.description}</p>
-                          </div>
-                          <span className="text-[10px] text-slate-400 shrink-0 ml-4">
-                            {formatDate(log.created_at)}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="py-8 text-center text-slate-400 italic">
-                      No audit log entries recorded yet for rights templates.
-                    </div>
-                  )}
-                </div>
-
-                <div className="px-6 py-3 border-t border-slate-100 dark:border-slate-800 flex justify-end">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setIsLogsModalOpen(false)}
-                  >
-                    Close
-                  </Button>
-                </div>
-              </div>
-            </div>
-          )}
 
           {/* Assign Template Modal */}
           <AssignTemplateModal

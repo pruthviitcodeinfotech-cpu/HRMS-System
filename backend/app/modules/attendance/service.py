@@ -1884,20 +1884,26 @@ class AttendanceService(BaseService):
                 if ptype == PunchType.BREAK_OUT.value:
                     current_break_out = ptime
 
-        # Working hours configuration lookup
+        # Working hours configuration lookup from PayrollSettingRepository (Settings / Payroll module)
         full_day_mins = 480
         half_day_mins = 240
         att_mode = "consider_all_punch"
 
         try:
-            from app.modules.shift.repository import WorkingHoursConfigRepository
-            wh_config = await WorkingHoursConfigRepository(self.session).get_by_org(org_id)
-            if wh_config:
-                att_mode = wh_config.attendance_mode or "consider_all_punch"
-                if wh_config.full_day_hours:
-                    full_day_mins = wh_config.full_day_hours.hour * 60 + wh_config.full_day_hours.minute
-                if wh_config.half_day_hours:
-                    half_day_mins = wh_config.half_day_hours.hour * 60 + wh_config.half_day_hours.minute
+            from app.modules.payroll.repository import PayrollSettingRepository
+            ps_config = await PayrollSettingRepository(self.session).get_by_org(org_id)
+            if ps_config:
+                att_mode = ps_config.attendance_mode or "consider_all_punch"
+                if ps_config.full_day_working_hours:
+                    full_day_mins = (
+                        ps_config.full_day_working_hours.hour * 60
+                        + ps_config.full_day_working_hours.minute
+                    )
+                if ps_config.half_day_working_hours:
+                    half_day_mins = (
+                        ps_config.half_day_working_hours.hour * 60
+                        + ps_config.half_day_working_hours.minute
+                    )
         except Exception:
             pass
 

@@ -13,6 +13,7 @@ import {
   UserX,
   Trash2,
   AlertTriangle,
+  ChevronDown,
   User,
   X,
   Plus,
@@ -406,7 +407,7 @@ export function ManageUsersPage() {
           <div className="flex items-center space-x-3 pt-2">
             <Button
               type="button"
-              onClick={handleResetFilters}
+              onClick={() => setSearchQuery("")}
               variant="outline"
               className="text-xs h-8 px-3 border-slate-200 dark:border-slate-700"
             >
